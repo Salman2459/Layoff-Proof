@@ -1,0 +1,9 @@
+HTTP/1.1 302 Found
+Content-Length: 0
+Date: Tue, 05 Aug 2025 13:11:56 GMT
+Location: https://accounts.google.com/o/oauth2/v2/auth?response_type=code&redirect_uri=https%3A%2F%2F897be05a-eedd-41cb-a108-3708fd414388-00-3s5emoy4czxac.worf.replit.dev%2Fapi%2Fauth%2Fgoogle%2Fcallback&scope=profile%20email&client_id=921212262089-k4p65q8pqeisun8as111n2ebjip8ecal.apps.googleusercontent.com
+Replit-Cluster: worf
+X-Powered-By: Express
+X-Robots-Tag: none, noindex, noarchive, nofollow, nositelinkssearchbox, noimageindex
+X-Robots-Tag: none, noindex, noarchive, nofollow, nositelinkssearchbox, noimageindex
+

@@ -1,0 +1,58 @@
+"Rename the page /cover-letter-generator to /cover-letter. When a user opens this page, they should see two options:
+
+Upload Resume:
+
+If the user uploads a resume, it should be displayed on the screen.
+
+Alongside the resume, there should be an input field where the user can add job details.
+
+There should also be a button labeled ‘Generate Cover Letter’.
+
+When the user adds the resume and job details, a cover letter should be generated using the data from both.
+
+Manual Fill Method:
+
+If the user clicks the 'Fill Manually' button, a form should open where they can enter their personal data.
+
+Based on this manually entered information, a professional cover letter should be generated.
+
+The generated cover letter should follow a professional template like this one:
+
+Cover Letter Template
+NAME
+COVER LETTER
+[Date]
+To Whom It May Concern:
+
+[This first paragraph introduces yourself. If you're transitioning to a new role, include pivot-related language instead of generic phrases.]
+
+My name is [YOUR NAME HERE]. I obtained a [DEGREE FROM WHERE]. I have been in [PROFESSION] for [X YEARS]. I plan to expand my knowledge in [PROFESSION] by gaining experience in [POSITION] to support [REASON]. I am qualified because I have experience in [HARD SKILLS + CERTIFICATION]. Additionally, I am certified in [OTHER CERTIFICATIONS]. With great enthusiasm, I apply for the [POSITION] at [COMPANY].
+
+[Second paragraph: Talk about your current or most recent role.]
+
+I currently work [ONSITE / HYBRID / REMOTE] for [COMPANY, LOCATION] with my remote location in [YOUR CITY]. In this position, I [MAIN RESPONSIBILITY]. Managing [YOUR ROLE] helps me organize my work to properly support [WORK TYPE], stakeholders, and partners. My responsibilities include [TOP DUTY]. Organization and relationship building are vital in [PROFESSION]. I ensure efficiency and build trust with [PEOPLE YOU WORK WITH] by staying organized using [TOOLS OR METHODS].
+
+[Third paragraph: Add any other relevant experience if needed.]
+
+[Briefly mention another role following the same structure as above. Keep it under 5 sentences.]
+
+[Final paragraph: Conclusion.]
+
+Based on my experience, I am a strong candidate for the [POSITION] at [COMPANY]. Hiring me means gaining a dedicated professional with expertise and insight. You can reach me at [PHONE NUMBER] or [EMAIL]. Thank you for your consideration. I look forward to your response.
+
+Respectfully,
+[YOUR SIGNATURE]
+
+Additional Features to Include:
+
+Show cover letter examples
+
+Add helpful features like:
+
+Edit
+
+Download
+
+Copy to Clipboard
+
+So the user has full control over the generated letter."**

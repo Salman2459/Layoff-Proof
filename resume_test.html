@@ -1,0 +1,108 @@
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Arial', sans-serif; line-height: 1.4; color: #333; background: white; }
+            .container { max-width: 800px; margin: 0 auto; padding: 40px; }
+            .header { margin-bottom: 30px; }
+            .header h1 { font-size: 2.5rem; font-weight: bold; color: #333; margin-bottom: 8px; }
+            .contact-info { display: flex; gap: 20px; color: #666; font-size: 0.9rem; margin-bottom: 20px; }
+            .contact-info span { display: flex; align-items: center; gap: 5px; }
+            .divider { height: 2px; background: #3B82F6; margin: 20px 0; }
+            .section { margin-bottom: 30px; }
+            .section h2 { color: #3B82F6; font-size: 1.2rem; font-weight: bold; margin-bottom: 15px; text-transform: uppercase; }
+            .experience-item { margin-bottom: 20px; }
+            .experience-item h3 { font-size: 1.1rem; font-weight: bold; color: #333; margin-bottom: 5px; }
+            .experience-item .company { color: #666; font-size: 0.95rem; margin-bottom: 8px; }
+            .experience-item .duration { color: #666; font-size: 0.9rem; float: right; margin-top: -25px; }
+            .experience-item ul { margin-left: 20px; margin-top: 8px; }
+            .experience-item li { margin-bottom: 5px; font-size: 0.95rem; }
+            .skills-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+            .skill-item { display: flex; justify-content: space-between; padding: 5px 0; }
+            .skill-name { font-weight: 500; }
+            .skill-level { color: #666; font-size: 0.9rem; }
+            .education-item h3 { font-weight: bold; margin-bottom: 5px; }
+            .education-item .school { color: #666; margin-bottom: 5px; }
+            .education-item .details { color: #666; font-size: 0.9rem; }
+          </style>
+        
+        <style>
+          @media print {
+            @page { margin: 0.5in; size: A4; }
+            body { print-color-adjust: exact; }
+          }
+          .print-instruction {
+            position: fixed; top: 10px; right: 10px; background: #007bff; color: white; 
+            padding: 10px; border-radius: 5px; font-size: 12px; z-index: 1000;
+          }
+          @media print { .print-instruction { display: none; } }
+        </style>
+        </head>
+        <body>
+          <div class="print-instruction">
+            Press Ctrl+P (or Cmd+P on Mac) to print as PDF
+          </div>
+          <div class="container">
+            <div class="header">
+              <h1>Iqra Zulfiqar</h1>
+              <div class="contact-info">
+                <span>📧 iqra07zulfiqar@gmail.com</span>
+                <span>📞 03035657794</span>
+                <span>📍 Faisalabad</span>
+                <span>🔗 LinkedIn</span>
+              </div>
+              <div class="divider"></div>
+            </div>
+
+            <div class="section">
+              <h2>Professional Summary</h2>
+              <p>Experienced Software Engineer with 3 years in full-stack development, specializing in React, Node.js, and cloud technologies. Proven track record of leading cross-functional teams and delivering scalable solutions that increased user engagement by 40% and reduced load times by 25%.</p>
+            </div>
+
+            <div class="section">
+              <h2>Work Experience</h2>
+              <div class="experience-item">
+                <h3>Senior Software Engineer</h3>
+                <div class="company">Tech Corp | Faisalabad</div>
+                <div class="duration">2020-01 - Present</div>
+                <ul>
+                  <li>Led development of microservices architecture serving 100K+ daily active users</li>
+                  <li>Implemented CI/CD pipelines reducing deployment time by 60%</li>
+                  <li>Mentored 3 junior developers and conducted code reviews</li>
+                  <li>Collaborated with product team to define technical requirements</li>
+                </ul>
+              </div>
+              <div class="experience-item">
+                <h3>Full Stack Developer</h3>
+                <div class="company">StartupXYZ | Faisalabad</div>
+                <div class="duration">2018-06 - 2019-12</div>
+                <ul>
+                  <li>Built responsive web applications using React and Node.js</li>
+                  <li>Optimized database queries improving performance by 35%</li>
+                  <li>Integrated third-party APIs and payment processing systems</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="section">
+              <h2>Education</h2>
+              <div class="education-item">
+                <h3>Bachelor of Computer Science</h3>
+                <div class="school">Government College</div>
+                <div class="details">2014-09 - 2018-05<br>GPA: 3.8</div>
+              </div>
+            </div>
+
+            <div class="section">
+              <h2>Skills</h2>
+              <div class="skills-grid">
+                <div class="skill-item"><span class="skill-name">JavaScript</span><span class="skill-level">(Expert)</span></div><div class="skill-item"><span class="skill-name">React</span><span class="skill-level">(Expert)</span></div><div class="skill-item"><span class="skill-name">Node.js</span><span class="skill-level">(Expert)</span></div>
+              </div>
+            </div>
+          </div>
+        </body>
+        </html>
+      

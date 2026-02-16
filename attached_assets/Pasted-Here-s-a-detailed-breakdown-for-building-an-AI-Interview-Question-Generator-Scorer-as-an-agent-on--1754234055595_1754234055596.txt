@@ -1,0 +1,134 @@
+Here's a detailed breakdown for building an AI Interview Question Generator & Scorer as an agent on your website page:
+🔗 /interview-preparation
+
+🎯 Purpose
+To help job seekers prepare for interviews by automatically generating realistic interview questions (based on job description) — and then score their responses with AI-powered feedback.
+
+This tool simulates real interview practice, improves confidence, and gives actionable advice.
+
+🧠 How It Works (User Flow)
+✅ Step 1: User Input
+On your /interview-preparation page, the user can:
+
+📝 Paste a Job Description, Job Title, or LinkedIn Job Link
+
+(Optional) Choose Interview Type:
+
+Behavioral
+
+Technical
+
+Managerial
+
+Mixed
+
+(Optional) Choose Difficulty Level: Easy / Medium / Hard
+
+You can use a form powered by Tally, Typeform, or a custom React form.
+
+🤖 Step 2: AI Generates Interview Content
+You send a prompt to ChatGPT like:
+
+plaintext
+Copy
+Edit
+Act as an expert hiring manager.
+
+Given the following job description, generate 5–10 realistic interview questions.
+
+For each:
+1. State the question
+2. Provide a model answer
+3. Label the category (Behavioral, Technical, or Situational)
+
+Job Description:
+{{paste_user_job_description_here}}
+💬 Step 3: User Practices Answering
+User sees the list of generated questions.
+
+For each question:
+
+They type their answer into a text field.
+
+Optionally, you can enable voice/video response using tools like Loom or VideoAsk.
+
+📊 Step 4: AI Scoring + Feedback
+Send a second prompt:
+
+plaintext
+Copy
+Edit
+Act as an interview coach. Review the user's answer to this interview question.
+
+Question: {{question}}  
+Model Answer: {{model_answer}}  
+User Answer: {{user_input}}
+
+Evaluate the user's response. Score from 1–10.  
+Provide a 2-line summary of what was good and 2 suggestions to improve.
+✅ Step 5: Final Output
+You display:
+
+✅ Score (e.g., 7/10)
+
+🟢 What went well
+
+🛠 Suggestions to improve
+
+🔁 Option to try again
+
+Repeat for all 5–10 questions.
+
+🛠️ Tech Stack Suggestions
+Feature	Tools/Stack
+Frontend Form + UI	Next.js + Tailwind CSS
+State Management	React useState / Zustand
+AI API	OpenAI GPT-4 API
+Scoring & Feedback Engine	GPT prompt logic (as shown above)
+Voice Answer (optional)	VideoAsk, Loom, or WebRTC
+Database (optional)	Supabase / Firebase
+Authentication (optional)	Clerk / Supabase Auth
+
+💡 Bonus Features
+Save Past Sessions for review
+
+Download as PDF for interview coaching
+
+Progress Tracker – see score trends over time
+
+Email Summary of strengths and weaknesses
+
+AI Coach Chat – for real-time follow-up questions
+
+🌐 Example Page Flow
+Page: /interview-preparation
+
+User pastes job description
+
+Selects interview type (optional)
+
+Clicks “Generate Questions”
+
+AI generates 5–10 questions + model answers
+
+User types answers → AI scores and gives feedback
+
+Optional: Export, try again, or book mock interview
+
+📌 Example Use Case
+Job Title: Digital Marketing Manager
+Job Description:
+
+Run paid ads
+
+Analyze campaigns
+
+Coordinate with content and sales
+
+🧠 AI Generates:
+
+Q1: Tell me about a successful marketing campaign you managed.
+Model Answer: We launched a $5K paid LinkedIn campaign targeting B2B CEOs that led to 120 leads in 2 weeks...
+Category: Behavioral
+
+User types answer → gets a score, feedback, and retry option.

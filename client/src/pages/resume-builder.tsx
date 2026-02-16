@@ -1,0 +1,664 @@
+import React, { useState, useEffect } from "react";
+import {
+  Upload,
+  FileText,
+  Download,
+  ArrowLeft,
+  ArrowRight,
+  Linkedin,
+  ExternalLink,
+  Plus,
+  Trash2,
+  Loader2,
+  Sparkles,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import GlobalHeader from "@/components/GlobalHeader";
+
+// Mock types - replace with your actual types
+interface ParsedResumeData {
+  name: string;
+  email: string;
+  phone: string;
+  profession: string;
+  summary: string;
+  experience: any[];
+  skills: string[];
+  education: any[];
+  certifications: any[];
+  achievements: any[];
+  projects: any[];
+  languages: string[];
+  location: string;
+  linkedin: string;
+  github: string;
+  website: string;
+}
+
+interface ResumeTemplate {
+  id: string;
+  name: string;
+  description: string;
+  preview: string;
+  style: "modern" | "classic" | "minimal" | "creative";
+}
+
+// Mock implementations - replace with your actual implementations
+const useMutation = (config: any) => {
+  const [isPending, setIsPending] = useState(false);
+
+  return {
+    isPending,
+    mutate: async (data: any) => {
+      setIsPending(true);
+      try {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const result = await config.mutationFn(data);
+        config.onSuccess?.(result, data);
+      } catch (error) {
+        config.onError?.(error);
+      } finally {
+        setIsPending(false);
+      }
+    }
+  };
+};
+
+// ===================================================================
+// --- AI Helper Components ---
+// ===================================================================
+interface AIImproveButtonProps {
+  fieldName: string;
+  currentValue: string;
+  resumeData: ParsedResumeData;
+  onSuggestion: (fieldName: string, suggestion: string) => void;
+  className?: string;
+}
+
+const AIImproveButton: React.FC<AIImproveButtonProps> = ({
+  fieldName,
+  currentValue,
+  resumeData,
+  onSuggestion,
+  className,
+}) => {
+  const [isLoading, setIsLoading] = useState(false);
+  const [manualPrompt, setManualPrompt] = useState("");
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const { toast } = useToast();
+
+  const handleImprove = async (
+    improvementType: "general" | "manual",
+    prompt?: string
+  ) => {
+    setIsLoading(true);
+    try {
+      const response = await fetch("/api/improve-with-ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fieldName,
+          existingText: currentValue,
+          resumeContext: resumeData,
+          improvementType,
+          manualPrompt: prompt,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to get AI suggestion.");
+      }
+
+      const { suggestion } = await response.json();
+      onSuggestion(fieldName, suggestion);
+      setPopoverOpen(false);
+      toast({ title: "Content Improved!", description: "The suggestion has been applied." });
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className={`h-6 w-6 text-yellow-500 hover:text-yellow-400 ${className}`}
+          aria-label="Improve with AI"
+        >
+          <Sparkles className="h-4 w-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80">
+        <div className="grid gap-4">
+          <h4 className="font-medium leading-none">Improve with AI</h4>
+          <Button onClick={() => handleImprove("general")} disabled={isLoading} variant="outline">
+            {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Auto-Improve
+          </Button>
+          <div className="space-y-2">
+            <Label htmlFor="manual-prompt">Or with custom instructions:</Label>
+            <Textarea
+              id="manual-prompt"
+              placeholder="e.g., 'Make it more concise'"
+              value={manualPrompt}
+              onChange={(e) => setManualPrompt(e.target.value)}
+            />
+            <Button onClick={() => handleImprove("manual", manualPrompt)} disabled={isLoading || !manualPrompt} className="w-full">
+              {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Generate
+            </Button>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+};
+
+interface AIInputWrapperProps extends AIImproveButtonProps {
+  children: React.ReactNode;
+}
+
+const AIInputWrapper: React.FC<AIInputWrapperProps> = ({ children, ...props }) => {
+  return (
+    <div className="relative w-full">
+      {children}
+      <div className="absolute top-1/2 right-2 -translate-y-1/2">
+        <AIImproveButton {...props} />
+      </div>
+    </div>
+  );
+};
+
+// --- Helper Component for Progress Steps ---
+const ProgressStepper = ({ steps, currentStepIndex }: { steps: string[], currentStepIndex: number }) => (
+  <div className="flex items-center justify-center w-full max-w-2xl mx-auto mb-8">
+    {steps.map((step, index) => (
+      <React.Fragment key={step}>
+        <div className="flex flex-col items-center">
+          <div
+            className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${index <= currentStepIndex
+              ? "bg-blue-600 text-white"
+              : "bg-gray-200 text-gray-600"
+              }`}
+          >
+            {index + 1}
+          </div>
+          <p
+            className={`mt-2 text-xs text-center font-semibold transition-colors ${index === currentStepIndex ? "text-blue-600" : "text-gray-500"
+              }`}
+          >
+            {step}
+          </p>
+        </div>
+        {index < steps.length - 1 && (
+          <div
+            className={`flex-1 h-1 mx-4 transition-colors ${index < currentStepIndex ? "bg-blue-600" : "bg-gray-200"
+              }`}
+          />
+        )}
+      </React.Fragment>
+    ))}
+  </div>
+);
+
+const resumeTemplates: ResumeTemplate[] = [
+  { id: "professional", name: "Professional Blue", description: "Clean design with blue accents.", preview: "/api/template-preview/professional", style: "modern" },
+  { id: "harvard", name: "Harvard Classic", description: "Traditional academic format.", preview: "/api/template-preview/harvard", style: "classic" },
+  { id: "creative", name: "Creative Modern", description: "Two-column design with sidebar.", preview: "/api/template-preview/creative", style: "creative" },
+];
+
+const initialResumeData: ParsedResumeData = {
+  name: "", email: "", phone: "", profession: "", summary: "", experience: [], skills: [], education: [], certifications: [], achievements: [], projects: [], languages: ["English"], location: "", linkedin: "", github: "", website: "",
+};
+
+// ===================================================================
+// --- ✅ UPDATED Child Component for the Editor Form ---
+// ===================================================================
+const ResumeEditorForm = ({
+  extractedData,
+  setExtractedData,
+  onAISuggestion,
+}: {
+  extractedData: ParsedResumeData;
+  setExtractedData: (data: ParsedResumeData) => void;
+  onAISuggestion: (fieldName: string, suggestion: string) => void;
+}) => {
+  // --- NEW: Add constants and derived state for clarity ---
+  const MAX_SKILLS = 15;
+  const skillsList = extractedData.skills || [];
+  const skillCount = skillsList.length;
+  const isSkillLimitReached = skillCount >= MAX_SKILLS;
+  // --- END NEW ---
+
+  return (
+    <Card>
+      <CardContent className="p-8">
+        <Tabs defaultValue="personal" className="w-full">
+          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-5 mb-8">
+            <TabsTrigger value="personal">Personal</TabsTrigger>
+            <TabsTrigger value="summary">Summary</TabsTrigger>
+            <TabsTrigger value="skills">Skills</TabsTrigger>
+            <TabsTrigger value="experience">Experience</TabsTrigger>
+            <TabsTrigger value="education">Education</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="personal" className="space-y-6">
+            <h3 className="text-xl font-semibold">Personal Information</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div><Label htmlFor="fullName">Full Name</Label><Input id="fullName" value={extractedData.name} onChange={(e) => setExtractedData({ ...extractedData, name: e.target.value })} placeholder="John Doe" /></div>
+              <div><Label htmlFor="email">Email Address</Label><Input id="email" type="email" value={extractedData.email} onChange={(e) => setExtractedData({ ...extractedData, email: e.target.value })} placeholder="john.doe@email.com" /></div>
+              <div><Label htmlFor="phone">Phone Number</Label><Input id="phone" value={extractedData.phone} onChange={(e) => setExtractedData({ ...extractedData, phone: e.target.value })} placeholder="+1 (555) 123-4567" /></div>
+              <div><Label htmlFor="location">Location</Label><Input id="location" value={extractedData.location} onChange={(e) => setExtractedData({ ...extractedData, location: e.target.value })} placeholder="New York, NY" /></div>
+              <div><Label htmlFor="linkedin">LinkedIn Profile</Label><Input id="linkedin" value={extractedData.linkedin} onChange={(e) => setExtractedData({ ...extractedData, linkedin: e.target.value })} placeholder="https://linkedin.com/in/johndoe" /></div>
+              <div><Label htmlFor="github">GitHub Profile</Label><Input id="github" value={extractedData.github} onChange={(e) => setExtractedData({ ...extractedData, github: e.target.value })} placeholder="https://github.com/johndoe" /></div>
+            </div>
+          </TabsContent>
+          <TabsContent value="summary" className="space-y-6">
+            <h3 className="text-xl font-semibold">Professional Summary</h3>
+            <div>
+              <Label htmlFor="profession">Professional Title</Label>
+              <AIInputWrapper fieldName="profession" currentValue={extractedData.profession} resumeData={extractedData} onSuggestion={onAISuggestion}>
+                <Input id="profession" value={extractedData.profession} onChange={(e) => setExtractedData({ ...extractedData, profession: e.target.value })} placeholder="e.g., Software Engineer" className="pr-10" />
+              </AIInputWrapper>
+            </div>
+            <div>
+              <Label htmlFor="summary-text">Summary</Label>
+              <AIInputWrapper fieldName="summary" currentValue={extractedData.summary} resumeData={extractedData} onSuggestion={onAISuggestion}>
+                <Textarea id="summary-text" value={extractedData.summary} onChange={(e) => setExtractedData({ ...extractedData, summary: e.target.value })} placeholder="Briefly describe your career, skills, and goals..." className="min-h-[120px] pr-10" />
+              </AIInputWrapper>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="skills" className="space-y-2">
+            <h3 className="text-xl font-semibold">Skills</h3>
+            <p className="text-sm text-gray-600">Enter your top skills (comma-separated), or use the ✨ icon to get AI suggestions. Max {MAX_SKILLS} skills.</p>
+            <AIInputWrapper
+              fieldName="skills"
+              currentValue={skillsList.join(", ")}
+              resumeData={extractedData}
+              onSuggestion={onAISuggestion}
+            >
+              <Textarea
+                value={skillsList.join(", ")}
+                onChange={e => {
+                  const skillsArray = e.target.value
+                    .split(',')
+                    .map(s => s.trim())
+                    .filter(Boolean)
+                    .slice(0, MAX_SKILLS); // Enforce limit
+                  setExtractedData({ ...extractedData, skills: skillsArray });
+                }}
+                placeholder="React, JavaScript, Node.js, Project Management..."
+                className="pr-10"
+              />
+            </AIInputWrapper>
+            {isSkillLimitReached && (
+              <p className="text-xs text-red-500">
+                Maximum of {MAX_SKILLS} skills reached. Further skills will not be saved.
+              </p>
+            )}
+            <p className={`text-sm text-right ${isSkillLimitReached ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
+              {skillCount} / {MAX_SKILLS} skills
+            </p>
+          </TabsContent>
+
+          <TabsContent value="experience" className="space-y-6">
+            <div className="flex justify-between items-center"><h3 className="text-xl font-semibold">Work Experience</h3><Button onClick={() => setExtractedData({ ...extractedData, experience: [...extractedData.experience, { title: "", company: "", duration: "", description: "", responsibilities: [] }] })} variant="outline" size="sm"><Plus className="w-4 h-4 mr-2" /> Add Experience</Button></div>
+            {extractedData.experience.map((exp, index) => (
+              <Card key={index} className="p-4 bg-gray-50 dark:bg-gray-800">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <Label>Job Title</Label>
+                    <AIInputWrapper fieldName={`experience.${index}.title`} currentValue={exp.title} resumeData={extractedData} onSuggestion={onAISuggestion}>
+                      <Input value={exp.title} onChange={e => { const newExp = [...extractedData.experience]; newExp[index].title = e.target.value; setExtractedData({ ...extractedData, experience: newExp }); }} className="pr-10" />
+                    </AIInputWrapper>
+                  </div>
+                  <div><Label>Company</Label><Input value={exp.company} onChange={e => { const newExp = [...extractedData.experience]; newExp[index].company = e.target.value; setExtractedData({ ...extractedData, experience: newExp }); }} /></div>
+                </div>
+                <div className="mb-4"><Label>Duration</Label><Input value={exp.duration} onChange={e => { const newExp = [...extractedData.experience]; newExp[index].duration = e.target.value; setExtractedData({ ...extractedData, experience: newExp }); }} placeholder="Jan 2020 - Present" /></div>
+                <div className="mb-4">
+                  <Label>Description</Label>
+                  <AIInputWrapper fieldName={`experience.${index}.description`} currentValue={exp.description} resumeData={extractedData} onSuggestion={onAISuggestion}>
+                    <Textarea value={exp.description} onChange={e => { const newExp = [...extractedData.experience]; newExp[index].description = e.target.value; setExtractedData({ ...extractedData, experience: newExp }); }} placeholder="Describe your responsibilities and achievements." className="pr-10" />
+                  </AIInputWrapper>
+                </div>
+                <Button onClick={() => setExtractedData({ ...extractedData, experience: extractedData.experience.filter((_, i) => i !== index) })} variant="outline" size="sm" className="text-red-600"><Trash2 className="w-4 h-4 mr-2" /> Remove</Button>
+              </Card>
+            ))}
+          </TabsContent>
+          <TabsContent value="education" className="space-y-6">
+            <div className="flex justify-between items-center"><h3 className="text-xl font-semibold">Education</h3><Button onClick={() => setExtractedData({ ...extractedData, education: [...(extractedData.education || []), { degree: "", school: "", duration: "" }] })} variant="outline" size="sm"><Plus className="w-4 h-4 mr-2" /> Add Education</Button></div>
+            {(extractedData.education || []).map((edu, index) => (
+              <Card key={index} className="p-4 bg-gray-50 dark:bg-gray-800">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <div><Label>Degree / Certificate</Label><Input value={edu.degree} onChange={e => { const newEdu = [...extractedData.education]; newEdu[index].degree = e.target.value; setExtractedData({ ...extractedData, education: newEdu }); }} placeholder="B.S. in Computer Science" /></div>
+                  <div><Label>School / University</Label><Input value={edu.school} onChange={e => { const newEdu = [...extractedData.education]; newEdu[index].school = e.target.value; setExtractedData({ ...extractedData, education: newEdu }); }} placeholder="State University" /></div>
+                </div>
+                <div className="mb-4"><Label>Duration</Label><Input value={edu.duration} onChange={e => { const newEdu = [...extractedData.education]; newEdu[index].duration = e.target.value; setExtractedData({ ...extractedData, education: newEdu }); }} placeholder="2016 - 2020" /></div>
+                <Button onClick={() => setExtractedData({ ...extractedData, education: extractedData.education.filter((_, i) => i !== index) })} variant="outline" size="sm" className="text-red-600"><Trash2 className="w-4 h-4 mr-2" /> Remove</Button>
+              </Card>
+            ))}
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
+  );
+};
+
+
+export default function ResumeBuilder() {
+  const [currentStep, setCurrentStep] = useState<"select" | "upload" | "linkedin-url" | "manual-edit" | "templates" | "editor-preview">("select");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [extractedData, setExtractedData] = useState<ParsedResumeData>(initialResumeData);
+  const [selectedTemplate, setSelectedTemplate] = useState<string>("");
+  const [linkedinUrl, setLinkedinUrl] = useState<string>("");
+  const [previewHtml, setPreviewHtml] = useState<string>("");
+  const [buildMethod, setBuildMethod] = useState<"upload" | "linkedin" | "manual" | null>(null);
+  const { toast } = useToast();
+  const user = useAuth();
+  const [debouncedExtractedData, setDebouncedExtractedData] = useState<ParsedResumeData>(extractedData);
+
+  const handleAISuggestion = (fieldName: string, suggestion: string) => {
+    setExtractedData(prevData => {
+      if (fieldName === 'skills') {
+        const skillsArray = suggestion
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+          .slice(0, 15); // Enforce limit
+        return { ...prevData, skills: skillsArray };
+      }
+
+      if (!fieldName.includes('.') && !fieldName.includes('[')) {
+        return { ...prevData, [fieldName]: suggestion };
+      }
+
+      const updatedData = JSON.parse(JSON.stringify(prevData));
+      const keys = fieldName.replace(/\[(\d+)\]/g, '.$1').split('.');
+      let current = updatedData;
+      for (let i = 0; i < keys.length - 1; i++) {
+        current = current[keys[i]];
+        if (current === undefined) {
+          console.error("Invalid path for AI suggestion update:", fieldName);
+          return prevData;
+        }
+      }
+      current[keys[keys.length - 1]] = suggestion;
+      return updatedData;
+    });
+  };
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedExtractedData(extractedData);
+    }, 500);
+    return () => clearTimeout(handler);
+  }, [extractedData]);
+
+  const uploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append("resume", file);
+      formData.append("id", user?.user?.id || "");
+      const response = await fetch("/api/upload-resume", { method: "POST", body: formData });
+      if (!response.ok) throw new Error(await response.text());
+      return response.json();
+    },
+    onSuccess: (data: any) => {
+      setExtractedData({ ...initialResumeData, ...data.parsedData });
+      setCurrentStep("templates");
+      toast({ title: "Resume Extracted Successfully" });
+    },
+    onError: (error: any) => toast({ title: "Upload Failed", description: error.message, variant: "destructive" }),
+  });
+
+  const linkedinImportMutation = useMutation({
+    mutationFn: async (profileUrl: string) => {
+      const response = await fetch("/api/import-linkedin-resume", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profileUrl, id: user?.user?.id }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      return response.json();
+    },
+    onSuccess: (data: any) => {
+      if (data.resumeData) {
+        setExtractedData({ ...initialResumeData, ...data.resumeData });
+        setCurrentStep("templates");
+        toast({ title: "LinkedIn Profile Imported" });
+      } else {
+        toast({ title: "Import Failed", description: data.error, variant: "destructive" });
+      }
+    },
+    onError: (error: any) => toast({ title: "Import Failed", description: error.message, variant: "destructive" }),
+  });
+
+  const generatePreviewMutation = useMutation({
+    mutationFn: async (data: { templateId: string; resumeData: ParsedResumeData }) => {
+      // MOCK API: In a real app, this logic would be on your server and use the full generateResumeHTML function.
+      return new Promise<string>(resolve => {
+        const { resumeData, templateId } = data;
+        let html = '';
+
+        const formatTextForHtml = (text: string = '') => {
+          if (!text) return '';
+          const escapedText = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+          return escapedText.replace(/\n/g, '<br />');
+        };
+
+        const renderExperience = (exp: any[]) => exp.map(e => `
+            <div class="job">
+                <h4>${e.title || ''} at ${e.company || ''}</h4>
+                <em>${e.duration || ''}</em>
+                <p>${formatTextForHtml(e.description)}</p> 
+            </div>`).join('');
+
+        const renderEducation = (edu: any[]) => edu.map(e => `
+            <div class="education-item">
+                <h4>${e.degree || ''}</h4>
+                <em>${e.school || ''} (${e.duration || ''})</em>
+            </div>`).join('');
+
+        const renderSkills = (skills: string[] = []) => skills.slice(0, 15).join(', ');
+
+
+        switch (templateId) {
+          case 'harvard':
+            html = `
+              <html><head><style>
+                body { font-family: 'Times New Roman', serif; margin: 2rem; color: #333; } p { white-space: normal; }
+                .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px;}
+                .header h1 { margin: 0; font-size: 2.5rem; text-transform: uppercase; } .header p { margin: 5px 0 0; font-size: 1rem; }
+                .section h2 { text-transform: uppercase; border-bottom: 1px solid #ccc; padding-bottom: 5px; margin-top: 20px; font-size: 1.2rem; }
+                .job, .education-item { margin-bottom: 15px; } h4 { margin: 0 0 5px; }
+              </style></head><body>
+                <div class="header"><h1>${resumeData.name || 'YOUR NAME'}</h1><p>${resumeData.location || ''} | ${resumeData.email || ''} | ${resumeData.phone || ''}</p></div>
+                <div class="section"><h2>Summary</h2><p>${formatTextForHtml(resumeData.summary)}</p></div>
+                <div class="section"><h2>Skills</h2><p>${renderSkills(resumeData.skills)}</p></div>
+                <div class="section"><h2>Experience</h2>${renderExperience(resumeData.experience)}</div>
+                <div class="section"><h2>Education</h2>${renderEducation(resumeData.education)}</div>
+              </body></html>`;
+            break;
+
+          case 'creative':
+            html = `
+              <html><head><style>
+                body { font-family: 'Helvetica Neue', sans-serif; margin: 0; font-size: 14px; display: flex; } p { white-space: normal; }
+                .sidebar { background-color: #1e3a8a; color: white; width: 35%; padding: 2rem; } .sidebar h1 { font-size: 2rem; margin-top: 0; }
+                .sidebar h2 { border-bottom: 1px solid #4a6fa5; padding-bottom: 5px; font-size: 1.1rem; } .sidebar p, .sidebar li { font-size: 0.9rem; }
+                .main { width: 65%; padding: 2rem; } .main h2 { color: #1e3a8a; border-bottom: 2px solid #1e3a8a; padding-bottom: 5px; }
+                .job, .education-item { margin-bottom: 20px; } h4 { margin: 0 0 5px; }
+              </style></head><body>
+                <div class="sidebar">
+                  <h1>${resumeData.name || 'Your Name'}</h1><p>${resumeData.profession || 'Your Profession'}</p>
+                  <h2>Contact</h2><p>${resumeData.email}<br/>${resumeData.phone}<br/>${resumeData.location}</p>
+                </div>
+                <div class="main">
+                  <h2>Summary</h2><p>${formatTextForHtml(resumeData.summary)}</p>
+                  <h2>Skills</h2><ul>${(resumeData.skills || []).slice(0, 15).map(s => `<li>${s}</li>`).join('')}</ul>
+                  <h2>Experience</h2>${renderExperience(resumeData.experience)}
+                  <h2>Education</h2>${renderEducation(resumeData.education)}
+                </div>
+              </body></html>`;
+            break;
+
+          case 'professional':
+          default:
+            html = `
+              <html><head><style>
+                body { font-family: Arial, sans-serif; margin: 2rem; } p { white-space: normal; }
+                .header { text-align: center; border-bottom: 3px solid #2563eb; padding-bottom: 10px; margin-bottom: 20px; }
+                .header h1 { color: #2563eb; margin: 0; font-size: 2.5rem; } .header p { margin: 5px 0; color: #555; }
+                .section h2 { color: #2563eb; border-bottom: 1px solid #ccc; padding-bottom: 5px; margin-top: 20px; }
+                .job, .education-item { margin-bottom: 15px; } h4 { margin: 0 0 5px; }
+              </style></head><body>
+                <div class="header"><h1>${resumeData.name || 'YOUR NAME'}</h1><p>${resumeData.profession || 'Your Profession'}</p><p>${resumeData.email || ''} | ${resumeData.phone || ''}</p></div>
+                <div class="section"><h2>Summary</h2><p>${formatTextForHtml(resumeData.summary)}</p></div>
+                <div class="section"><h2>Skills</h2><p>${renderSkills(resumeData.skills)}</p></div>
+                <div class="section"><h2>Experience</h2>${renderExperience(resumeData.experience)}</div>
+                <div class="section"><h2>Education</h2>${renderEducation(resumeData.education)}</div>
+              </body></html>`;
+            break;
+        }
+        resolve(html);
+      });
+    },
+    onSuccess: (htmlContent: string) => setPreviewHtml(htmlContent),
+    onError: () => setPreviewHtml("<p class='text-center text-red-500 p-8'>Error generating preview.</p>"),
+  });
+
+  const downloadPdfMutation = useMutation({
+    mutationFn: async (data: { templateId: string; resumeData: ParsedResumeData, id: string, isManual: boolean }) => {
+      const response = await fetch("/api/generate-resume-pdf", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data), });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || response.statusText);
+      }
+      return response.blob();
+    },
+    onSuccess: (pdfBlob: Blob, variables: { templateId: string; resumeData: ParsedResumeData }) => {
+      const url = window.URL.createObjectURL(pdfBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      const fileName = `${variables.resumeData.name || 'Resume'}_${variables.templateId}.pdf`.replace(/[^a-zA-Z0-9_-]/g, '_');
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast({ title: "Resume Downloaded", description: "Your PDF resume has been downloaded successfully." });
+    },
+    onError: (error: any) => { toast({ title: "Download Failed", description: error.message || "An unexpected error occurred.", variant: "destructive", }); }
+  });
+
+  useEffect(() => {
+    if (currentStep === "editor-preview" && selectedTemplate) {
+      generatePreviewMutation.mutate({ templateId: selectedTemplate, resumeData: debouncedExtractedData });
+    }
+  }, [debouncedExtractedData, selectedTemplate, currentStep]);
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => setSelectedFile(event.target.files?.[0] || null);
+  const handleExtractInformation = () => selectedFile ? uploadMutation.mutate(selectedFile) : toast({ title: "No File Selected", variant: "destructive" });
+  const handleLinkedinImport = () => (linkedinUrl && linkedinUrl.includes("linkedin.com")) ? linkedinImportMutation.mutate(linkedinUrl) : toast({ title: "Invalid URL", variant: "destructive" });
+  const handleDownloadPdf = () => (extractedData && selectedTemplate) ? downloadPdfMutation.mutate({ templateId: selectedTemplate, resumeData: extractedData, id: user?.user?.id, isManual: true }) : toast({ title: "Missing Information", variant: "destructive" });
+
+  const steps = ["Choose Method", "Input Data", "Select Template", "Review & Download"];
+  const getCurrentStepIndex = () => {
+    switch (currentStep) {
+      case "select": return 0;
+      case "upload": case "linkedin-url": case "manual-edit": return 1;
+      case "templates": return 2;
+      case "editor-preview": return 3;
+      default: return 0;
+    }
+  };
+
+  const renderSelectStep = () => (<div className="max-w-4xl mx-auto space-y-8"><ProgressStepper steps={steps} currentStepIndex={getCurrentStepIndex()} /><div className="text-center"><div className="bg-blue-50 dark:bg-blue-950 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4"><FileText className="w-8 h-8 text-blue-600 dark:text-blue-400" /></div><h1 className="text-3xl font-bold">Build Your Resume</h1><p className="text-lg text-gray-600">Choose how you'd like to get started</p></div><div className="grid md:grid-cols-2 gap-6"><Card className="border-2 border-dashed hover:border-blue-400 cursor-pointer group" onClick={() => { setBuildMethod("upload"); setCurrentStep("upload"); }}><CardContent className="p-8 text-center"><div className="bg-blue-50 group-hover:bg-blue-100 rounded-full w-12 h-12 flex items-center justify-center mx-auto mb-4"><Upload className="w-6 h-6 text-blue-600" /></div><h3 className="text-xl font-semibold mb-2">Upload Existing Resume</h3><p className="text-gray-600 mb-4">We'll extract the info to get you started fast.</p><Button variant="outline" className="mt-2">Upload Resume</Button></CardContent></Card><Card className="border-2 border-dashed hover:border-blue-400 cursor-pointer group" onClick={() => { setBuildMethod("linkedin"); setCurrentStep("linkedin-url"); }}><CardContent className="p-8 text-center"><div className="bg-blue-50 group-hover:bg-blue-100 rounded-full w-12 h-12 flex items-center justify-center mx-auto mb-4"><Linkedin className="w-6 h-6 text-blue-600" /></div><h3 className="text-xl font-semibold mb-2">Import from LinkedIn</h3><p className="text-gray-600 mb-4">Pull info directly from your LinkedIn profile.</p><Button variant="outline" className="mt-2">Connect LinkedIn</Button></CardContent></Card><Card className="md:col-span-2 border-2 border-dashed hover:border-green-400 cursor-pointer group" onClick={() => { setBuildMethod("manual"); setExtractedData(initialResumeData); setCurrentStep("manual-edit"); }}><CardContent className="p-8 text-center"><div className="bg-green-50 group-hover:bg-green-100 rounded-full w-12 h-12 flex items-center justify-center mx-auto mb-4"><FileText className="w-6 h-6 text-green-600" /></div><h3 className="text-xl font-semibold mb-2">Start From Scratch</h3><p className="text-gray-600 mb-4">Fill in your details manually with our guided form.</p><Button variant="outline" className="mt-2">Start Building</Button></CardContent></Card></div></div>);
+  const renderLinkedinUrlStep = () => (<div className="max-w-2xl mx-auto space-y-8"><ProgressStepper steps={steps} currentStepIndex={getCurrentStepIndex()} /><div className="text-center"><div className="bg-blue-50 dark:bg-blue-950 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4"><Linkedin className="w-8 h-8 text-blue-600 dark:text-blue-400" /></div><h1 className="text-3xl font-bold">Import from LinkedIn</h1><p className="text-lg text-gray-600">Enter your public profile URL to get started.</p></div><Card><CardContent className="p-8 space-y-6"><div><Label htmlFor="linkedin-url" className="text-left block">LinkedIn Profile URL</Label><Input id="linkedin-url" type="url" placeholder="https://www.linkedin.com/in/your-profile" value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)} /></div><div className="flex gap-4"><Button onClick={() => setCurrentStep("select")} variant="outline" className="flex-1"><ArrowLeft className="w-4 h-4 mr-2" /> Back</Button><Button onClick={handleLinkedinImport} disabled={linkedinImportMutation.isPending || !linkedinUrl} className="flex-1">{linkedinImportMutation.isPending ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" />Importing...</>) : (<><ExternalLink className="w-4 h-4 mr-2" /> Import</>)}</Button></div></CardContent></Card></div>);
+  const renderUploadStep = () => (<div className="max-w-4xl mx-auto space-y-8"><ProgressStepper steps={steps} currentStepIndex={getCurrentStepIndex()} /><div className="text-center"><h1 className="text-3xl font-bold text-blue-600 mb-4">AI-Powered Resume Builder</h1><p className="text-gray-600">Upload your resume to begin.</p></div><Card className="p-6"><CardHeader><CardTitle className="flex items-center space-x-2"><Upload className="w-5 h-5" /><span>Upload Your Existing Resume</span></CardTitle><CardDescription>We'll extract the information to get you started.</CardDescription></CardHeader><CardContent className="space-y-6"><div><Label htmlFor="resume-file">Choose your resume file</Label><div className="border-2 border-dashed rounded-lg p-8 text-center hover:border-blue-400"><FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" /><Input id="resume-file" type="file" accept=".pdf,.doc,.docx,.txt" onChange={handleFileSelect} className="hidden" /><Label htmlFor="resume-file" className="mt-4 inline-block cursor-pointer bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">Choose File</Label></div>{selectedFile && (<div className="mt-4 p-3 bg-green-50 rounded-lg border border-green-200"><p className="text-sm text-green-800">✓ Selected: {selectedFile.name}</p></div>)}</div><div className="flex justify-between"><Button variant="outline" onClick={() => setCurrentStep("select")}><ArrowLeft className="w-4 h-4 mr-2" /> Back</Button><Button onClick={handleExtractInformation} disabled={!selectedFile || uploadMutation.isPending}>{uploadMutation.isPending ? "Processing..." : "Extract Information"}<ArrowRight className="w-4 h-4 ml-2" /></Button></div></CardContent></Card></div>);
+  const renderTemplatesStep = () => (<div className="max-w-6xl mx-auto space-y-8"><ProgressStepper steps={steps} currentStepIndex={getCurrentStepIndex()} /><div className="text-center"><h1 className="text-3xl font-bold mb-4">Choose Your Resume Template</h1><p className="text-gray-600">Select from our professionally designed templates.</p></div><div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">{resumeTemplates.map((template) => (<Card key={template.id} className={`cursor-pointer transition-all hover:shadow-lg ${selectedTemplate === template.id ? "border-blue-500 ring-2 ring-blue-200" : "border-gray-200"}`} onClick={() => setSelectedTemplate(template.id)}><CardContent className="p-6"><div className="aspect-[3/4] bg-white rounded-lg mb-4 border overflow-hidden">{template.id === "professional" && <div className="w-full h-full p-3 text-xs"><div className="text-center border-b-2 border-blue-500 pb-2 mb-2"><div className="font-bold text-lg">John Doe</div><div className="text-gray-600">Software Engineer</div><div className="text-xs">john@email.com | (555) 123-4567</div></div><div className="space-y-2"><div className="font-semibold text-blue-600">SUMMARY</div><div className="h-2 bg-gray-200 rounded"></div><div className="h-1 bg-gray-200 rounded w-3/4"></div><div className="font-semibold text-blue-600 mt-3">EXPERIENCE</div><div className="h-1 bg-gray-200 rounded"></div><div className="h-1 bg-gray-200 rounded w-2/3"></div><div className="font-semibold text-blue-600 mt-3">SKILLS</div><div className="flex gap-1"><div className="h-1 bg-blue-200 rounded w-8"></div><div className="h-1 bg-blue-200 rounded w-6"></div><div className="h-1 bg-blue-200 rounded w-10"></div></div></div></div>}{template.id === "harvard" && <div className="w-full h-full p-3 text-xs font-serif"><div className="text-center mb-3"><div className="font-bold text-lg">JOHN DOE</div><div className="text-gray-600">123 Main St | john@email.com</div></div><div className="space-y-2"><div className="font-bold underline">EDUCATION</div><div className="h-1 bg-gray-200 rounded"></div><div className="h-1 bg-gray-200 rounded w-3/4"></div><div className="font-bold underline mt-3">EXPERIENCE</div><div className="h-1 bg-gray-200 rounded"></div><div className="h-1 bg-gray-200 rounded w-2/3"></div><div className="font-bold underline mt-3">SKILLS</div><div className="grid grid-cols-2 gap-1"><div className="h-1 bg-gray-200 rounded"></div><div className="h-1 bg-gray-200 rounded"></div></div></div></div>}{template.id === "creative" && <div className="w-full h-full flex"><div className="w-2/5 bg-blue-900 text-white p-2 text-xs"><div className="w-8 h-8 bg-gray-300 rounded-full mx-auto mb-1"></div><div className="text-center font-bold mb-2">CONTACT</div><div className="space-y-1"><div className="h-1 bg-blue-300 rounded"></div><div className="h-1 bg-blue-300 rounded w-3/4"></div></div><div className="text-center font-bold mt-2 mb-1">SKILLS</div><div className="space-y-1"><div className="h-1 bg-blue-300 rounded"></div><div className="h-1 bg-blue-300 rounded w-2/3"></div></div></div><div className="w-3/5 p-2 text-xs"><div className="font-bold text-lg mb-1">John Doe</div><div className="text-gray-600 mb-2">Creative Designer</div><div className="font-semibold mb-1">PROFILE</div><div className="space-y-1"><div className="h-1 bg-gray-200 rounded"></div><div className="h-1 bg-gray-200 rounded w-3/4"></div></div><div className="font-semibold mt-2 mb-1">EXPERIENCE</div><div className="space-y-1"><div className="h-1 bg-gray-200 rounded"></div><div className="h-1 bg-gray-200 rounded w-2/3"></div></div></div></div>}</div><div className="space-y-2"><div className="flex items-center justify-between"><h3 className="font-semibold">{template.name}</h3><Badge variant={template.style === "modern" ? "default" : "secondary"}>{template.style}</Badge></div><p className="text-sm text-gray-600">{template.description}</p></div></CardContent></Card>))}</div><div className="flex justify-between mt-8"><Button variant="outline" onClick={() => setCurrentStep(buildMethod === 'manual' ? 'manual-edit' : buildMethod === 'upload' ? 'upload' : 'linkedin-url')}><ArrowLeft className="w-4 h-4 mr-2" /> Back</Button><Button onClick={() => setCurrentStep('editor-preview')} disabled={!selectedTemplate}>Proceed to Editor <ArrowRight className="w-4 h-4 ml-2" /></Button></div></div>);
+
+  const renderManualEditStep = () => (
+    <div className="max-w-4xl mx-auto space-y-4">
+      <ProgressStepper steps={steps} currentStepIndex={getCurrentStepIndex()} />
+      <div className="text-center mb-8"><h1 className="text-3xl font-bold">Enter Your Details</h1><p className="text-lg text-gray-600">Fill out your information to get started.</p></div>
+      <ResumeEditorForm
+        extractedData={extractedData}
+        setExtractedData={setExtractedData}
+        onAISuggestion={handleAISuggestion}
+      />
+      <div className="flex justify-between mt-4">
+        <Button onClick={() => setCurrentStep('select')} variant="outline"><ArrowLeft className="w-4 h-4 mr-2" /> Back</Button>
+        <Button onClick={() => setCurrentStep('templates')} className="bg-blue-600 hover:bg-blue-700">Save & Choose Template <ArrowRight className="w-4 h-4 ml-2" /></Button>
+      </div>
+    </div>
+  );
+
+  const renderEditorPreviewStep = () => (
+    <div className="max-w-full mx-auto space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-full">
+        <div className="h-[calc(100vh-100px)] overflow-y-auto pr-2">
+          <div className="flex justify-between items-center mb-4">
+            <h1 className="text-2xl font-bold">Review Your Details</h1>
+            <Button variant="outline" onClick={() => setCurrentStep("templates")}><ArrowLeft className="w-4 h-4 mr-2" /> Back to Templates</Button>
+          </div>
+          <ResumeEditorForm
+            extractedData={extractedData}
+            setExtractedData={setExtractedData}
+            onAISuggestion={handleAISuggestion}
+          />
+        </div>
+        <div className="h-[calc(100vh-100px)] flex flex-col sticky top-[50px]">
+          <h2 className="text-2xl font-bold mb-4">Live Preview</h2>
+          <div className="flex-1 bg-gray-200 p-4 rounded-lg flex items-center justify-center dark:bg-gray-700">
+            <div className="w-full h-full bg-white shadow-lg">
+              {generatePreviewMutation.isPending ? (<div className="flex items-center justify-center h-full text-gray-500"><Loader2 className="w-8 h-8 animate-spin mr-2" /> Loading Preview...</div>) : previewHtml ? (<iframe srcDoc={previewHtml} className="w-full h-full border-0" title="Resume Preview" />) : (<div className="flex items-center justify-center h-full text-gray-500"><p>Preview will appear here.</p></div>)}
+            </div>
+          </div>
+          <div className="mt-4">
+            <Button onClick={handleDownloadPdf} disabled={!selectedTemplate || downloadPdfMutation.isPending} className="w-full">{downloadPdfMutation.isPending ? "Generating..." : "Download as PDF"}<Download className="w-4 h-4 ml-2" /></Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      <GlobalHeader />
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 py-6 px-4">
+        <div className="container mx-auto">
+          {currentStep === "select" && renderSelectStep()}
+          {currentStep === "upload" && renderUploadStep()}
+          {currentStep === "linkedin-url" && renderLinkedinUrlStep()}
+          {currentStep === "manual-edit" && renderManualEditStep()}
+          {currentStep === "templates" && renderTemplatesStep()}
+          {currentStep === "editor-preview" && renderEditorPreviewStep()}
+        </div>
+      </div>
+    </>
+  );
+}
