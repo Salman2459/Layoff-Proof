@@ -9,7 +9,7 @@ import { setupGoogleAuth } from "./googleAuth";
 // import { setupLinkedInAuth } from "./linkedinAuth";
 import { analyzeJobSecurityRisk } from "./anthropic";
 import { dataIntegrator } from "./data-integrator";
-import { insertCompanySchema, updateUserProfileSchema, ParsedResumeData } from "@shared/schema";
+import { insertCompanySchema, updateUserProfileSchema, ParsedResumeData, userJobProfiles, userDocuments } from "@shared/schema";
 import multer from "multer";
 import fs from "fs";
 import path from "path";
@@ -35,6 +35,7 @@ import {
   getSubscription
 } from "./stripe";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import { cloudinary } from "./cloudinary";
 
 const rssParser = new Parser();
 
@@ -3863,6 +3864,476 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
       });
     }
   });
+
+
+
+
+
+
+
+
+  // ==================================================
+  //       =========== Profile Building =======
+  //===================================================
+
+
+
+  app.post("/api/profile/:section/:id", upload.single('file'), async (req, resp) => {
+    try {
+
+
+      const { id } = req.params;
+      const { section } = req.params;
+      console.log("section.................", section)
+      const data = req.body[section];
+      console.log("personal data_________", data)
+      const user = await GetUserScscriptionTrialValidation(id);
+      if (!user) {
+        return resp.status(400).json({
+          success: false,
+          error: "Subscription has expired, or you have not subscribed."
+        })
+      }
+
+      // Check if profile exists; if not, create it
+      const [existingProfile] = await db
+        .select()
+        .from(userJobProfiles)
+        .where(eq(userJobProfiles.userId, id))
+        .limit(1);
+
+      if (!existingProfile) {
+        console.log("No profile found for user, creating one now...");
+        await db.insert(userJobProfiles).values({
+          userId: id,
+          profileCompletion: 0
+        });
+      }
+
+      // =========== For input Varificaiton============
+
+
+      const SECTION_FIELDS: Record<string, string[]> = {
+        personal: [
+          "firstName",
+          "lastName",
+          "email",
+          "phone",
+          "linkedin",
+          "twitter",
+          "website",
+          "github",
+        ],
+        residency: [
+          "street",
+          "buildingNo",
+          "apartmentNo",
+          "country",
+          "city",
+          "zip",
+          "authorizedCountries",
+          "sponsorship",
+          "relocate",
+        ],
+        experience: ["totalExperience", "experiences"],
+        education: ["education"],
+        general: [
+          "expectedSalary",
+          "expectedSalaryCurrency",
+          "currentSalary",
+          "currentSalaryCurrency",
+          "noticePeriod",
+          "startDate",
+          "race",
+          "disability",
+          "veteran",
+        ],
+        skillAndLanguages: ["skills", "languages"],
+        achievements: ["achievements"],
+        documentupdate: ["resume", "recommendationLetters", "documents"],
+
+      };
+
+
+      const cleanPayload = (payload: any) => {
+        if (!payload) return {};
+        return Object.fromEntries(
+          Object.entries(payload).filter(
+            ([_, value]) => value !== undefined && value !== null && value !== ""
+          )
+        );
+      }
+
+      const pickSectionFields = (data: any, allowedFields: string[]) => {
+        if (!data) return {};
+        return Object.fromEntries(
+          Object.entries(data).filter(([key]) => allowedFields.includes(key))
+
+        );
+      }
+
+      const allowedFields = SECTION_FIELDS[section];
+      if (!allowedFields) {
+        return resp.status(400).json({
+          success: false,
+          error: "Invalid section",
+        });
+      }
+
+      console.log("data", data)
+      const cleaned = cleanPayload(data || {});
+      const updateData = pickSectionFields(cleaned, allowedFields);
+
+
+      // =========== ============ =======================
+
+      console.log("fields to update....", updateData)
+      const updatepersonalDetails = async () => {
+        if (!updateData.firstName || !updateData.lastName || !updateData.email || !updateData.phone) {
+          return resp.status(400).json({
+            success: false,
+            error: "Missing required fields"
+          })
+        }
+        const updatedUser = await db
+          .update(userJobProfiles)
+          .set(updateData)
+          .where(eq(userJobProfiles.userId, id))
+          .returning();
+
+        return resp.status(200).json({
+          success: true,
+          data: updatedUser,
+          message: "User updated successfully"
+        })
+
+      }
+
+      const update_residencyDetails = async () => {
+
+        if (!updateData.city || !updateData.country) {
+          return resp.status(400).json({
+            success: false,
+            error: "You are missing required data"
+          })
+        }
+
+        const updatedUser = await db
+          .update(userJobProfiles)
+          .set(updateData)
+          .where(eq(userJobProfiles.userId, id))
+          .returning();
+
+        return resp.status(200).json({
+          success: true,
+          data: updatedUser,
+          message: "Adress added successfuly"
+        })
+
+      }
+
+      const update_experience = async () => {
+        if (!data.totalExperience) {
+          return resp.status(400).json({
+            success: false,
+            error: "Total experience is required"
+          })
+        }
+
+        if (!data.experiences || !Array.isArray(data.experiences)) {
+          return resp.status(400).json({
+            success: false,
+            error: "Experiences data is required"
+          })
+        }
+
+        // Validate each experience entry has required fields
+        for (const exp of data.experiences) {
+          if (!exp.company || !exp.title || !exp.fromMonth || !exp.fromYear) {
+            return resp.status(400).json({
+              success: false,
+              error: "Each experience must have company, title, from month and from year"
+            })
+          }
+          // If not currently working, toMonth and toYear are required
+          if (!exp.currentlyWorking && (!exp.toMonth || !exp.toYear)) {
+            return resp.status(400).json({
+              success: false,
+              error: "End date (month and year) is required for past roles"
+            })
+          }
+        }
+
+        const updatedUser = await db
+          .update(userJobProfiles)
+          .set({
+            totalExperience: data.totalExperience,
+            experiences: data.experiences || [],
+          })
+          .where(eq(userJobProfiles.userId, id))
+          .returning();
+
+        return resp.status(200).json({
+          success: true,
+          data: updatedUser,
+          message: "Experience updated successfully"
+        })
+      }
+
+      const update_education = async () => {
+        if (!data.education || !Array.isArray(data.education)) {
+          return resp.status(400).json({
+            success: false,
+            error: "Education data is required"
+          })
+        }
+
+        // Validate each education entry
+        for (const edu of data.education) {
+          if (!edu.school || !edu.degree || !edu.fromMonth || !edu.fromYear) {
+            return resp.status(400).json({
+              success: false,
+              error: "Each education entry must have school, degree, from month and from year"
+            })
+          }
+          if (!edu.isCurrentlyStudying && (!edu.toMonth || !edu.toYear)) {
+            return resp.status(400).json({
+              success: false,
+              error: "End date (month and year) is required for completed education"
+            })
+          }
+        }
+
+        const updatedUser = await db
+          .update(userJobProfiles)
+          .set({
+            education: data.education,
+          })
+          .where(eq(userJobProfiles.userId, id))
+          .returning();
+
+        return resp.status(200).json({
+          success: true,
+          data: updatedUser,
+          message: "Education updated successfully"
+        })
+      }
+
+      const update_general = async () => {
+        if (!data.general) {
+          return resp.status(400).json({
+            success: false,
+            error: "General preference data is required"
+          })
+        }
+
+        const updatedUser = await db
+          .update(userJobProfiles)
+          .set(updateData)
+          .where(eq(userJobProfiles.userId, id))
+          .returning();
+
+        return resp.status(200).json({
+          success: true,
+          data: updatedUser,
+          message: "General preferences updated successfully"
+        })
+      }
+
+      const update_skill_languages = async () => {
+        const updatedUser = await db
+          .update(userJobProfiles)
+          .set(updateData)
+          .where(eq(userJobProfiles.userId, id))
+          .returning();
+
+        return resp.status(200).json({
+          success: true,
+          data: updatedUser,
+          message: "Skills and Languages updated successfully"
+        })
+      }
+
+      const update_achievements = async () => {
+        const updatedUser = await db
+          .update(userJobProfiles)
+          .set(updateData)
+          .where(eq(userJobProfiles.userId, id))
+          .returning();
+
+        return resp.status(200).json({
+          success: true,
+          data: updatedUser,
+          message: "Achievements updated successfully"
+        })
+      }
+
+      const update_document = async () => {
+        try {
+          const { id } = req.params;
+          const { documentType } = req.query; // Optional query param to specify type
+
+          if (!req.file) {
+            return resp.status(400).json({
+              success: false,
+              message: "No file uploaded",
+            });
+          }
+
+          console.log(`Uploading ${req.file.mimetype} to Cloudinary...`);
+
+          // Upload to Cloudinary with optimization
+          const result = await cloudinary.uploader.upload(req.file.path, {
+            resource_type: "auto", // Better for PDFs than "raw" in some cases
+            folder: "job-profiles/documents",
+            access_mode: "public"
+          });
+
+          // Determine document type
+          let docType = 'certificate'; // Default
+          if (documentType === 'resume' || req.file.originalname.toLowerCase().includes('resume')) {
+            docType = 'resume';
+          } else if (documentType === 'recommendation_letter' || req.file.originalname.toLowerCase().includes('recommendation')) {
+            docType = 'recommendation_letter';
+          }
+
+          // Get profile ID first without updating
+          const [userProfile] = await db
+            .select()
+            .from(userJobProfiles)
+            .where(eq(userJobProfiles.userId, id))
+            .limit(1);
+
+          // 2. Insert record into userDocuments table
+          await db.insert(userDocuments).values({
+            userId: id,
+            profileId: userProfile?.id, // Link to the profile if it exists
+            documentType: docType,
+            fileName: req.file.originalname,
+            fileUrl: result.secure_url,
+            fileSize: req.file.size,
+            mimeType: req.file.mimetype,
+          });
+
+          // 3. Update the main userJobProfiles table with the latest URL for this type
+          if (docType === 'resume') {
+            await db.update(userJobProfiles)
+              .set({ resume: result.secure_url, updatedAt: new Date() })
+              .where(eq(userJobProfiles.userId, id));
+          } else if (docType === 'recommendation_letter') {
+            await db.update(userJobProfiles)
+              .set({ recommendationLetter: result.secure_url, updatedAt: new Date() })
+              .where(eq(userJobProfiles.userId, id));
+          } else if (docType === 'certificate') {
+            await db.update(userJobProfiles)
+              .set({ certificates: result.secure_url, updatedAt: new Date() })
+              .where(eq(userJobProfiles.userId, id));
+          }
+
+          // Clean up temp file
+          if (fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+          }
+
+          let message = 'Document uploaded and saved successfully';
+          if (docType === 'resume') message = 'Resume uploaded and saved successfully';
+          else if (docType === 'recommendation_letter') message = 'Recommendation letter uploaded and saved successfully';
+
+          return resp.status(200).json({
+            success: true,
+            data: userProfile,
+            message: message,
+            url: result.secure_url
+          });
+        } catch (error) {
+          console.error("Cloudinary upload/DB update error:", error)
+          return resp.status(500).json({
+            success: false,
+            message: "Internal Server Error",
+            error: error instanceof Error ? error.message : "Error during Uploading"
+          })
+        }
+      }
+
+
+
+      switch (section) {
+        case "personal":
+          await updatepersonalDetails();
+          break;
+        case "residency":
+          await update_residencyDetails();
+          break;
+        case "experience":
+          await update_experience();
+          break;
+        case "education":
+          await update_education();
+          break;
+        case "skillAndLanguages":
+          await update_skill_languages();
+          break;
+        case "achievements":
+          await update_achievements();
+          break;
+        case "documentupdate":
+          await update_document();
+          break;
+        case "general":
+          await update_general();
+          break
+        default:
+          break;
+      }
+
+
+    } catch (error) {
+      console.error("Error updating user:", error);
+      resp.status(500).json({
+        success: false,
+        error: "Failed to update user",
+        message: "Internal server error"
+      })
+    }
+  })
+
+
+  app.get("/api/profile/jobprofile/:id", async (req, resp) => {
+
+    try {
+      const { id } = req.params;
+      const [userProfile] = await db
+        .select()
+        .from(userJobProfiles)
+        .where(eq(userJobProfiles.userId, id))
+        .limit(1);
+
+      console.log(userProfile)
+
+      return resp.status(200).json({
+        success: true,
+        data: userProfile || null,
+        message: "Job profile fetched successfully"
+      })
+    } catch (error) {
+      console.error("Error fetching job profile:", error);
+      resp.status(500).json({
+        success: false,
+        error: "Failed to fetch job profile",
+        message: "Internal server error"
+      })
+    }
+  })
+
+
+
+
+
+
+
+
+
+
 
 
 

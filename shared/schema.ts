@@ -678,5 +678,185 @@ export type InsertSkillsAssessment = z.infer<typeof insertSkillsAssessmentSchema
 export type SelectPortfolio = typeof portfolios.$inferSelect;
 export type InsertPortfolio = z.infer<typeof insertPortfolioSchema>;
 
+
 export type SelectNetworkConnection = typeof networkConnections.$inferSelect;
 export type InsertNetworkConnection = z.infer<typeof insertNetworkConnectionSchema>;
+
+// ============================================================================
+// AUTO JOB APPLY TABLES - START
+// New tables added for the auto-job-apply form functionality
+// ============================================================================
+
+// User Job Profiles table - stores detailed job application profile data
+export const userJobProfiles = pgTable("user_job_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+
+  // Personal Details
+  firstName: varchar("first_name"),
+  lastName: varchar("last_name"),
+  email: varchar("email"),
+  phone: varchar("phone"),
+  phoneCode: varchar("phone_code"),
+  linkedin: varchar("linkedin"),
+  twitter: varchar("twitter"),
+  website: varchar("website"),
+  github: varchar("github"),
+
+  // Residency Information
+  street: varchar("street"),
+  buildingNo: varchar("building_no"),
+  apartmentNo: varchar("apartment_no"),
+  country: varchar("country"),
+  city: varchar("city"),
+  zip: varchar("zip"),
+  authorizedCountries: text("authorized_countries").array(),
+  sponsorship: varchar("sponsorship"), // REQUIRED, NOT_REQUIRED
+  relocate: varchar("relocate"), // YES, NO
+
+  // Experience and Skills
+  totalExperience: varchar("total_experience"),
+  experiences: jsonb("experiences").$type<Array<{
+    company: string;
+    title: string;
+    fromMonth: string;
+    fromYear: string;
+    toMonth: string;
+    toYear: string;
+    currentlyWorking: boolean;
+    description: string;
+  }>>(),
+  skills: jsonb("skills").$type<Array<{ name: string }>>(),
+  languages: jsonb("languages").$type<Array<{ language: string; proficiency: string }>>(),
+
+  // Education
+  education: jsonb("education").$type<Array<{
+    school: string;
+    degree: string;
+    fieldOfStudy: string;
+    fromMonth: string;
+    fromYear: string;
+    toMonth: string;
+    toYear: string;
+    isCurrentlyStudying: boolean;
+    description: string;
+  }>>(),
+
+  // General Job Preferences
+  expectedSalary: integer("expected_salary"),
+  expectedSalaryCurrency: varchar("expected_salary_currency"),
+  currentSalary: integer("current_salary"),
+  currentSalaryCurrency: varchar("current_salary_currency"),
+  noticePeriod: integer("notice_period"),
+  startDate: timestamp("start_date"),
+  race: varchar("race"),
+  disability: varchar("disability"),
+  veteran: varchar("veteran"),
+
+  // Achievements
+  achievements: text("achievements"),
+
+  // Documents
+  certificates: text("certificates"),
+  recommendationLetter: text("recommendation_letter"),
+  resume: text("resume"),
+
+  // Profile completion percentage
+  profileCompletion: integer("profile_completion").default(0),
+
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// User Documents table - stores file references for resumes, certificates, and recommendation letters
+export const userDocuments = pgTable("user_documents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  profileId: varchar("profile_id").references(() => userJobProfiles.id),
+
+  documentType: varchar("document_type").notNull(), // resume, certificate, recommendation_letter
+  fileName: varchar("file_name").notNull(),
+  fileUrl: varchar("file_url").notNull(), // S3 or storage URL
+  fileSize: integer("file_size"), // in bytes
+  mimeType: varchar("mime_type"), // application/pdf, etc.
+
+  // Optional metadata
+  documentTitle: varchar("document_title"), // for certificates
+  issuer: varchar("issuer"), // for certificates
+  issueDate: timestamp("issue_date"), // for certificates
+
+  uploadedAt: timestamp("uploaded_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Relations for new auto-job-apply tables
+export const userJobProfilesRelations = relations(userJobProfiles, ({ one, many }) => ({
+  user: one(users, { fields: [userJobProfiles.userId], references: [users.id] }),
+  documents: many(userDocuments),
+}));
+
+export const userDocumentsRelations = relations(userDocuments, ({ one }) => ({
+  user: one(users, { fields: [userDocuments.userId], references: [users.id] }),
+  profile: one(userJobProfiles, { fields: [userDocuments.profileId], references: [userJobProfiles.id] }),
+}));
+
+// Insert schemas for auto-job-apply tables
+export const insertUserJobProfileSchema = createInsertSchema(userJobProfiles).pick({
+  firstName: true,
+  lastName: true,
+  email: true,
+  phone: true,
+  phoneCode: true,
+  linkedin: true,
+  twitter: true,
+  website: true,
+  github: true,
+  street: true,
+  buildingNo: true,
+  apartmentNo: true,
+  country: true,
+  city: true,
+  zip: true,
+  authorizedCountries: true,
+  sponsorship: true,
+  relocate: true,
+  totalExperience: true,
+  experiences: true,
+  skills: true,
+  languages: true,
+  education: true,
+  expectedSalary: true,
+  expectedSalaryCurrency: true,
+  currentSalary: true,
+  currentSalaryCurrency: true,
+  noticePeriod: true,
+  startDate: true,
+  race: true,
+  disability: true,
+  veteran: true,
+  achievements: true,
+  profileCompletion: true,
+});
+
+export const insertUserDocumentSchema = createInsertSchema(userDocuments).pick({
+  profileId: true,
+  documentType: true,
+  fileName: true,
+  fileUrl: true,
+  fileSize: true,
+  mimeType: true,
+  documentTitle: true,
+  issuer: true,
+  issueDate: true,
+});
+
+// Types for auto-job-apply tables
+export type SelectUserJobProfile = typeof userJobProfiles.$inferSelect;
+export type InsertUserJobProfile = z.infer<typeof insertUserJobProfileSchema>;
+
+export type SelectUserDocument = typeof userDocuments.$inferSelect;
+export type InsertUserDocument = z.infer<typeof insertUserDocumentSchema>;
+
+// ============================================================================
+// AUTO JOB APPLY TABLES - END
+// ============================================================================

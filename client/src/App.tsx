@@ -35,6 +35,8 @@ import NetworkingAssistant from "@/pages/networking-assistant";
 import Signup from "@/pages/Signup";
 import Login from "@/pages/Login";
 import Subscribe from "@/pages/Subscribe";
+import AutoJobApply from "@/pages/auto-job-apply";
+import AutoJobApplyDashboard from "@/pages/auto-job-apply-dashboard";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -53,7 +55,7 @@ function Router() {
       <Route path="/subscription" component={Subscription} />
       <Route path="/risk-scanner" component={RiskScanner} />
       <Route path="/admin" component={AdminDashboard} />
-      
+
       {/* Career Tools */}
       <Route path="/tools" component={CareerToolsHub} />
       <Route path="/tools/layoff-tracker" component={LayoffTracker} />
@@ -69,7 +71,9 @@ function Router() {
       <Route path="/tools/skills-assessment" component={SkillsAssessment} />
       <Route path="/tools/portfolio-builder" component={PortfolioBuilder} />
       <Route path="/tools/networking-assistant" component={NetworkingAssistant} />
-      
+      <Route path="/tools/auto-job-apply" component={AutoJobApply} />
+      <Route path="/tools/auto-job-apply-dashboard" component={AutoJobApplyDashboard} />
+
       {/* Main homepage - accessible to all users */}
       <Route path="/" component={ElevateLanding} />
       <Route path="/old-home" component={CareerToolsHub} />

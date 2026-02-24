@@ -1,0 +1,1 @@
+ALTER TABLE "user_job_profiles" ADD COLUMN "experiences" jsonb;

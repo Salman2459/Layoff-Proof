@@ -17,7 +17,8 @@ import {
   Globe,
   Briefcase,
   BarChart3,
-  Lock
+  Lock,
+  Bot
 } from "lucide-react";
 import GlobalHeader from "@/components/GlobalHeader";
 import { useAuth } from "@/hooks/useAuth";
@@ -424,8 +425,39 @@ export default function ElevateLanding() {
                 Coming Soon
               </Button>
             </div>
+
+
+            {/* Auto JOB Apply */}
+            <div className="bg-white border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-shadow">
+              <div className="flex items-center justify-between mb-4">
+                <div className="p-3 bg-violet-100 rounded-lg">
+                  <Bot className="w-6 h-6 text-violet-600" />
+                </div>
+                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">Premium</span>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">AI Apply Engine</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                Automate your job applications with AI-powered precision and smart optimization.
+              </p>
+              <Button
+                onClick={() => handleToolAccess('/tools/auto-job-apply-dashboard')}
+                className="w-full bg-violet-600 hover:bg-violet-700 text-white"
+              >
+                {!isAuthenticated && <Lock className="w-4 h-4 mr-2" />}
+                {!isAuthenticated ? 'Sign Up to Access' : 'Try Now'}
+              </Button>
+              {/* <Button
+                className="w-full bg-gray-400 hover:bg-gray-700 text-white"
+              >
+                Coming Soon
+              </Button> */}
+            </div>
           </div>
         </div>
+
+
+
+
       </section>
 
       {/* CTA Section */}

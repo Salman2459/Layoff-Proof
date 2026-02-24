@@ -22,6 +22,20 @@
       "when": 1762409374147,
       "tag": "0002_bizarre_gambit",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1771409634273,
+      "tag": "0003_cool_ravenous",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1771416895181,
+      "tag": "0004_pretty_quicksilver",
+      "breakpoints": true
     }
   ]
 }
