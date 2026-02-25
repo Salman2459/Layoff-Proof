@@ -147,7 +147,7 @@ interface PlatformCardProps {
     badgeColor: string;
     status: 'available' | 'coming_soon';
     features: string[];
-    onLaunch?: (platformName: string) => void; // Optional prop for launch handler
+    onLaunch?: (platformName: string) => void;
 }
 
 function PlatformCard({ name, icon, description, gradient, badgeColor, status, features, onLaunch }: PlatformCardProps) {
@@ -174,7 +174,7 @@ function PlatformCard({ name, icon, description, gradient, badgeColor, status, f
                 </ul>
                 {isAvailable ? (
                     <button
-                        onClick={() => onLaunch?.(name)} // Safe call to optional onLaunch
+                        onClick={() => onLaunch?.(name)}
                         className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-semibold ${gradient} hover:opacity-90 transition-opacity`}
                     >
                         Launch <ChevronRight className="w-4 h-4" />
@@ -190,7 +190,7 @@ function PlatformCard({ name, icon, description, gradient, badgeColor, status, f
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LaunchFilterModal Component (New)
+// LaunchFilterModal Component
 // ─────────────────────────────────────────────────────────────────────────────
 interface LaunchFilterModalProps {
     isOpen: boolean;
@@ -214,13 +214,11 @@ function LaunchFilterModal({ isOpen, onClose, onProceed, platformName }: LaunchF
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            {/* Premium Backdrop with Blur */}
             <div
                 className="absolute inset-0 bg-black/40 backdrop-blur-md transition-opacity"
                 onClick={onClose}
             />
 
-            {/* Modal Content */}
             <div className="relative bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 border border-white/20">
                 <div className="bg-gradient-to-r from-purple-700 to-indigo-600 p-6 text-white relative">
                     <button
@@ -331,15 +329,36 @@ function LaunchFilterModal({ isOpen, onClose, onProceed, platformName }: LaunchF
 // Main Dashboard
 // ─────────────────────────────────────────────────────────────────────────────
 
-
 export default function AutoJobApplyDashboard() {
-    const { user } = useAuth();
+    const { user, isAuthenticated, isLoading: authLoading } = useAuth();
     const id = (user as any)?.id;
     const { toast } = useToast();
     const [hasSubscription, setHasSubscription] = useState<boolean>(false)
 
-
-
+    // Redirect if not authenticated or no active subscription
+    useEffect(() => {
+        if (!authLoading) {
+            if (!isAuthenticated) {
+                toast({
+                    title: "Unauthorized",
+                    description: "Please log in to continue",
+                    variant: "destructive",
+                });
+                setTimeout(() => window.location.href = "/login", 500);
+            } else {
+                const subscriptionEndDate = (user as any)?.subscriptionEndDate;
+                const hasActiveSubscription = subscriptionEndDate && new Date(subscriptionEndDate) >= new Date();
+                if (!hasActiveSubscription) {
+                    toast({
+                        title: "Subscription Required",
+                        description: "Please upgrade to access the Auto applied AI Engine tool.",
+                        variant: "destructive",
+                    });
+                    setTimeout(() => window.location.href = "/pricing", 500);
+                }
+            }
+        }
+    }, [isAuthenticated, authLoading, user, toast]);
 
 
     // Extension Installation Check
@@ -383,7 +402,6 @@ export default function AutoJobApplyDashboard() {
             if (!id) return null;
             const res = await fetch(`/api/profile/jobprofile/${id}`);
             const json = await res.json();
-            // json.data contains the full userJobProfiles row
             const fetchedData = json.data ?? null;
             console.log("user data fetched:", fetchedData);
             return fetchedData;
@@ -405,7 +423,8 @@ export default function AutoJobApplyDashboard() {
 
             return;
         }
-        if (!user?.subscriptionEndDate) {
+        const subscriptionEndDate = (user as any)?.subscriptionEndDate;
+        if (!subscriptionEndDate) {
             toast({
                 title: "Subscription Required",
                 description: " Please upgrade to access this tool.",
@@ -416,7 +435,7 @@ export default function AutoJobApplyDashboard() {
         }
 
 
-        if (user?.subscriptionEndDate && new Date(user?.subscriptionEndDate) < new Date()) {
+        if (subscriptionEndDate && new Date(subscriptionEndDate) < new Date()) {
             toast({
                 title: "Subscription Ended",
                 description: "Your subscription has ended. Please upgrade to access this tool.",
@@ -447,7 +466,8 @@ export default function AutoJobApplyDashboard() {
                         platform: selectedPlatform,
                         filters: filters,
                         userId: id,
-                        subscription: hasSubscription
+                        subscription: hasSubscription,
+                        profileData: profileData
                     },
                     (response: any) => {
                         console.log("Extension response:", response);
@@ -459,7 +479,6 @@ export default function AutoJobApplyDashboard() {
         }
 
         setIsLaunchModalOpen(false);
-        // Toast to show it's proceeding
         toast({
             title: `Starting ${selectedPlatform} Apply`,
             description: "AI engine is starting with your selected filters.",
@@ -501,7 +520,7 @@ export default function AutoJobApplyDashboard() {
             description: 'Let AI browse Indeed and submit applications for you while you focus on interviews.',
             gradient: 'bg-gradient-to-r from-purple-600 to-violet-500',
             badgeColor: 'bg-purple-100 text-purple-700',
-            status: 'coming_soon',
+            status: 'available',
             features: ['Filters jobs by salary, location & type', 'Fills multi-step application forms', 'Cover letter generation per job', 'Tracks every application automatically'],
         },
         {
@@ -515,9 +534,19 @@ export default function AutoJobApplyDashboard() {
         },
     ];
 
+    if (authLoading || (!isAuthenticated && !authLoading) || (user && (!(user as any).subscriptionEndDate || new Date((user as any).subscriptionEndDate) < new Date()))) {
+        return (
+            <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+                <div className="text-center">
+                    <div className="w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                    <p className="text-gray-600">Verifying access...</p>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="min-h-screen bg-gray-50">
-
             {/* ── Header ── */}
             <div className="bg-gradient-to-r from-purple-700 via-purple-600 to-indigo-600 text-white">
                 <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
@@ -542,13 +571,9 @@ export default function AutoJobApplyDashboard() {
             </div>
 
             <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-
-                {/* ── Profile Summary + Completion (side-by-side on large screens) ── */}
+                {/* ── Profile Summary + Completion ── */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-                    {/* Profile Info Card — shows real DB data */}
                     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 flex flex-col gap-4">
-                        {/* Avatar + name */}
                         <div className="flex items-center gap-3">
                             <div className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white text-xl font-bold shrink-0">
                                 {profileData?.firstName?.[0]?.toUpperCase() || (user as any)?.email?.[0]?.toUpperCase() || '?'}
@@ -564,7 +589,6 @@ export default function AutoJobApplyDashboard() {
                             </div>
                         </div>
 
-                        {/* Contact details */}
                         <div className="space-y-2 text-sm border-t border-gray-100 pt-3">
                             <div className="flex items-center gap-2 text-gray-600">
                                 <Mail className="w-4 h-4 text-purple-400 shrink-0" />
@@ -598,7 +622,6 @@ export default function AutoJobApplyDashboard() {
                             )}
                         </div>
 
-                        {/* Skills — schema: [{name: string}] */}
                         {(profileData?.skills?.length ?? 0) > 0 && (
                             <div className="border-t border-gray-100 pt-3">
                                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Skills</p>
@@ -615,7 +638,6 @@ export default function AutoJobApplyDashboard() {
                             </div>
                         )}
 
-                        {/* Languages — schema: [{language: string, proficiency: string}] */}
                         {(profileData?.languages?.length ?? 0) > 0 && (
                             <div className="border-t border-gray-100 pt-3">
                                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Languages</p>
@@ -630,7 +652,6 @@ export default function AutoJobApplyDashboard() {
                         )}
                     </div>
 
-                    {/* Completion Card */}
                     <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="p-6 border-b border-gray-100">
                             <div className="flex items-center justify-between mb-1">
@@ -663,7 +684,6 @@ export default function AutoJobApplyDashboard() {
                     </div>
                 </div>
 
-                {/* ── Quick Stats ── */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     {[
                         {
@@ -700,7 +720,6 @@ export default function AutoJobApplyDashboard() {
                     ))}
                 </div>
 
-                {/* ── Platform Cards ── */}
                 <div>
                     <div className="mb-4">
                         <h2 className="text-xl font-bold text-gray-900">Auto-Apply Platforms</h2>
@@ -712,12 +731,10 @@ export default function AutoJobApplyDashboard() {
                                 key={p.name}
                                 {...p}
                                 onLaunch={handleLaunch}
-
                             />
                         ))}
                     </div>
                 </div>
-
             </div>
 
             <LaunchFilterModal
@@ -725,7 +742,6 @@ export default function AutoJobApplyDashboard() {
                 onClose={() => setIsLaunchModalOpen(false)}
                 platformName={selectedPlatform}
                 onProceed={handleProceedLaunch}
-
             />
         </div>
     );

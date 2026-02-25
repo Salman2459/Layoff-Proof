@@ -4230,18 +4230,130 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
               .where(eq(userJobProfiles.userId, id));
           }
 
+          // Clean up temp file and perform AI extraction for resumes
+          let extractedData = null;
+
+          if (docType === 'resume') {
+            try {
+              console.log("Starting resume extraction...");
+              const dataBuffer = fs.readFileSync(req.file.path);
+              let resumeText = "";
+
+              if (req.file.mimetype === 'application/pdf') {
+                const pdfData = await pdf(dataBuffer);
+                resumeText = pdfData.text;
+              } else if (req.file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+                const result = await mammoth.extractRawText({ buffer: dataBuffer });
+                resumeText = result.value;
+              } else {
+                resumeText = dataBuffer.toString('utf-8');
+              }
+
+              if (resumeText.trim().length > 0) {
+                const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+                const prompt = `You are a helpful assistant that extracts information from resumes and formats them into a specific JSON structure.
+Here is the resume text:
+${resumeText.substring(0, 15000)}
+
+Please extract the following information and return ONLY a valid JSON object matching this structure EXACTLY. Return the raw JSON without markdown formatting (do not wrap in \`\`\`json):
+{
+  "personal": {
+    "firstName": "String",
+    "lastName": "String",
+    "email": "String",
+    "phone": "String",
+    "linkedin": "String",
+    "github": "String",
+    "website": "String"
+  },
+  "residency": {
+    "city": "String",
+    "country": "String"
+  },
+  "experience": {
+    "totalExperience": "String (just a number)",
+    "experiences": [
+      {
+        "company": "String",
+        "title": "String",
+        "fromMonth": "String (e.g., 'January')",
+        "fromYear": "String (e.g., '2020')",
+        "toMonth": "String (e.g., 'December' or empty if current)",
+        "toYear": "String (e.g., '2023' or empty if current)",
+        "currentlyWorking": Boolean,
+        "description": "String"
+      }
+    ]
+  },
+  "education": {
+    "education": [
+      {
+        "school": "String",
+        "degree": "String",
+        "fieldOfStudy": "String",
+        "fromMonth": "String",
+        "fromYear": "String",
+        "toMonth": "String",
+        "toYear": "String",
+        "isCurrentlyStudying": Boolean,
+        "description": "String"
+      }
+    ]
+  },
+  "skillAndLanguages": {
+    "skills": [
+      { "name": "String" }
+    ],
+    "languages": [
+      { "language": "String", "proficiency": "String" }
+    ]
+  }
+}
+
+Use empty strings/arrays if the information is missing. Infer 'currentlyWorking' based on dates.`;
+
+                const msg = await anthropic.messages.create({
+                  model: "claude-3-5-sonnet-20241022",
+                  max_tokens: 4000,
+                  temperature: 0,
+                  messages: [
+                    { role: "user", content: prompt }
+                  ]
+                });
+
+                if (msg.content[0].type === 'text') {
+                  const contentText = msg.content[0].text;
+                  try {
+                    extractedData = JSON.parse(contentText);
+                    console.log("Successfully extracted resume data.");
+                  } catch (e) {
+                    console.error("Failed to parse Claude JSON:", contentText);
+                  }
+                }
+              }
+            } catch (err) {
+              console.error("Resume extraction error:", err);
+            }
+          }
+
           // Clean up temp file
           if (fs.existsSync(req.file.path)) {
             fs.unlinkSync(req.file.path);
           }
 
           let message = 'Document uploaded and saved successfully';
-          if (docType === 'resume') message = 'Resume uploaded and saved successfully';
+          if (docType === 'resume') {
+            message = 'Resume uploaded and saved successfully';
+            if (extractedData) {
+              message = 'Resume uploaded and data extracted successfully';
+            }
+          }
           else if (docType === 'recommendation_letter') message = 'Recommendation letter uploaded and saved successfully';
 
           return resp.status(200).json({
             success: true,
             data: userProfile,
+            extractedData: extractedData,
             message: message,
             url: result.secure_url
           });
