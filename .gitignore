@@ -1,6 +1,28 @@
-node_modules
-dist
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Operating system files
 .DS_Store
-server/public
-vite.config.ts.*
-*.tar.gz".env" 
+Thumbs.db
+
+# Project specific
+server/public/
+
+# Environment variables (Crucial for security)
+.env
+.env.local
+.env.*.local
+
+# Build/Archive files
+*.tar.gz
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Vite-specific (Only ignore the generated files, not the config itself)
+vite.config.ts.timestamp-*
