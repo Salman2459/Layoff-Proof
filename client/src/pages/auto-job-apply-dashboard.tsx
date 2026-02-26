@@ -346,7 +346,7 @@ export default function AutoJobApplyDashboard() {
     const [isExtensionInstalled, setIsExtensionInstalled] = React.useState<boolean | null>(null);
     const checkExtensionInstalled = React.useCallback(() => {
         return new Promise<boolean>((resolve) => {
-            const extensionId = "jneicpcpcimoalcjichfdhfdbnkojldi";
+            const extensionId = "mlciepidkmndnddgnfajjjffnhpbapok";
             // @ts-ignore
             if (typeof window !== 'undefined' && window.chrome && window.chrome.runtime) {
                 try {
@@ -435,7 +435,7 @@ export default function AutoJobApplyDashboard() {
         console.log(`Launching ${selectedPlatform} with filters:`, filters);
 
         // Send message to extension
-        const extensionId = "jneicpcpcimoalcjichfdhfdbnkojldi";
+        const extensionId = "mlciepidkmndnddgnfajjjffnhpbapok";
         // @ts-ignore
         if (typeof window !== 'undefined' && window.chrome && window.chrome.runtime) {
             try {
@@ -525,7 +525,7 @@ export default function AutoJobApplyDashboard() {
                         <div>
                             <div className="flex items-center gap-2 mb-1">
                                 <Bot className="w-5 h-5 opacity-80" />
-                                <span className="text-sm font-medium text-purple-200">AI Apply Engine</span>
+                                <span className="text-sm font-medium text-purple-200">AI Auto Apply</span>
                             </div>
                             <h1 className="text-3xl font-bold">Auto Job Apply Dashboard</h1>
                             <p className="text-purple-200 mt-1 text-sm">

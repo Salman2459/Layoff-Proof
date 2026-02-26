@@ -3984,6 +3984,11 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
       const cleaned = cleanPayload(data || {});
       const updateData = pickSectionFields(cleaned, allowedFields);
 
+      // Timestamp columns need Date objects; client often sends startDate as ISO string
+      if (section === 'general' && updateData.startDate != null && typeof (updateData.startDate as any)?.toISOString !== 'function') {
+        const val = updateData.startDate as string | number;
+        updateData.startDate = new Date(val) as any;
+      }
 
       // =========== ============ =======================
 
@@ -4120,7 +4125,8 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
       }
 
       const update_general = async () => {
-        if (!data.general) {
+        // data is req.body[section], so for section "general" it is the flat payload (expectedSalary, etc.), not { general: ... }
+        if (!data || typeof data !== 'object' || Object.keys(data).length === 0) {
           return resp.status(400).json({
             success: false,
             error: "General preference data is required"
@@ -4286,6 +4292,13 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
           break;
       }
 
+      // Persist multi-step form current step so user returns to same step on reload
+      const stepIndex = req.body.currentStep;
+      if (typeof stepIndex === 'number' && stepIndex >= 0) {
+        await db.update(userJobProfiles)
+          .set({ currentStep: stepIndex, updatedAt: new Date() })
+          .where(eq(userJobProfiles.userId, id));
+      }
 
     } catch (error) {
       console.error("Error updating user:", error);

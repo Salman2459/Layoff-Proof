@@ -764,6 +764,9 @@ export const userJobProfiles = pgTable("user_job_profiles", {
   // Profile completion percentage
   profileCompletion: integer("profile_completion").default(0),
 
+  // Multi-step form: last step index the user was on (0-based), so we can restore on reload
+  currentStep: integer("current_step").default(0),
+
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

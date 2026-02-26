@@ -22,7 +22,7 @@ export default function Login() {
   const loginMutation = useMutation({
     mutationFn: async (data: LoginRequest) => {
       const response = await apiRequest('POST', '/api/auth/login', data);
-      return await response.json();
+      return  response;
     },
     onSuccess: () => {
       toast({

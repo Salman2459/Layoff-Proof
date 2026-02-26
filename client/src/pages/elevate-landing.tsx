@@ -1,4 +1,5 @@
 import { Link } from "wouter";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -24,10 +25,13 @@ import GlobalHeader from "@/components/GlobalHeader";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 
+const PROFILE_COMPLETE_STEP = 8; // All 8 steps completed = profile ready for dashboard
+
 export default function ElevateLanding() {
   const { isAuthenticated } = useAuth();
   const { user } = useAuth();
   const { toast } = useToast();
+  const [aiAutoApplyChecking, setAiAutoApplyChecking] = useState(false);
 
   const handleToolAccess = (toolPath: string) => {
     console.log("Accessing tool:", user);
@@ -63,6 +67,55 @@ export default function ElevateLanding() {
     }
     // If authenticated, navigate to tool
     window.location.href = toolPath;
+  };
+
+  /** AI Auto Apply card: if profile is complete (step 8), go to dashboard; else go to form. */
+  const handleAIAutoApplyAccess = async () => {
+    if (!user?.subscriptionEndDate) {
+      toast({
+        title: "Subscription Required",
+        description: " Please upgrade to access this tool.",
+        variant: "destructive"
+      });
+      window.location.href = '/pricing';
+      return;
+    }
+    if (new Date(user.subscriptionEndDate) < new Date()) {
+      toast({
+        title: "Subscription Ended",
+        description: "Your subscription has ended. Please upgrade to access this tool.",
+        variant: "destructive"
+      });
+      window.location.href = '/pricing';
+      return;
+    }
+    if (!isAuthenticated) {
+      window.location.href = '/signup';
+      return;
+    }
+
+    const userId = (user as { id?: string })?.id;
+    if (!userId) {
+      window.location.href = '/tools/auto-job-apply';
+      return;
+    }
+
+    setAiAutoApplyChecking(true);
+    try {
+      const res = await fetch(`/api/profile/jobprofile/${userId}`, { credentials: 'include' });
+      const json = await res.json();
+      const profile = json.data ?? null;
+      const currentStep = profile?.currentStep ?? 0;
+      if (currentStep >= PROFILE_COMPLETE_STEP) {
+        window.location.href = '/tools/auto-job-apply-dashboard';
+      } else {
+        window.location.href = '/tools/auto-job-apply';
+      }
+    } catch {
+      window.location.href = '/tools/auto-job-apply';
+    } finally {
+      setAiAutoApplyChecking(false);
+    }
   };
 
   return (
@@ -435,16 +488,17 @@ export default function ElevateLanding() {
                 </div>
                 <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">Premium</span>
               </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">AI Apply Engine</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">AI Auto Apply</h3>
               <p className="text-sm text-gray-600 mb-4">
                 Automate your job applications with AI-powered precision and smart optimization.
               </p>
               <Button
-                onClick={() => handleToolAccess('/tools/auto-job-apply-dashboard')}
+                onClick={handleAIAutoApplyAccess}
+                disabled={aiAutoApplyChecking}
                 className="w-full bg-violet-600 hover:bg-violet-700 text-white"
               >
                 {!isAuthenticated && <Lock className="w-4 h-4 mr-2" />}
-                {!isAuthenticated ? 'Sign Up to Access' : 'Try Now'}
+                {aiAutoApplyChecking ? 'Checking...' : !isAuthenticated ? 'Sign Up to Access' : 'Try Now'}
               </Button>
               {/* <Button
                 className="w-full bg-gray-400 hover:bg-gray-700 text-white"

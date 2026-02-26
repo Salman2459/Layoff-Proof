@@ -125,7 +125,7 @@ const CheckoutForm = ({
       const response = await apiRequest("POST", "/api/stripe/get-price-breakdown", {
         coupon: couponCode || ""
       });
-      const data = await response.json();
+      const data =  response;
 
       if (response.ok) {
         setPriceBreakdown(data.breakdown);
@@ -184,9 +184,8 @@ const CheckoutForm = ({
 
       if (coupon.trim() && !isCouponApplied) {
         const response = await apiRequest("POST", "/api/stripe/apply-coupon", { coupon, planId });
-        const data = await response.json();
+        const data =  response;
 
-        if (!response.ok) throw new Error(data.message);
 
         setIsCouponApplied(true);
 
@@ -353,7 +352,7 @@ const CheckoutForm = ({
 };
 
 // Plan Selection Cards
-const PlanSelection = ({ onPlanSelect }) => {
+const PlanSelection = ({ onPlanSelect }:any) => {
   const [isLoading, setIsLoading] = useState<"weekly" | "monthly" | null>(null);
 
   const handleSelect = async (planId: "weekly" | "monthly") => {
@@ -461,7 +460,7 @@ export default function Subscribe() {
         planId,
         coupon: coupon.trim() || undefined
       });
-      const data = await response.json();
+      const data = response
 
       console.log("📦 Subscription response:", data);
 
