@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, getApiErrorMessage, queryClient } from "@/lib/queryClient";
 import GlobalHeader from "@/components/GlobalHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -75,13 +75,16 @@ export default function CareerPathAnalyzer() {
         description: "Your personalized career path analysis is ready!"
       });
     },
-    onError: (error) => {
+    onError: (error: unknown) => {
       toast({
         title: "Error",
-        description: "Failed to generate analysis. Please try again.",
-        variant: "destructive"
+        description: getApiErrorMessage(
+          error,
+          "Failed to generate analysis. Please try again."
+        ),
+        variant: "destructive",
       });
-    }
+    },
   });
 
   const handleNext = () => {

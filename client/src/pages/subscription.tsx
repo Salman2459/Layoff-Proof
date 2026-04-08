@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getApiErrorMessage } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -75,10 +75,13 @@ export default function Subscription() {
       queryClient.invalidateQueries({ queryKey: ["/api/user/subscriptions"] });
       queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
     },
-    onError: (error) => {
+    onError: (error: unknown) => {
       toast({
-        title: "Error", 
-        description: "Failed to update subscription. Please try again.",
+        title: "Error",
+        description: getApiErrorMessage(
+          error,
+          "Failed to update subscription. Please try again."
+        ),
         variant: "destructive",
       });
     },

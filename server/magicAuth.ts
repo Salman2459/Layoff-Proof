@@ -162,14 +162,18 @@ export function setupMagicAuth(app: Express) {
   });
 
   // Magic link logout
-  app.post('/api/auth/magic-link/logout', (req, res) => {
-    req.session.destroy((err) => {
-      if (err) {
-        console.error("Logout error:", err);
-        return res.status(500).json({ success: false, message: "Logout failed" });
-      }
-      res.json({ success: true, message: "Logged out successfully", redirectTo: '/' });
-    });
+  app.post('/api/auth/magic-link/logout', async (req, res) => {
+    try {
+      await destroyUserSession(req, res);
+      res.json({
+        success: true,
+        message: "Logged out successfully",
+        redirectTo: '/',
+      });
+    } catch (err) {
+      console.error("Logout error:", err);
+      res.status(500).json({ success: false, message: "Logout failed" });
+    }
   });
 }
 

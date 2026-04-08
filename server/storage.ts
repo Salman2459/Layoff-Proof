@@ -8,6 +8,8 @@ import {
   userCompanySubscriptions,
   magicLinkTokens,
   promotionPlans,
+  salaryResearch,
+  networkConnections,
   type User,
   type UpsertUser,
   type Company,
@@ -121,6 +123,7 @@ export interface IStorage {
   // Salary Negotiator
   getSalaryResearch(userId: string): Promise<any[]>;
   createSalaryResearch(userId: string, researchData: any): Promise<any>;
+  deleteSalaryResearch(userId: string, id: string): Promise<void>;
 
   // Career Path Analyzer
   getCareerPaths(userId: string): Promise<any[]>;
@@ -700,22 +703,61 @@ export class DatabaseStorage implements IStorage {
 
   // Salary Negotiator methods
   async getSalaryResearch(userId: string): Promise<any[]> {
-    return this.salaryResearch.get(userId) || [];
+    // Prefer DB persistence when available; fallback to in-memory map.
+    try {
+      return await db
+        .select()
+        .from(salaryResearch)
+        .where(eq(salaryResearch.userId, userId))
+        .orderBy(desc(salaryResearch.createdAt));
+    } catch (e) {
+      console.warn("Falling back to in-memory salary research:", e);
+      return this.salaryResearch.get(userId) || [];
+    }
   }
 
   async createSalaryResearch(userId: string, researchData: any): Promise<any> {
-    const research = {
-      id: `research_${Date.now()}`,
-      userId,
-      ...researchData,
-      createdAt: new Date().toISOString()
-    };
+    try {
+      const [row] = await db
+        .insert(salaryResearch)
+        .values({
+          userId,
+          ...researchData,
+          updatedAt: new Date(),
+        })
+        .returning();
+      return row;
+    } catch (e) {
+      console.warn("Falling back to in-memory salary research create:", e);
+      const research = {
+        id: `research_${Date.now()}`,
+        userId,
+        ...researchData,
+        createdAt: new Date().toISOString(),
+      };
 
-    const userResearch = this.salaryResearch.get(userId) || [];
-    userResearch.push(research);
-    this.salaryResearch.set(userId, userResearch);
+      const userResearch = this.salaryResearch.get(userId) || [];
+      userResearch.push(research);
+      this.salaryResearch.set(userId, userResearch);
 
-    return research;
+      return research;
+    }
+  }
+
+  async deleteSalaryResearch(userId: string, id: string): Promise<void> {
+    try {
+      await db
+        .delete(salaryResearch)
+        .where(and(eq(salaryResearch.userId, userId), eq(salaryResearch.id, id)));
+      return;
+    } catch (e) {
+      console.warn("Falling back to in-memory salary research delete:", e);
+      const userResearch = this.salaryResearch.get(userId) || [];
+      this.salaryResearch.set(
+        userId,
+        userResearch.filter((r: any) => r?.id !== id),
+      );
+    }
   }
 
   // Career Path Analyzer methods
@@ -795,47 +837,131 @@ export class DatabaseStorage implements IStorage {
 
   // Networking Assistant methods
   async getNetworkConnections(userId: string): Promise<any[]> {
-    return this.networkConnections.get(userId) || [];
+    try {
+      return await db
+        .select()
+        .from(networkConnections)
+        .where(eq(networkConnections.userId, userId))
+        .orderBy(desc(networkConnections.createdAt));
+    } catch (e) {
+      console.warn("Falling back to in-memory network connections:", e);
+      return this.networkConnections.get(userId) || [];
+    }
   }
 
   async createNetworkConnection(userId: string, connectionData: any): Promise<any> {
-    const connection = {
-      id: `connection_${Date.now()}`,
-      userId,
-      ...connectionData,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
+    try {
+      const toDateOrNull = (v: any) => {
+        if (!v) return null;
+        const d = v instanceof Date ? v : new Date(String(v));
+        return Number.isNaN(d.getTime()) ? null : d;
+      };
 
-    const userConnections = this.networkConnections.get(userId) || [];
-    userConnections.push(connection);
-    this.networkConnections.set(userId, userConnections);
+      const [row] = await db
+        .insert(networkConnections)
+        .values({
+          userId,
+          contactName: String(connectionData?.contactName || "").trim(),
+          contactEmail: connectionData?.contactEmail ? String(connectionData.contactEmail).trim() : null,
+          contactLinkedIn: connectionData?.contactLinkedIn ? String(connectionData.contactLinkedIn).trim() : null,
+          company: connectionData?.company ? String(connectionData.company).trim() : null,
+          role: connectionData?.role ? String(connectionData.role).trim() : null,
+          relationship: connectionData?.relationship ? String(connectionData.relationship).trim() : null,
+          connectionSource: connectionData?.connectionSource ? String(connectionData.connectionSource).trim() : null,
+          notes: connectionData?.notes ? String(connectionData.notes).trim() : null,
+          tags: Array.isArray(connectionData?.tags) ? connectionData.tags.map((t: any) => String(t || "").trim()).filter(Boolean) : null,
+          lastContact: toDateOrNull(connectionData?.lastContact),
+          followUpDate: toDateOrNull(connectionData?.followUpDate),
+          connectionStrength: connectionData?.connectionStrength ? String(connectionData.connectionStrength).trim() : "weak",
+          status: connectionData?.status ? String(connectionData.status).trim() : "active",
+          updatedAt: new Date(),
+        })
+        .returning();
 
-    return connection;
+      return row;
+    } catch (e) {
+      console.warn("Falling back to in-memory network connection create:", e);
+      const connection = {
+        id: `connection_${Date.now()}`,
+        userId,
+        ...connectionData,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      const userConnections = this.networkConnections.get(userId) || [];
+      userConnections.push(connection);
+      this.networkConnections.set(userId, userConnections);
+
+      return connection;
+    }
   }
 
   async updateNetworkConnection(userId: string, id: string, updates: any): Promise<any> {
-    const userConnections = this.networkConnections.get(userId) || [];
-    const index = userConnections.findIndex(conn => conn.id === id);
+    try {
+      const toDateOrNull = (v: any) => {
+        if (!v) return null;
+        const d = v instanceof Date ? v : new Date(String(v));
+        return Number.isNaN(d.getTime()) ? null : d;
+      };
 
-    if (index === -1) {
-      throw new Error('Connection not found');
+      const patch: any = {
+        updatedAt: new Date(),
+      };
+      if ("contactName" in (updates || {})) patch.contactName = String(updates.contactName || "").trim();
+      if ("contactEmail" in (updates || {})) patch.contactEmail = updates.contactEmail ? String(updates.contactEmail).trim() : null;
+      if ("contactLinkedIn" in (updates || {})) patch.contactLinkedIn = updates.contactLinkedIn ? String(updates.contactLinkedIn).trim() : null;
+      if ("company" in (updates || {})) patch.company = updates.company ? String(updates.company).trim() : null;
+      if ("role" in (updates || {})) patch.role = updates.role ? String(updates.role).trim() : null;
+      if ("relationship" in (updates || {})) patch.relationship = updates.relationship ? String(updates.relationship).trim() : null;
+      if ("connectionSource" in (updates || {})) patch.connectionSource = updates.connectionSource ? String(updates.connectionSource).trim() : null;
+      if ("notes" in (updates || {})) patch.notes = updates.notes ? String(updates.notes).trim() : null;
+      if ("tags" in (updates || {})) patch.tags = Array.isArray(updates.tags) ? updates.tags.map((t: any) => String(t || "").trim()).filter(Boolean) : null;
+      if ("lastContact" in (updates || {})) patch.lastContact = toDateOrNull(updates.lastContact);
+      if ("followUpDate" in (updates || {})) patch.followUpDate = toDateOrNull(updates.followUpDate);
+      if ("connectionStrength" in (updates || {})) patch.connectionStrength = updates.connectionStrength ? String(updates.connectionStrength).trim() : null;
+      if ("status" in (updates || {})) patch.status = updates.status ? String(updates.status).trim() : null;
+
+      const [row] = await db
+        .update(networkConnections)
+        .set(patch)
+        .where(and(eq(networkConnections.userId, userId), eq(networkConnections.id, id)))
+        .returning();
+
+      if (!row) throw new Error("Connection not found");
+      return row;
+    } catch (e) {
+      console.warn("Falling back to in-memory network connection update:", e);
+      const userConnections = this.networkConnections.get(userId) || [];
+      const index = userConnections.findIndex(conn => conn.id === id);
+
+      if (index === -1) {
+        throw new Error('Connection not found');
+      }
+
+      userConnections[index] = {
+        ...userConnections[index],
+        ...updates,
+        updatedAt: new Date().toISOString()
+      };
+
+      this.networkConnections.set(userId, userConnections);
+      return userConnections[index];
     }
-
-    userConnections[index] = {
-      ...userConnections[index],
-      ...updates,
-      updatedAt: new Date().toISOString()
-    };
-
-    this.networkConnections.set(userId, userConnections);
-    return userConnections[index];
   }
 
   async deleteNetworkConnection(userId: string, id: string): Promise<void> {
-    const userConnections = this.networkConnections.get(userId) || [];
-    const filteredConnections = userConnections.filter(conn => conn.id !== id);
-    this.networkConnections.set(userId, filteredConnections);
+    try {
+      await db
+        .delete(networkConnections)
+        .where(and(eq(networkConnections.userId, userId), eq(networkConnections.id, id)));
+      return;
+    } catch (e) {
+      console.warn("Falling back to in-memory network connection delete:", e);
+      const userConnections = this.networkConnections.get(userId) || [];
+      const filteredConnections = userConnections.filter(conn => conn.id !== id);
+      this.networkConnections.set(userId, filteredConnections);
+    }
   }
 }
 

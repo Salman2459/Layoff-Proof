@@ -254,7 +254,7 @@ export default function InterviewPreparation() {
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-2 block">Job Title (Optional)</label>
                 <Input
-                  placeholder="e.g., Senior Software Engineer, Marketing Manager"
+                  placeholder="e.g., Software Engineer, Marketing Manager"
                   value={jobTitle}
                   onChange={(e) => setJobTitle(e.target.value)}
                 />

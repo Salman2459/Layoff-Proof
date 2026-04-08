@@ -1,6 +1,7 @@
 import bcrypt from 'bcrypt';
 import { Express, RequestHandler } from 'express';
 import './types'; // Import session and request type extensions
+import { destroyUserSession } from './sessionLogout';
 import { storage } from './storage';
 import { signupSchema, loginSchema, SignupRequest, LoginRequest } from '@shared/schema';
 
@@ -130,29 +131,39 @@ export function setupPasswordAuth(app: Express) {
     }
   });
 
-  // Logout (works for all auth methods)
-  app.post('/api/auth/logout', (req, res) => {
-    req.session.destroy((err) => {
-      if (err) {
-        console.error('Logout error:', err);
-        return res.status(500).json({ error: 'Failed to logout' });
-      }
-      res.clearCookie('connect.sid');
+  const handleLogoutPost = async (
+    req: Parameters<RequestHandler>[0],
+    res: Parameters<RequestHandler>[1]
+  ) => {
+    try {
+      await destroyUserSession(req, res);
       res.json({ success: true, redirectTo: '/' });
-    });
-  });
+    } catch (err) {
+      console.error('Logout error:', err);
+      res.status(500).json({ error: 'Failed to logout' });
+    }
+  };
 
-  // GET logout route for direct browser redirects
-  app.get('/api/auth/logout', (req, res) => {
-    req.session.destroy((err) => {
-      if (err) {
-        console.error('Logout error:', err);
-        return res.redirect('/?error=logout_failed');
-      }
-      res.clearCookie('connect.sid');
+  const handleLogoutGet = async (
+    req: Parameters<RequestHandler>[0],
+    res: Parameters<RequestHandler>[1]
+  ) => {
+    try {
+      await destroyUserSession(req, res);
       res.redirect('/');
-    });
-  });
+    } catch (err) {
+      console.error('Logout error:', err);
+      res.redirect('/?error=logout_failed');
+    }
+  };
+
+  // Logout (session + passport + cookie; works for email, Google OAuth, etc.)
+  app.post('/api/auth/logout', handleLogoutPost);
+  app.get('/api/auth/logout', handleLogoutGet);
+
+  // Legacy/alternate paths used by some UI links
+  app.post('/api/logout', handleLogoutPost);
+  app.get('/api/logout', handleLogoutGet);
 }
 
 // Middleware to check if user is authenticated (email/password)

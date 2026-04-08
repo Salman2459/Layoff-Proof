@@ -8,6 +8,8 @@ import { Progress } from '@/components/ui/progress';
 import { CheckCircle2, AlertCircle, Bot, Loader2 } from 'lucide-react';
 import { Formik } from 'formik';
 import * as Yup from 'yup';
+import PhoneInput from "react-phone-input-2";
+import "react-phone-input-2/lib/style.css";
 
 
 // Types for form data
@@ -151,6 +153,112 @@ const STEP_CONFIG: { label: string; section: string }[] = [
 ];
 
 const TOTAL_STEPS = STEP_CONFIG.length;
+
+function toDateInputValue(value: unknown): string {
+    if (!value) return "";
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? "" : value.toISOString().split("T")[0];
+    }
+    if (typeof value === "string") {
+        // Accept either full ISO string or YYYY-MM-DD
+        return value.includes("T") ? value.split("T")[0] : value;
+    }
+    return "";
+}
+
+function storageKeyForUser(userId: string | undefined): string | null {
+    if (!userId) return null;
+    return `lp:autoJobApply:draft:${userId}`;
+}
+
+function serializeForLocalStorage(values: FormData): Record<string, unknown> {
+    return {
+        ...values,
+        // Never try to persist File/FileList in localStorage
+        resume: null,
+        recommendationLetters: null,
+        certificates: null,
+        general: {
+            ...values.general,
+            startDate:
+                values.general.startDate instanceof Date
+                    ? (Number.isNaN(values.general.startDate.getTime())
+                          ? null
+                          : values.general.startDate.toISOString())
+                    : typeof (values.general.startDate as any) === "string"
+                      ? (values.general.startDate as any)
+                      : null,
+        },
+    };
+}
+
+function hydrateFromLocalStorage(raw: unknown): Partial<FormData> | null {
+    if (!raw || typeof raw !== "object") return null;
+    const obj = raw as Record<string, unknown>;
+    const g = (obj.general && typeof obj.general === "object"
+        ? (obj.general as Record<string, unknown>)
+        : null);
+    const startDateRaw = g ? g.startDate : null;
+    const startDate =
+        typeof startDateRaw === "string" ? new Date(startDateRaw) : null;
+
+    return {
+        ...(obj as Partial<FormData>),
+        general: g
+            ? ({
+                  ...(g as any),
+                  startDate: startDate && !Number.isNaN(startDate.getTime())
+                      ? startDate
+                      : null,
+              } as any)
+            : undefined,
+        resume: null,
+        recommendationLetters: null,
+        certificates: null,
+    };
+}
+
+function deepMerge<T extends Record<string, any>>(base: T, patch: Partial<T>): T {
+    const out: any = Array.isArray(base) ? [...base] : { ...base };
+    for (const [k, v] of Object.entries(patch || {})) {
+        if (v == null) continue;
+        if (Array.isArray(v)) out[k] = v;
+        else if (typeof v === "object" && typeof out[k] === "object" && !Array.isArray(out[k])) {
+            out[k] = deepMerge(out[k], v as any);
+        } else {
+            out[k] = v;
+        }
+    }
+    return out;
+}
+
+function AutoJobApplyLocalDraftSync({
+    userId,
+    values,
+    enabled,
+}: {
+    userId: string | undefined;
+    values: FormData;
+    enabled: boolean;
+}) {
+    const key = useMemo(() => storageKeyForUser(userId), [userId]);
+
+    useEffect(() => {
+        if (!enabled) return;
+        if (!key) return;
+        const t = window.setTimeout(() => {
+            try {
+                const payload = serializeForLocalStorage(values);
+                localStorage.setItem(key, JSON.stringify(payload));
+            } catch {
+                // ignore storage errors (quota, private mode, etc.)
+            }
+        }, 500);
+        return () => window.clearTimeout(t);
+    }, [key, values]);
+
+    return null;
+}
 
 // Allowed fields per section (must match server SECTION_FIELDS) – only these are sent in payload
 const SECTION_ALLOWED_FIELDS: Record<string, string[]> = {
@@ -347,7 +455,10 @@ function buildInitialFromProfile(p: Record<string, unknown>): FormData {
 const AutoJobApply: React.FC = () => {
     const [, setLocation] = useLocation();
     const [currentStep, setCurrentStep] = useState(0);
+    // Users can only jump to steps they've already saved/unlocked.
+    const [maxUnlockedStep, setMaxUnlockedStep] = useState(0);
     const [errors, setErrors] = useState<string[]>([]);
+    const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
     const [savingSection, setSavingSection] = useState<string | null>(null);
     const [resumeParseLoading, setResumeParseLoading] = useState(false);
     const [uploadingDocument, setUploadingDocument] = useState<'resume' | 'certificate' | 'recommendation' | null>(null);
@@ -378,7 +489,7 @@ const AutoJobApply: React.FC = () => {
     };
 
     // Map API parsed resume into form (all steps). Uses ref for latest values so async parse can merge and setValues once.
-    const applyParsedResumeToForm = (parsed: ParsedResumeFromApi, setValues: (values: FormData) => void) => {
+    const applyParsedResumeToForm = (parsed: ParsedResumeFromApi, setValues: (values: FormData) => void): FormData => {
         const prev = latestFormValuesRef.current;
         const next = { ...prev };
         if (parsed.name?.trim()) {
@@ -458,6 +569,7 @@ const AutoJobApply: React.FC = () => {
         if (achievementParts.length) next.achievements = { achievements: achievementParts.join('\n\n') };
         latestFormValuesRef.current = next;
         setValues(next);
+        return next;
     };
 
     const parseResumeAndFillForm = async (file: File, setValues: (values: FormData) => void) => {
@@ -477,7 +589,81 @@ const AutoJobApply: React.FC = () => {
                 return;
             }
             const parsedData = json.parsedData as ParsedResumeFromApi;
-            if (parsedData) applyParsedResumeToForm(parsedData, setValues);
+            if (parsedData) {
+                const nextValues = applyParsedResumeToForm(parsedData, setValues);
+
+                // Persist parsed values + resume upload so refresh doesn't wipe them.
+                try {
+                    setSavingSection("personal");
+
+                    // 1) Upload resume to profile (Cloudinary + DB) immediately
+                    const uploadFd = new FormData();
+                    uploadFd.append("file", file);
+                    const uploadRes = await apiRequest(
+                        "POST",
+                        `/api/profile/documentupdate/${id}?documentType=resume`,
+                        uploadFd,
+                    );
+                    const uploadedUrl =
+                        uploadRes && typeof uploadRes === "object" && "url" in uploadRes
+                            ? String((uploadRes as any).url || "")
+                            : "";
+
+                    if (uploadedUrl) {
+                        latestFormValuesRef.current = {
+                            ...latestFormValuesRef.current,
+                            resumeUrl: uploadedUrl,
+                        };
+                        setValues({
+                            ...latestFormValuesRef.current,
+                            resumeUrl: uploadedUrl,
+                        });
+                    }
+
+                    // 2) Save parsed sections to DB
+                    const sectionsToSave: Array<
+                        keyof Pick<
+                            FormData,
+                            | "personal"
+                            | "residency"
+                            | "experience"
+                            | "education"
+                            | "skillAndLanguages"
+                            | "achievements"
+                        >
+                    > = [
+                        "personal",
+                        "residency",
+                        "experience",
+                        "education",
+                        "skillAndLanguages",
+                        "achievements",
+                    ];
+
+                    await Promise.all(
+                        sectionsToSave.map(async (section) => {
+                            const allowed = SECTION_ALLOWED_FIELDS[section];
+                            const raw = (nextValues as any)[section] ?? {};
+                            const payload = allowed
+                                ? pickPayloadFields(raw as Record<string, unknown>, allowed)
+                                : (raw as Record<string, unknown>);
+                            // For step 0 parse, store 1-based step index 2 (next step) so it unlocks properly.
+                            return await apiRequest(
+                                "POST",
+                                `/api/profile/${section}/${id}`,
+                                { [section]: payload, currentStep: 2 },
+                            );
+                        }),
+                    );
+
+                    queryClient.invalidateQueries({ queryKey: ["userJobProfile", id] });
+                } catch (e) {
+                    // Don't block UX if persistence fails; user can still manually Save & Next.
+                    console.warn("Auto-save after resume parse failed:", e);
+                } finally {
+                    setSavingSection(null);
+                }
+            }
             toast({ title: 'Resume parsed', description: 'Form fields have been filled from your resume.' });
         } catch (e) {
             toast({ title: 'Error', description: e instanceof Error ? e.message : 'Failed to parse resume.', variant: 'destructive' });
@@ -503,12 +689,32 @@ const AutoJobApply: React.FC = () => {
     // Initialize form and step from profile only once when profile first loads (prevents refetches from wiping Education/Skills)
     useEffect(() => {
         if (!profileData || profileLoaded) return;
-        setInitialValues(buildInitialFromProfile(profileData as Record<string, unknown>));
+        const base = buildInitialFromProfile(profileData as Record<string, unknown>);
+        const key = storageKeyForUser(id);
+        let merged = base;
+        if (key) {
+            try {
+                const draftRaw = localStorage.getItem(key);
+                if (draftRaw) {
+                    const draft = hydrateFromLocalStorage(JSON.parse(draftRaw));
+                    if (draft) merged = deepMerge(base, draft);
+                } else {
+                    merged = base;
+                }
+            } catch {
+                merged = base;
+            }
+        } else {
+            merged = base;
+        }
+        setInitialValues(merged);
         const apiStep = (profileData as Record<string, unknown>).currentStep;
         const stepNum = typeof apiStep === 'number' && apiStep >= 1 ? apiStep : 1;
         const index = Math.max(0, Math.min(stepNum - 1, TOTAL_STEPS - 1));
         setCurrentStep(index);
-        setProfileLoaded(true);
+        setMaxUnlockedStep(index);
+        // Flip this in next tick so Formik remount sees merged initialValues.
+        window.setTimeout(() => setProfileLoaded(true), 0);
     }, [profileData, profileLoaded]);
 
     // Profile completion from form values (used inside Formik)
@@ -533,7 +739,7 @@ const AutoJobApply: React.FC = () => {
         const g = values.general;
         if (g.expectedSalary && g.noticePeriod) score += 10;
         else if (g.expectedSalary || g.noticePeriod) score += 5;
-        return score;
+        return Math.min(100, score);
     };
 
     const resumeFileRef = useRef<HTMLInputElement | null>(null);
@@ -608,11 +814,24 @@ const AutoJobApply: React.FC = () => {
         setValues(prev => ({ ...prev, resume: null }));
     };
 
-    const handleUpdate = (section: keyof FormData, field: string, value: unknown, setValues: (fn: (prev: FormData) => FormData) => void) => {
+    const handleUpdate = (
+        section: keyof FormData,
+        field: string,
+        value: unknown,
+        setValues: (fn: (prev: FormData) => FormData) => void,
+    ) => {
         setValues(prev => ({
             ...prev,
             [section]: { ...(prev[section] as Record<string, unknown>), [field]: value }
         }));
+        // Clear inline error for this field once user edits it.
+        const key = `${String(section)}.${field}`;
+        setFieldErrors((prev) => {
+            if (!prev[key]) return prev;
+            const next = { ...prev };
+            delete next[key];
+            return next;
+        });
     };
 
 
@@ -829,8 +1048,21 @@ const AutoJobApply: React.FC = () => {
                         }
                     }
                     if (Object.keys(errs).length > 0) {
+                        const messages = Object.values(errs)
+                            .map((v) => (typeof v === 'string' ? v : null))
+                            .filter(Boolean) as string[];
+                        setErrors(messages.length ? messages : ['Please complete the required fields to continue.']);
+                        setFieldErrors(
+                            Object.fromEntries(
+                                Object.entries(errs)
+                                    .filter(([, v]) => typeof v === "string")
+                                    .map(([k, v]) => [k, String(v)]),
+                            ),
+                        );
                         const { section } = STEP_CONFIG[currentStep];
-                        const sectionKeys = (latestValues as Record<string, unknown>)[section];
+                        const sectionKeys = (latestValues as unknown as Record<string, unknown>)[
+                            section
+                        ];
                         const touchedSection = sectionKeys && typeof sectionKeys === 'object'
                             ? Object.fromEntries(Object.keys(sectionKeys as object).map(k => [k, true]))
                             : {};
@@ -845,6 +1077,14 @@ const AutoJobApply: React.FC = () => {
                         { section: apiSection, payload, currentStep: payloadStep },
                         {
                             onSuccess: (_, { currentStep: savedStep }) => {
+                                setErrors([]);
+                                setFieldErrors({});
+                                // savedStep is 1-based "currentStep" stored on the profile
+                                const unlockedIndex = Math.max(
+                                    0,
+                                    Math.min(savedStep - 1, TOTAL_STEPS - 1),
+                                );
+                                setMaxUnlockedStep((prev) => Math.max(prev, unlockedIndex));
                                 if (savedStep >= TOTAL_STEPS) {
                                     setLocation('/tools/auto-job-apply-dashboard');
                                 } else {
@@ -855,14 +1095,17 @@ const AutoJobApply: React.FC = () => {
                     );
                 };
                 return (
-        <div className="max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8 bg-gray-50">
+        <>
+        <AutoJobApplyLocalDraftSync userId={id} values={values} enabled={profileLoaded} />
+        <div className="min-h-screen lp-page-mesh">
+        <div className="max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
             {/* Sticky Profile Progress Bar */}
-            <div className="sticky top-0 z-40 bg-gray-50/80 backdrop-blur-md pb-4 pt-2 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
-                <div className="bg-white rounded-2xl border border-purple-100 shadow-sm p-4 relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 w-24 h-24 bg-purple-50 rounded-full -mr-12 -mt-12 transition-transform group-hover:scale-110 duration-500" />
+            <div className="sticky top-0 z-40 bg-background/80 backdrop-blur-md pb-4 pt-2 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+                <div className="bg-white rounded-2xl border border-border shadow-sm p-4 relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full -mr-12 -mt-12 transition-transform group-hover:scale-110 duration-500" />
                     <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
-                            <div className={`p-2 rounded-xl ${profileCompletion === 100 ? 'bg-green-100 text-green-600' : 'bg-purple-100 text-purple-600'}`}>
+                            <div className={`p-2 rounded-xl ${profileCompletion === 100 ? 'bg-green-100 text-green-600' : 'bg-primary/15 text-primary'}`}>
                                 {profileCompletion === 100 ? <CheckCircle2 className="w-5 h-5" /> : <Bot className="w-5 h-5" />}
                             </div>
                             <div>
@@ -874,7 +1117,7 @@ const AutoJobApply: React.FC = () => {
                         </div>
                         <div className="flex-1 max-w-xs">
                             <div className="flex items-center justify-between mb-1.5 px-1">
-                                <span className={`text-xs font-bold ${profileCompletion === 100 ? 'text-green-600' : 'text-purple-600'}`}>
+                                <span className={`text-xs font-bold ${profileCompletion === 100 ? 'text-green-600' : 'text-primary'}`}>
                                     {profileCompletion}% Complete
                                 </span>
                                 {profileCompletion < 40 && (
@@ -883,7 +1126,7 @@ const AutoJobApply: React.FC = () => {
                                     </span>
                                 )}
                             </div>
-                            <Progress value={profileCompletion} className="h-2 rounded-full bg-gray-100" />
+                            <Progress value={profileCompletion} className="h-2 rounded-full bg-muted" />
                         </div>
                     </div>
                 </div>
@@ -892,17 +1135,44 @@ const AutoJobApply: React.FC = () => {
             {/* Step indicator */}
             <div className="flex flex-wrap gap-2 mb-6">
                 {STEP_CONFIG.map((step, idx) => (
+                    (() => {
+                        const locked = idx > maxUnlockedStep;
+                        const isActive = currentStep === idx;
+                        return (
                     <button
                         key={idx}
                         type="button"
-                        onClick={() => setCurrentStep(idx)}
-                        className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${currentStep === idx ? 'bg-purple-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:border-purple-300'}`}
+                        disabled={locked}
+                        onClick={() => {
+                            if (locked) {
+                                toast({
+                                    title: "Complete previous step",
+                                    description:
+                                        "Please save the current step before moving to the next one.",
+                                    variant: "destructive",
+                                });
+                                return;
+                            }
+                            setErrors([]);
+                            setFieldErrors({});
+                            setCurrentStep(idx);
+                        }}
+                        className={[
+                            "px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+                            isActive
+                                ? "lp-gradient-fill text-primary-foreground border-0"
+                                : "bg-white border border-gray-200 text-gray-600 hover:border-primary/35",
+                            locked ? "opacity-50 cursor-not-allowed hover:border-gray-200" : "",
+                        ].join(" ")}
                     >
                         {idx + 1}. {step.label}
                     </button>
+                        );
+                    })()
                 ))}
             </div>
 
+          
             {/* Step 0: Resume & Personal */}
             {currentStep === 0 && (
             <>
@@ -919,11 +1189,11 @@ const AutoJobApply: React.FC = () => {
                     <div className='flex justify-between items-center mb-2'>
                         <h4 className="text-lg font-semibold text-gray-900 mb-4">Your Resume</h4>
                         {resumeParseLoading && (
-                            <span className="text-sm text-purple-600 font-medium flex items-center gap-2">
+                            <span className="text-sm text-primary font-medium flex items-center gap-2">
                                 <Loader2 className="w-4 h-4 animate-spin" /> Auto filling form…
                             </span>
                         )}
-                        <button type="button" disabled={resumeParseLoading || uploadingDocument === 'resume'} className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2" onClick={async () => {
+                        <button type="button" disabled={resumeParseLoading || uploadingDocument === 'resume'} className="px-4 py-2 lp-gradient-fill text-primary-foreground border-0 rounded-md hover:opacity-[0.97] focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2" onClick={async () => {
                             if (!values.resume) {
                                 toast({ title: "No file selected", description: "Please select a resume to upload.", variant: "destructive" });
                                 return;
@@ -948,7 +1218,7 @@ const AutoJobApply: React.FC = () => {
                         <div className="space-y-2">
                             <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100">
                                 <div className="flex items-center">
-                                    <svg className="w-5 h-5 text-purple-600 mr-3" fill="currentColor" viewBox="0 0 20 20">
+                                    <svg className="w-5 h-5 text-primary mr-3" fill="currentColor" viewBox="0 0 20 20">
                                         <path fillRule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 0v12h8V4H6zm1 2h6v1H7V6zm0 2h6v1H7V8zm0 2h6v1H7v-1zm0 2h6v1H7v-1zm3-6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
                                     </svg>
                                     <span className="text-sm text-gray-700">{values.resume.name} ({(values.resume.size / 1024).toFixed(1)} KB)</span>
@@ -964,19 +1234,19 @@ const AutoJobApply: React.FC = () => {
                         <div className="space-y-2">
                             <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100">
                                 <div className="flex items-center flex-wrap gap-2">
-                                    <svg className="w-5 h-5 text-purple-600 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                    <svg className="w-5 h-5 text-primary shrink-0" fill="currentColor" viewBox="0 0 20 20">
                                         <path fillRule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 0v12h8V4H6zm1 2h6v1H7V6zm0 2h6v1H7V8zm0 2h6v1H7v-1zm0 2h6v1H7v-1zm3-6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
                                     </svg>
                                     <span className="text-sm text-gray-700">Resume on file</span>
-                                    <a href={values.resumeUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-purple-600 hover:underline">View</a>
+                                    <a href={values.resumeUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline">View</a>
                                 </div>
-                                <button type="button" onClick={() => !resumeParseLoading && handleBrowseClick(resumeFileRef)} className="ml-2 text-sm text-purple-600 hover:text-purple-700 font-medium">Upload new</button>
+                                <button type="button" onClick={() => !resumeParseLoading && handleBrowseClick(resumeFileRef)} className="ml-2 text-sm text-primary hover:text-primary font-medium">Upload new</button>
                             </div>
                         </div>
                     ) : (
-                        <div onClick={() => !resumeParseLoading && handleBrowseClick(resumeFileRef)} className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${resumeParseLoading ? 'border-gray-200 bg-gray-50 cursor-not-allowed' : 'border-gray-300 hover:border-purple-500 cursor-pointer'}`}>
+                        <div onClick={() => !resumeParseLoading && handleBrowseClick(resumeFileRef)} className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${resumeParseLoading ? 'border-gray-200 bg-gray-50 cursor-not-allowed' : 'border-gray-300 hover:border-primary cursor-pointer'}`}>
                             <div className="flex flex-col items-center space-y-2">
-                                <svg className="w-12 h-12 text-purple-600" fill="currentColor" viewBox="0 0 20 20">
+                                <svg className="w-12 h-12 text-primary" fill="currentColor" viewBox="0 0 20 20">
                                     <path fillRule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 0v12h8V4H6zm1 2h6v1H7V6zm0 2h6v1H7V8zm0 2h6v1H7v-1zm0 2h6v1H7v-1zm3-6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
                                 </svg>
                                 <h5 className="text-md font-medium text-gray-900">Drag–n–Drop your CV here</h5>
@@ -985,7 +1255,7 @@ const AutoJobApply: React.FC = () => {
                                     <span>or</span>
                                     <span className="w-12 h-px bg-gray-300"></span>
                                 </div>
-                                <span className="text-purple-600 font-medium">Browse</span>
+                                <span className="text-primary font-medium">Browse</span>
                                 <p className="text-xs text-gray-500">(File types: pdf, doc, docx, txt, rtf)</p>
                             </div>
                         </div>
@@ -1000,40 +1270,86 @@ const AutoJobApply: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">First name <span className="text-red-500">*</span></label>
-                        <input type="text" value={values.personal.firstName} onChange={(e) => handleUpdate('personal', 'firstName', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500" placeholder="Enter your first name..." required />
+                        <input type="text" value={values.personal.firstName} onChange={(e) => handleUpdate('personal', 'firstName', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Enter your first name..." required />
+                        {fieldErrors["personal.firstName"] && (
+                            <p className="mt-1 text-xs font-medium text-red-600">
+                                {fieldErrors["personal.firstName"]}
+                            </p>
+                        )}
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Last name <span className="text-red-500">*</span></label>
-                        <input type="text" value={values.personal.lastName} onChange={(e) => handleUpdate('personal', 'lastName', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500" placeholder="Enter your last name..." required />
+                        <input type="text" value={values.personal.lastName} onChange={(e) => handleUpdate('personal', 'lastName', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Enter your last name..." required />
+                        {fieldErrors["personal.lastName"] && (
+                            <p className="mt-1 text-xs font-medium text-red-600">
+                                {fieldErrors["personal.lastName"]}
+                            </p>
+                        )}
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Email <span className="text-red-500">*</span></label>
-                        <input type="email" value={values.personal.email} onChange={(e) => handleUpdate('personal', 'email', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500" placeholder="Enter your email..." required />
+                        <input type="email" value={values.personal.email} onChange={(e) => handleUpdate('personal', 'email', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Enter your email..." required />
+                        {fieldErrors["personal.email"] && (
+                            <p className="mt-1 text-xs font-medium text-red-600">
+                                {fieldErrors["personal.email"]}
+                            </p>
+                        )}
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Phone <span className="text-red-500">*</span></label>
-                        <div className="flex">
-                            <select value={values.personal.phoneCode} onChange={(e) => handleUpdate('personal', 'phoneCode', e.target.value, setValuesWithPrev)} className="w-20 px-3 py-2 border border-r-0 border-gray-300 rounded-l-md bg-gray-50 focus:ring-purple-500 focus:border-purple-500">
-                                <option>+92</option><option>+1</option><option>+44</option>
-                            </select>
-                            <input type="text" value={values.personal.phone} onChange={(e) => handleUpdate('personal', 'phone', e.target.value, setValuesWithPrev)} className="flex-1 px-3 py-2 border border-gray-300 rounded-r-md shadow-sm focus:ring-purple-500 focus:border-purple-500" placeholder="Enter your phone..." required />
-                        </div>
+                        <PhoneInput
+                            country={"us"}
+                            value={values.personal.phone}
+                            onChange={(value, data) => {
+                                handleUpdate(
+                                    "personal",
+                                    "phone",
+                                    value,
+                                    setValuesWithPrev,
+                                );
+                                const dialCode =
+                                    data && typeof data === "object" && "dialCode" in data
+                                        ? `+${String((data as any).dialCode)}`
+                                        : "";
+                                handleUpdate(
+                                    "personal",
+                                    "phoneCode",
+                                    dialCode,
+                                    setValuesWithPrev,
+                                );
+                            }}
+                            inputProps={{
+                                required: true,
+                                name: "phone",
+                            }}
+                            containerClass="w-full"
+                            inputClass="!w-full !h-10  !py-2 !border !border-gray-300 !rounded-md !shadow-sm focus:!ring-primary focus:!border-primary"
+                            // buttonClass="!border-gray-300 !rounded-md"
+                            dropdownClass="!z-[60]"
+                            placeholder="Enter your phone..."
+                            // enableSearch
+                        />
+                        {fieldErrors["personal.phone"] && (
+                            <p className="mt-1 text-xs font-medium text-red-600">
+                                {fieldErrors["personal.phone"]}
+                            </p>
+                        )}
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">LinkedIn URL</label>
-                        <input type="text" value={values.personal.linkedin} onChange={(e) => handleUpdate('personal', 'linkedin', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500" placeholder="Enter your LinkedIn URL..." />
+                        <input type="text" value={values.personal.linkedin} onChange={(e) => handleUpdate('personal', 'linkedin', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Enter your LinkedIn URL..." />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">X/Twitter URL</label>
-                        <input type="text" value={values.personal.twitter} onChange={(e) => handleUpdate('personal', 'twitter', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500" placeholder="Enter your X/Twitter URL..." />
+                        <input type="text" value={values.personal.twitter} onChange={(e) => handleUpdate('personal', 'twitter', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Enter your X/Twitter URL..." />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Website URL</label>
-                        <input type="text" value={values.personal.website} onChange={(e) => handleUpdate('personal', 'website', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500" placeholder="Enter your Website URL..." />
+                        <input type="text" value={values.personal.website} onChange={(e) => handleUpdate('personal', 'website', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Enter your Website URL..." />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">GitHub URL</label>
-                        <input type="text" value={values.personal.github} onChange={(e) => handleUpdate('personal', 'github', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500" placeholder="Enter your GitHub URL..." />
+                        <input type="text" value={values.personal.github} onChange={(e) => handleUpdate('personal', 'github', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Enter your GitHub URL..." />
                     </div>
                 </div>
             </div>
@@ -1047,40 +1363,50 @@ const AutoJobApply: React.FC = () => {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Street</label>
-                            <input type="text" value={values.residency.street} onChange={(e) => handleUpdate('residency', 'street', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500" placeholder="Street" />
+                            <input type="text" value={values.residency.street} onChange={(e) => handleUpdate('residency', 'street', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Street" />
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Building No</label>
-                            <input type="text" value={values.residency.buildingNo} onChange={(e) => handleUpdate('residency', 'buildingNo', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500" placeholder="Building No" />
+                            <input type="text" value={values.residency.buildingNo} onChange={(e) => handleUpdate('residency', 'buildingNo', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Building No" />
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Apartment No</label>
-                            <input type="text" value={values.residency.apartmentNo} onChange={(e) => handleUpdate('residency', 'apartmentNo', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500" placeholder="Apartment No" />
+                            <input type="text" value={values.residency.apartmentNo} onChange={(e) => handleUpdate('residency', 'apartmentNo', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Apartment No" />
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Country <span className="text-red-500">*</span></label>
-                            <select value={values.residency.country} required onChange={(e) => handleUpdate('residency', 'country', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500">
+                            <select value={values.residency.country} required onChange={(e) => handleUpdate('residency', 'country', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary">
                                 <option value="Pakistan">Pakistan</option><option value="USA">USA</option><option value="UK">UK</option>
                             </select>
+                            {fieldErrors["residency.country"] && (
+                                <p className="mt-1 text-xs font-medium text-red-600">
+                                    {fieldErrors["residency.country"]}
+                                </p>
+                            )}
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">City <span className="text-red-500">*</span></label>
-                            <select value={values.residency.city} required onChange={(e) => handleUpdate('residency', 'city', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500">
+                            <select value={values.residency.city} required onChange={(e) => handleUpdate('residency', 'city', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary">
                                 <option value="Faisalabad">Faisalabad</option><option value="Lahore">Lahore</option><option value="Karachi">Karachi</option>
                             </select>
+                            {fieldErrors["residency.city"] && (
+                                <p className="mt-1 text-xs font-medium text-red-600">
+                                    {fieldErrors["residency.city"]}
+                                </p>
+                            )}
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">ZIP</label>
-                            <input type="text" value={values.residency.zip} onChange={(e) => handleUpdate('residency', 'zip', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500" placeholder="ZIP" />
+                            <input type="text" value={values.residency.zip} onChange={(e) => handleUpdate('residency', 'zip', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="ZIP" />
                         </div>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">I legally authorized to work in</label>
                         <div className="border border-gray-300 rounded-md p-2 flex flex-wrap gap-2">
                             {values.residency.authorizedCountries.map((country, idx) => (
-                                <span key={idx} className="inline-flex items-center bg-purple-100 text-purple-800 px-2 py-1 rounded-md text-sm">
+                                <span key={idx} className="inline-flex items-center bg-primary/15 text-primary px-2 py-1 rounded-md text-sm">
                                     {country}
-                                    <button type="button" onClick={() => handleUpdate('residency', 'authorizedCountries', values.residency.authorizedCountries.filter(c => c !== country), setValuesWithPrev)} className="ml-1 text-purple-600 hover:text-purple-800">×</button>
+                                    <button type="button" onClick={() => handleUpdate('residency', 'authorizedCountries', values.residency.authorizedCountries.filter(c => c !== country), setValuesWithPrev)} className="ml-1 text-primary hover:text-primary">×</button>
                                 </span>
                             ))}
                             <input type="text" placeholder="Add country..." className="flex-1 outline-none text-sm" onKeyDown={(e) => {
@@ -1097,11 +1423,11 @@ const AutoJobApply: React.FC = () => {
                             <h5 className="text-sm font-medium text-gray-700 mb-2">Will you now or in the future require sponsorship for employment visa status?</h5>
                             <div className="flex gap-4">
                                 <label className="inline-flex items-center">
-                                    <input type="radio" name="sponsorship" value="REQUIRED" checked={values.residency.sponsorship === 'REQUIRED'} onChange={(e) => handleUpdate('residency', 'sponsorship', e.target.value as 'REQUIRED' | 'NOT_REQUIRED', setValuesWithPrev)} className="h-4 w-4 text-purple-600 focus:ring-purple-500" />
+                                    <input type="radio" name="sponsorship" value="REQUIRED" checked={values.residency.sponsorship === 'REQUIRED'} onChange={(e) => handleUpdate('residency', 'sponsorship', e.target.value as 'REQUIRED' | 'NOT_REQUIRED', setValuesWithPrev)} className="h-4 w-4 text-primary focus:ring-primary" />
                                     <span className="ml-2 text-sm text-gray-700">Yes</span>
                                 </label>
                                 <label className="inline-flex items-center">
-                                    <input type="radio" name="sponsorship" value="NOT_REQUIRED" checked={values.residency.sponsorship === 'NOT_REQUIRED'} onChange={(e) => handleUpdate('residency', 'sponsorship', e.target.value as 'REQUIRED' | 'NOT_REQUIRED', setValuesWithPrev)} className="h-4 w-4 text-purple-600 focus:ring-purple-500" />
+                                    <input type="radio" name="sponsorship" value="NOT_REQUIRED" checked={values.residency.sponsorship === 'NOT_REQUIRED'} onChange={(e) => handleUpdate('residency', 'sponsorship', e.target.value as 'REQUIRED' | 'NOT_REQUIRED', setValuesWithPrev)} className="h-4 w-4 text-primary focus:ring-primary" />
                                     <span className="ml-2 text-sm text-gray-700">No</span>
                                 </label>
                             </div>
@@ -1110,11 +1436,11 @@ const AutoJobApply: React.FC = () => {
                             <h5 className="text-sm font-medium text-gray-700 mb-2">Are you willing to relocate</h5>
                             <div className="flex gap-4">
                                 <label className="inline-flex items-center">
-                                    <input type="radio" name="relocate" value="YES" checked={values.residency.relocate === 'YES'} onChange={(e) => handleUpdate('residency', 'relocate', e.target.value as 'YES' | 'NO', setValuesWithPrev)} className="h-4 w-4 text-purple-600 focus:ring-purple-500" />
+                                    <input type="radio" name="relocate" value="YES" checked={values.residency.relocate === 'YES'} onChange={(e) => handleUpdate('residency', 'relocate', e.target.value as 'YES' | 'NO', setValuesWithPrev)} className="h-4 w-4 text-primary focus:ring-primary" />
                                     <span className="ml-2 text-sm text-gray-700">Yes</span>
                                 </label>
                                 <label className="inline-flex items-center">
-                                    <input type="radio" name="relocate" value="NO" checked={values.residency.relocate === 'NO'} onChange={(e) => handleUpdate('residency', 'relocate', e.target.value as 'YES' | 'NO', setValuesWithPrev)} className="h-4 w-4 text-purple-600 focus:ring-purple-500" />
+                                    <input type="radio" name="relocate" value="NO" checked={values.residency.relocate === 'NO'} onChange={(e) => handleUpdate('residency', 'relocate', e.target.value as 'YES' | 'NO', setValuesWithPrev)} className="h-4 w-4 text-primary focus:ring-primary" />
                                     <span className="ml-2 text-sm text-gray-700">No</span>
                                 </label>
                             </div>
@@ -1131,35 +1457,146 @@ const AutoJobApply: React.FC = () => {
                 <div className="space-y-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Total year(s) of experience <span className="text-red-500">*</span></label>
-                        <select value={values.experience.totalExperience} onChange={(e) => handleUpdate('experience', 'totalExperience', e.target.value, setValuesWithPrev)} className="w-full md:w-64 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500">
+                        <select value={values.experience.totalExperience} onChange={(e) => handleUpdate('experience', 'totalExperience', e.target.value, setValuesWithPrev)} className="w-full md:w-64 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary">
                             {Array.from({ length: 31 }, (_, i) => (<option key={i} value={String(i)}>{i}</option>))}
                         </select>
                     </div>
                     {values.experience.experiences.length > 0 && (
                         <div className="space-y-3">
                             {values.experience.experiences.map((exp, idx) => (
-                                <div key={idx} className="border border-gray-200 rounded-lg p-4 bg-gray-50 hover:shadow-sm transition-shadow">
-                                    <div className="flex items-start justify-between">
-                                        <div>
-                                            <h5 className="font-semibold text-gray-900">{exp.title}</h5>
-                                            <p className="text-sm text-gray-600">{exp.company}</p>
-                                            <p className="text-xs text-gray-500 mt-1">{exp.fromMonth} {exp.fromYear} – {exp.currentlyWorking ? 'Present' : `${exp.toMonth} ${exp.toYear}`}</p>
-                                            {exp.description && <p className="text-sm text-gray-600 mt-2">{exp.description}</p>}
-                                        </div>
-                                        <div className="flex space-x-2 text-sm shrink-0 ml-4">
-                                            <button type="button" onClick={() => editExperience(idx, values)} className="text-purple-600 hover:text-purple-800 hover:underline">Edit</button>
-                                            <button type="button" onClick={() => deleteExperience(idx, setValuesWithPrev)} className="text-red-500 hover:text-red-700 hover:underline">Delete</button>
+                                <div key={idx} className="space-y-3">
+                                    <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 hover:shadow-sm transition-shadow">
+                                        <div className="flex items-start justify-between">
+                                            <div>
+                                                <h5 className="font-semibold text-gray-900">{exp.title}</h5>
+                                                <p className="text-sm text-gray-600">{exp.company}</p>
+                                                <p className="text-xs text-gray-500 mt-1">{exp.fromMonth} {exp.fromYear} – {exp.currentlyWorking ? 'Present' : `${exp.toMonth} ${exp.toYear}`}</p>
+                                                {exp.description && <p className="text-sm text-gray-600 mt-2">{exp.description}</p>}
+                                            </div>
+                                            <div className="flex space-x-2 text-sm shrink-0 ml-4">
+                                                <button type="button" onClick={() => editExperience(idx, values)} className="text-primary hover:text-primary hover:underline">Edit</button>
+                                                <button type="button" onClick={() => deleteExperience(idx, setValuesWithPrev)} className="text-red-500 hover:text-red-700 hover:underline">Delete</button>
+                                            </div>
                                         </div>
                                     </div>
+
+                                    {/* Inline edit form — shown under the selected card */}
+                                    {isAddingExperience && editingExperienceIndex === idx && (
+                                        <div className="border border-primary/25 rounded-lg p-5 bg-primary/5">
+                                            <h5 className="text-md font-semibold text-gray-900 mb-4">Edit Experience</h5>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-1">Job Title <span className="text-red-500">*</span></label>
+                                                    <input
+                                                        type="text"
+                                                        value={experienceForm.title}
+                                                        onChange={(e) => setExperienceForm(prev => ({ ...prev, title: e.target.value }))}
+                                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
+                                                        placeholder="e.g. Software Engineer"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-1">Company <span className="text-red-500">*</span></label>
+                                                    <input
+                                                        type="text"
+                                                        value={experienceForm.company}
+                                                        onChange={(e) => setExperienceForm(prev => ({ ...prev, company: e.target.value }))}
+                                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
+                                                        placeholder="e.g. Google"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-1">From Month <span className="text-red-500">*</span></label>
+                                                    <select
+                                                        value={experienceForm.fromMonth}
+                                                        onChange={(e) => setExperienceForm(prev => ({ ...prev, fromMonth: e.target.value }))}
+                                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
+                                                    >
+                                                        <option value="">Select month...</option>
+                                                        {months.map(m => <option key={m} value={m}>{m}</option>)}
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-1">From Year <span className="text-red-500">*</span></label>
+                                                    <select
+                                                        value={experienceForm.fromYear}
+                                                        onChange={(e) => setExperienceForm(prev => ({ ...prev, fromYear: e.target.value }))}
+                                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
+                                                    >
+                                                        <option value="">Select year...</option>
+                                                        {years.map(y => <option key={y} value={y}>{y}</option>)}
+                                                    </select>
+                                                </div>
+
+                                                {!experienceForm.currentlyWorking && (
+                                                    <>
+                                                        <div>
+                                                            <label className="block text-sm font-medium text-gray-700 mb-1">To Month <span className="text-red-500">*</span></label>
+                                                            <select
+                                                                value={experienceForm.toMonth}
+                                                                onChange={(e) => setExperienceForm(prev => ({ ...prev, toMonth: e.target.value }))}
+                                                                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
+                                                            >
+                                                                <option value="">Select month...</option>
+                                                                {months.map(m => <option key={m} value={m}>{m}</option>)}
+                                                            </select>
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-sm font-medium text-gray-700 mb-1">To Year <span className="text-red-500">*</span></label>
+                                                            <select
+                                                                value={experienceForm.toYear}
+                                                                onChange={(e) => setExperienceForm(prev => ({ ...prev, toYear: e.target.value }))}
+                                                                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
+                                                            >
+                                                                <option value="">Select year...</option>
+                                                                {years.map(y => <option key={y} value={y}>{y}</option>)}
+                                                            </select>
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </div>
+
+                                            <div className="mt-3">
+                                                <label className="inline-flex items-center cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={experienceForm.currentlyWorking}
+                                                        onChange={(e) => setExperienceForm(prev => ({ ...prev, currentlyWorking: e.target.checked, toMonth: '', toYear: '' }))}
+                                                        className="h-4 w-4 text-primary focus:ring-primary rounded"
+                                                    />
+                                                    <span className="ml-2 text-sm text-gray-700">I currently work here</span>
+                                                </label>
+                                            </div>
+
+                                            <div className="mt-4">
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                                                <textarea
+                                                    value={experienceForm.description}
+                                                    onChange={(e) => setExperienceForm(prev => ({ ...prev, description: e.target.value }))}
+                                                    rows={3}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
+                                                    placeholder="Describe your responsibilities and achievements..."
+                                                />
+                                            </div>
+
+                                            <div className="mt-4 flex justify-end gap-3">
+                                                <button type="button" onClick={resetExperienceForm} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors">Cancel</button>
+                                                <button type="button" onClick={() => saveExperience(setValuesWithPrev)} disabled={savingSection === 'experience'} className="px-4 py-2 lp-gradient-fill text-primary-foreground border-0 rounded-md hover:opacity-[0.97] transition-colors disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2">
+                                                    {savingSection === 'experience' && <Loader2 className="w-4 h-4 animate-spin" />}
+                                                    {savingSection === 'experience' ? 'Saving…' : 'Save'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                         </div>
                     )}
 
                         {/* Add/Edit experience form */}
-                        {isAddingExperience ? (
-                            <div className="border border-purple-200 rounded-lg p-5 bg-purple-50/30">
-                                <h5 className="text-md font-semibold text-gray-900 mb-4">{editingExperienceIndex !== null ? 'Edit Experience' : 'Add Experience'}</h5>
+                        {isAddingExperience && editingExperienceIndex === null ? (
+                            <div className="border border-primary/25 rounded-lg p-5 bg-primary/5">
+                                <h5 className="text-md font-semibold text-gray-900 mb-4">Add Experience</h5>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">Job Title <span className="text-red-500">*</span></label>
@@ -1167,7 +1604,7 @@ const AutoJobApply: React.FC = () => {
                                             type="text"
                                             value={experienceForm.title}
                                             onChange={(e) => setExperienceForm(prev => ({ ...prev, title: e.target.value }))}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
                                             placeholder="e.g. Software Engineer"
                                         />
                                     </div>
@@ -1177,7 +1614,7 @@ const AutoJobApply: React.FC = () => {
                                             type="text"
                                             value={experienceForm.company}
                                             onChange={(e) => setExperienceForm(prev => ({ ...prev, company: e.target.value }))}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
                                             placeholder="e.g. Google"
                                         />
                                     </div>
@@ -1186,7 +1623,7 @@ const AutoJobApply: React.FC = () => {
                                         <select
                                             value={experienceForm.fromMonth}
                                             onChange={(e) => setExperienceForm(prev => ({ ...prev, fromMonth: e.target.value }))}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
                                         >
                                             <option value="">Select month...</option>
                                             {months.map(m => <option key={m} value={m}>{m}</option>)}
@@ -1197,7 +1634,7 @@ const AutoJobApply: React.FC = () => {
                                         <select
                                             value={experienceForm.fromYear}
                                             onChange={(e) => setExperienceForm(prev => ({ ...prev, fromYear: e.target.value }))}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
                                         >
                                             <option value="">Select year...</option>
                                             {years.map(y => <option key={y} value={y}>{y}</option>)}
@@ -1211,7 +1648,7 @@ const AutoJobApply: React.FC = () => {
                                                 <select
                                                     value={experienceForm.toMonth}
                                                     onChange={(e) => setExperienceForm(prev => ({ ...prev, toMonth: e.target.value }))}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
                                                 >
                                                     <option value="">Select month...</option>
                                                     {months.map(m => <option key={m} value={m}>{m}</option>)}
@@ -1222,7 +1659,7 @@ const AutoJobApply: React.FC = () => {
                                                 <select
                                                     value={experienceForm.toYear}
                                                     onChange={(e) => setExperienceForm(prev => ({ ...prev, toYear: e.target.value }))}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
                                                 >
                                                     <option value="">Select year...</option>
                                                     {years.map(y => <option key={y} value={y}>{y}</option>)}
@@ -1238,7 +1675,7 @@ const AutoJobApply: React.FC = () => {
                                             type="checkbox"
                                             checked={experienceForm.currentlyWorking}
                                             onChange={(e) => setExperienceForm(prev => ({ ...prev, currentlyWorking: e.target.checked, toMonth: '', toYear: '' }))}
-                                            className="h-4 w-4 text-purple-600 focus:ring-purple-500 rounded"
+                                            className="h-4 w-4 text-primary focus:ring-primary rounded"
                                         />
                                         <span className="ml-2 text-sm text-gray-700">I currently work here</span>
                                     </label>
@@ -1250,18 +1687,18 @@ const AutoJobApply: React.FC = () => {
                                         value={experienceForm.description}
                                         onChange={(e) => setExperienceForm(prev => ({ ...prev, description: e.target.value }))}
                                         rows={3}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
                                         placeholder="Describe your responsibilities and achievements..."
                                     />
                                 </div>
 
                                 <div className="mt-4 flex justify-end gap-3">
                                     <button type="button" onClick={resetExperienceForm} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors">Cancel</button>
-                                    <button type="button" onClick={() => saveAndAddMoreExperience(setValuesWithPrev)} disabled={savingSection === 'experience'} className="px-4 py-2 border border-purple-600 text-purple-600 rounded-md hover:bg-purple-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2">
+                                    <button type="button" onClick={() => saveAndAddMoreExperience(setValuesWithPrev)} disabled={savingSection === 'experience'} className="px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/5 transition-colors disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2">
                                         {savingSection === 'experience' && <Loader2 className="w-4 h-4 animate-spin" />}
                                         {savingSection === 'experience' ? 'Saving…' : 'Save & Add More'}
                                     </button>
-                                    <button type="button" onClick={() => saveExperience(setValuesWithPrev)} disabled={savingSection === 'experience'} className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2">
+                                    <button type="button" onClick={() => saveExperience(setValuesWithPrev)} disabled={savingSection === 'experience'} className="px-4 py-2 lp-gradient-fill text-primary-foreground border-0 rounded-md hover:opacity-[0.97] transition-colors disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2">
                                         {savingSection === 'experience' && <Loader2 className="w-4 h-4 animate-spin" />}
                                         {savingSection === 'experience' ? 'Saving…' : 'Save'}
                                     </button>
@@ -1281,7 +1718,7 @@ const AutoJobApply: React.FC = () => {
                                 <button
                                     type="button"
                                     onClick={() => setIsAddingExperience(true)}
-                                    className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors"
+                                    className="inline-flex items-center px-4 py-2 lp-gradient-fill text-primary-foreground border-0 rounded-md hover:opacity-[0.97] transition-colors"
                                 >
                                     <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
                                         <path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" />
@@ -1312,7 +1749,7 @@ const AutoJobApply: React.FC = () => {
                                             {edu.description && <p className="text-sm text-gray-600 mt-2">{edu.description}</p>}
                                         </div>
                                         <div className="flex space-x-2 text-sm shrink-0 ml-4">
-                                            <button type="button" onClick={() => editEducation(idx, values)} className="text-purple-600 hover:text-purple-800 hover:underline">Edit</button>
+                                            <button type="button" onClick={() => editEducation(idx, values)} className="text-primary hover:text-primary hover:underline">Edit</button>
                                             <button type="button" onClick={() => deleteEducation(idx, setValuesWithPrev)} className="text-red-500 hover:text-red-700 hover:underline">Delete</button>
                                         </div>
                                     </div>
@@ -1323,7 +1760,7 @@ const AutoJobApply: React.FC = () => {
 
                     {/* Add/Edit education form */}
                     {isAddingEducation ? (
-                        <div className="border border-purple-200 rounded-lg p-5 bg-purple-50/30">
+                        <div className="border border-primary/25 rounded-lg p-5 bg-primary/5">
                             <h5 className="text-md font-semibold text-gray-900 mb-4">{editingEducationIndex !== null ? 'Edit Education' : 'Add Education'}</h5>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
@@ -1332,7 +1769,7 @@ const AutoJobApply: React.FC = () => {
                                         type="text"
                                         value={educationForm.school}
                                         onChange={(e) => setEducationForm(prev => ({ ...prev, school: e.target.value }))}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
                                         placeholder="e.g. Harvard University"
                                     />
                                 </div>
@@ -1342,7 +1779,7 @@ const AutoJobApply: React.FC = () => {
                                         type="text"
                                         value={educationForm.degree}
                                         onChange={(e) => setEducationForm(prev => ({ ...prev, degree: e.target.value }))}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
                                         placeholder="e.g. Bachelor of Science"
                                     />
                                 </div>
@@ -1352,7 +1789,7 @@ const AutoJobApply: React.FC = () => {
                                         type="text"
                                         value={educationForm.fieldOfStudy}
                                         onChange={(e) => setEducationForm(prev => ({ ...prev, fieldOfStudy: e.target.value }))}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
                                         placeholder="e.g. Computer Science"
                                     />
                                 </div>
@@ -1362,7 +1799,7 @@ const AutoJobApply: React.FC = () => {
                                     <select
                                         value={educationForm.fromMonth}
                                         onChange={(e) => setEducationForm(prev => ({ ...prev, fromMonth: e.target.value }))}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
                                     >
                                         <option value="">Select month...</option>
                                         {months.map(m => <option key={m} value={m}>{m}</option>)}
@@ -1373,7 +1810,7 @@ const AutoJobApply: React.FC = () => {
                                     <select
                                         value={educationForm.fromYear}
                                         onChange={(e) => setEducationForm(prev => ({ ...prev, fromYear: e.target.value }))}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
                                     >
                                         <option value="">Select year...</option>
                                         {years.map(y => <option key={y} value={y}>{y}</option>)}
@@ -1387,7 +1824,7 @@ const AutoJobApply: React.FC = () => {
                                             <select
                                                 value={educationForm.toMonth}
                                                 onChange={(e) => setEducationForm(prev => ({ ...prev, toMonth: e.target.value }))}
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
                                             >
                                                 <option value="">Select month...</option>
                                                 {months.map(m => <option key={m} value={m}>{m}</option>)}
@@ -1398,7 +1835,7 @@ const AutoJobApply: React.FC = () => {
                                             <select
                                                 value={educationForm.toYear}
                                                 onChange={(e) => setEducationForm(prev => ({ ...prev, toYear: e.target.value }))}
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
                                             >
                                                 <option value="">Select year...</option>
                                                 {years.map(y => <option key={y} value={y}>{y}</option>)}
@@ -1414,7 +1851,7 @@ const AutoJobApply: React.FC = () => {
                                         type="checkbox"
                                         checked={educationForm.isCurrentlyStudying}
                                         onChange={(e) => setEducationForm(prev => ({ ...prev, isCurrentlyStudying: e.target.checked, toMonth: '', toYear: '' }))}
-                                        className="h-4 w-4 text-purple-600 focus:ring-purple-500 rounded"
+                                        className="h-4 w-4 text-primary focus:ring-primary rounded"
                                     />
                                     <span className="ml-2 text-sm text-gray-700">I am currently studying here</span>
                                 </label>
@@ -1426,18 +1863,18 @@ const AutoJobApply: React.FC = () => {
                                     value={educationForm.description}
                                     onChange={(e) => setEducationForm(prev => ({ ...prev, description: e.target.value }))}
                                     rows={3}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
                                     placeholder="Describe your achievements, societies, or notable coursework..."
                                 />
                             </div>
 
                             <div className="mt-4 flex justify-end gap-3">
                                 <button type="button" onClick={resetEducationForm} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors">Cancel</button>
-                                <button type="button" onClick={() => saveAndAddMoreEducation(setValuesWithPrev)} disabled={savingSection === 'education'} className="px-4 py-2 border border-purple-600 text-purple-600 rounded-md hover:bg-purple-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2">
+                                <button type="button" onClick={() => saveAndAddMoreEducation(setValuesWithPrev)} disabled={savingSection === 'education'} className="px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary/5 transition-colors disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2">
                                     {savingSection === 'education' && <Loader2 className="w-4 h-4 animate-spin" />}
                                     {savingSection === 'education' ? 'Saving…' : 'Save & Add More'}
                                 </button>
-                                <button type="button" onClick={() => saveEducation(setValuesWithPrev)} disabled={savingSection === 'education'} className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2">
+                                <button type="button" onClick={() => saveEducation(setValuesWithPrev)} disabled={savingSection === 'education'} className="px-4 py-2 lp-gradient-fill text-primary-foreground border-0 rounded-md hover:opacity-[0.97] transition-colors disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2">
                                     {savingSection === 'education' && <Loader2 className="w-4 h-4 animate-spin" />}
                                     {savingSection === 'education' ? 'Saving…' : 'Save'}
                                 </button>
@@ -1456,7 +1893,7 @@ const AutoJobApply: React.FC = () => {
                                     <p className="text-sm text-gray-500 mb-4">Add your academic background to complete your profile.</p>
                                 </>
                             )}
-                            <button type="button" onClick={() => setIsAddingEducation(true)} className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors">
+                            <button type="button" onClick={() => setIsAddingEducation(true)} className="inline-flex items-center px-4 py-2 lp-gradient-fill text-primary-foreground border-0 rounded-md hover:opacity-[0.97] transition-colors">
                                 <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
                                     <path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" />
                                 </svg>
@@ -1479,13 +1916,13 @@ const AutoJobApply: React.FC = () => {
                             <div key={idx} className="flex items-start gap-4 border-b pb-4 last:border-0 border-gray-100">
                                 <div className="flex-1">
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Language</label>
-                                    <select value={lang.language} onChange={(e) => updateLanguage(idx, 'language', e.target.value, values, setValuesWithPrev)} required className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500">
+                                    <select value={lang.language} onChange={(e) => updateLanguage(idx, 'language', e.target.value, values, setValuesWithPrev)} required className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary">
                                         <option>Urdu</option><option>English</option><option>Punjabi</option><option>Arabic</option>
                                     </select>
                                 </div>
                                 <div className="flex-1">
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Proficiency</label>
-                                    <select value={lang.proficiency} onChange={(e) => updateLanguage(idx, 'proficiency', e.target.value, values, setValuesWithPrev)} required className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500">
+                                    <select value={lang.proficiency} onChange={(e) => updateLanguage(idx, 'proficiency', e.target.value, values, setValuesWithPrev)} required className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary">
                                         <option value="">Select...</option><option>Beginner</option><option>Intermediate</option><option>Fluent</option><option>Native</option>
                                     </select>
                                 </div>
@@ -1495,7 +1932,7 @@ const AutoJobApply: React.FC = () => {
                             </div>
                         ))}
                         <div className="flex justify-end">
-                            <button type="button" onClick={() => addLanguage(setValuesWithPrev)} className="text-purple-600 hover:text-purple-800 text-sm font-medium inline-flex items-center">
+                            <button type="button" onClick={() => addLanguage(setValuesWithPrev)} className="text-primary hover:text-primary text-sm font-medium inline-flex items-center">
                                 <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
                                 Add more languages
                             </button>
@@ -1508,9 +1945,9 @@ const AutoJobApply: React.FC = () => {
                         <div className="border border-gray-300 rounded-md p-2 mb-2">
                             <div className="flex flex-wrap gap-2">
                                 {values.skillAndLanguages.skills.map((skill, idx) => (
-                                    <span key={idx} className="inline-flex items-center bg-purple-100 text-purple-800 px-2 py-1 rounded-md text-sm">
+                                    <span key={idx} className="inline-flex items-center bg-primary/15 text-primary px-2 py-1 rounded-md text-sm">
                                         {skill.name}
-                                        <button type="button" onClick={() => removeSkill(skill.name, setValuesWithPrev)} className="ml-1 text-purple-600 hover:text-purple-800">×</button>
+                                        <button type="button" onClick={() => removeSkill(skill.name, setValuesWithPrev)} className="ml-1 text-primary hover:text-primary">×</button>
                                     </span>
                                 ))}
                                 <input type="text" placeholder="Add skill..." className="flex-1 outline-none text-sm min-w-[120px]" onKeyDown={(e) => {
@@ -1535,44 +1972,44 @@ const AutoJobApply: React.FC = () => {
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Expected annual salary</label>
                         <div className="flex">
-                            <select value={values.general.expectedSalaryCurrency} onChange={(e) => handleUpdate('general', 'expectedSalaryCurrency', e.target.value, setValuesWithPrev)} className="w-20 px-3 py-2 border border-r-0 border-gray-300 rounded-l-md bg-gray-50 focus:ring-purple-500 focus:border-purple-500">
+                            <select value={values.general.expectedSalaryCurrency} onChange={(e) => handleUpdate('general', 'expectedSalaryCurrency', e.target.value, setValuesWithPrev)} className="w-20 px-3 py-2 border border-r-0 border-gray-300 rounded-l-md bg-gray-50 focus:ring-primary focus:border-primary">
                                 <option>USD</option><option>EUR</option><option>GBP</option><option>PKR</option>
                             </select>
-                            <input type="number" value={values.general.expectedSalary} onChange={(e) => handleUpdate('general', 'expectedSalary', e.target.value ? parseInt(e.target.value) : '', setValuesWithPrev)} className="flex-1 px-3 py-2 border border-gray-300 rounded-r-md shadow-sm focus:ring-purple-500 focus:border-purple-500" placeholder="Enter salary" required />
+                            <input type="number" value={values.general.expectedSalary} onChange={(e) => handleUpdate('general', 'expectedSalary', e.target.value ? parseInt(e.target.value) : '', setValuesWithPrev)} className="flex-1 px-3 py-2 border border-gray-300 rounded-r-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Enter salary" required />
                         </div>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Current annual salary</label>
                         <div className="flex">
-                            <select value={values.general.currentSalaryCurrency} onChange={(e) => handleUpdate('general', 'currentSalaryCurrency', e.target.value, setValuesWithPrev)} className="w-20 px-3 py-2 border border-r-0 border-gray-300 rounded-l-md bg-gray-50 focus:ring-purple-500 focus:border-purple-500">
+                            <select value={values.general.currentSalaryCurrency} onChange={(e) => handleUpdate('general', 'currentSalaryCurrency', e.target.value, setValuesWithPrev)} className="w-20 px-3 py-2 border border-r-0 border-gray-300 rounded-l-md bg-gray-50 focus:ring-primary focus:border-primary">
                                 <option>USD</option><option>EUR</option><option>GBP</option><option>PKR</option>
                             </select>
-                            <input type="number" value={values.general.currentSalary} onChange={(e) => handleUpdate('general', 'currentSalary', e.target.value ? parseInt(e.target.value) : '', setValuesWithPrev)} className="flex-1 px-3 py-2 border border-gray-300 rounded-r-md shadow-sm focus:ring-purple-500 focus:border-purple-500" placeholder="Enter salary" required />
+                            <input type="number" value={values.general.currentSalary} onChange={(e) => handleUpdate('general', 'currentSalary', e.target.value ? parseInt(e.target.value) : '', setValuesWithPrev)} className="flex-1 px-3 py-2 border border-gray-300 rounded-r-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Enter salary" required />
                         </div>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Notice period (days)</label>
-                        <input type="number" value={values.general.noticePeriod} onChange={(e) => handleUpdate('general', 'noticePeriod', e.target.value ? parseInt(e.target.value) : '', setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500" placeholder="Enter notice period" required />
+                        <input type="number" value={values.general.noticePeriod} onChange={(e) => handleUpdate('general', 'noticePeriod', e.target.value ? parseInt(e.target.value) : '', setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Enter notice period" required />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Expected date to start</label>
-                        <input type="date" value={values.general.startDate ? values.general.startDate.toISOString().split('T')[0] : ''} onChange={(e) => handleUpdate('general', 'startDate', e.target.value ? new Date(e.target.value) : null, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500" required />
+                        <input type="date" value={toDateInputValue(values.general.startDate)} onChange={(e) => handleUpdate('general', 'startDate', e.target.value ? new Date(e.target.value) : null, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" required />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Race/ethnicity</label>
-                        <select value={values.general.race} required onChange={(e) => handleUpdate('general', 'race', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500">
+                        <select value={values.general.race} required onChange={(e) => handleUpdate('general', 'race', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary">
                             <option value="">Select...</option><option>Asian</option><option>Black</option><option>Hispanic</option><option>White</option><option>Other</option>
                         </select>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Disability</label>
-                        <select value={values.general.disability} required onChange={(e) => handleUpdate('general', 'disability', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500">
+                        <select value={values.general.disability} required onChange={(e) => handleUpdate('general', 'disability', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary">
                             <option value="">Select...</option><option>Yes</option><option>No</option><option>Prefer not to say</option>
                         </select>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Veteran status</label>
-                        <select value={values.general.veteran} required onChange={(e) => handleUpdate('general', 'veteran', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500">
+                        <select value={values.general.veteran} required onChange={(e) => handleUpdate('general', 'veteran', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary">
                             <option value="">Select...</option><option>Veteran</option><option>Not a veteran</option><option>Prefer not to say</option>
                         </select>
                     </div>
@@ -1584,7 +2021,7 @@ const AutoJobApply: React.FC = () => {
             {currentStep === 6 && (
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
                 <h4 className="text-lg font-semibold text-gray-900 mb-4">Achievements</h4>
-                <textarea required rows={6} value={values.achievements.achievements} onChange={(e) => handleUpdate('achievements', 'achievements', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500" placeholder="Enter your achievements or let AI generate them for you..." />
+                <textarea required rows={6} value={values.achievements.achievements} onChange={(e) => handleUpdate('achievements', 'achievements', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Enter your achievements or let AI generate them for you..." />
             </div>
             )}
 
@@ -1610,17 +2047,17 @@ const AutoJobApply: React.FC = () => {
                         } finally {
                             setUploadingDocument(null);
                         }
-                    }} className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2">
+                    }} className="px-4 py-2 lp-gradient-fill text-primary-foreground border-0 rounded-md hover:opacity-[0.97] disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2">
                         {uploadingDocument === 'certificate' && <Loader2 className="w-4 h-4 animate-spin" />}
                         {uploadingDocument === 'certificate' ? 'Uploading…' : 'Upload Certificate'}
                     </button>
                 </div>
-                <div onClick={() => handleBrowseClick(certificatesFileRef)} className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-purple-500 transition-colors cursor-pointer">
+                <div onClick={() => handleBrowseClick(certificatesFileRef)} className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-primary transition-colors cursor-pointer">
                     <div className="flex flex-col items-center space-y-2">
-                        <svg className="w-12 h-12 text-purple-600" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 0v12h8V4H6zm1 2h6v1H7V6zm0 2h6v1H7V8zm0 2h6v1H7v-1zm0 2h6v1H7v-1zm3-6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
-                        {values.certificates && values.certificates.length > 0 ? <h5 className="text-md font-medium text-purple-600">{values.certificates.length} file(s) selected</h5> : <h5 className="text-md font-medium text-gray-900">Drag–n–Drop certificates here</h5>}
+                        <svg className="w-12 h-12 text-primary" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 0v12h8V4H6zm1 2h6v1H7V6zm0 2h6v1H7V8zm0 2h6v1H7v-1zm0 2h6v1H7v-1zm3-6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
+                        {values.certificates && values.certificates.length > 0 ? <h5 className="text-md font-medium text-primary">{values.certificates.length} file(s) selected</h5> : <h5 className="text-md font-medium text-gray-900">Drag–n–Drop certificates here</h5>}
                         <div className="flex items-center gap-2 text-sm text-gray-500"><span className="w-12 h-px bg-gray-300"></span><span>or</span><span className="w-12 h-px bg-gray-300"></span></div>
-                        <span className="text-purple-600 font-medium">Browse</span>
+                        <span className="text-primary font-medium">Browse</span>
                         <p className="text-xs text-gray-500">(File types: pdf, doc, docx, jpg, png)</p>
                     </div>
                     <input type="file" className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" multiple ref={certificatesFileRef} onChange={(e) => handleFileChange(e, 'certificates', setValues)} />
@@ -1630,7 +2067,7 @@ const AutoJobApply: React.FC = () => {
 {Array.from(values.certificates).map((file: File, index: number) => (
                                 <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100">
                                 <div className="flex items-center">
-                                    <svg className="w-5 h-5 text-purple-600 mr-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 0v12h8V4H6zm1 2h6v1H7V6zm0 2h6v1H7V8zm0 2h6v1H7v-1zm0 2h6v1H7v-1zm3-6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
+                                    <svg className="w-5 h-5 text-primary mr-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 0v12h8V4H6zm1 2h6v1H7V6zm0 2h6v1H7V8zm0 2h6v1H7v-1zm0 2h6v1H7v-1zm3-6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
                                     <span className="text-sm text-gray-700">{file.name} ({(file.size / 1024).toFixed(1)} KB)</span>
                                 </div>
                                 <button type="button" onClick={(e) => { e.stopPropagation(); removeFile('certificates', index, setValuesWithPrev); }} className="ml-2 text-gray-400 hover:text-red-600 transition-colors">
@@ -1662,17 +2099,17 @@ const AutoJobApply: React.FC = () => {
                         } finally {
                             setUploadingDocument(null);
                         }
-                    }} className="px-4 py-2 mb-4 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2">
+                    }} className="px-4 py-2 mb-4 lp-gradient-fill text-primary-foreground border-0 rounded-md hover:opacity-[0.97] disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2">
                         {uploadingDocument === 'recommendation' && <Loader2 className="w-4 h-4 animate-spin" />}
                         {uploadingDocument === 'recommendation' ? 'Uploading…' : 'Upload Letter'}
                     </button>
                 </div>
-                <div onClick={() => handleBrowseClick(recommendationFileRef)} className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-purple-500 transition-colors cursor-pointer">
+                <div onClick={() => handleBrowseClick(recommendationFileRef)} className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-primary transition-colors cursor-pointer">
                     <div className="flex flex-col items-center space-y-2">
-                        <svg className="w-12 h-12 text-purple-600" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 0v12h8V4H6zm1 2h6v1H7V6zm0 2h6v1H7V8zm0 2h6v1H7v-1zm0 2h6v1H7v-1zm3-6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
-                        {values.recommendationLetters && values.recommendationLetters.length > 0 ? <h5 className="text-md font-medium text-purple-600">{values.recommendationLetters.length} file(s) selected</h5> : <h5 className="text-md font-medium text-gray-900">Drag–n–Drop recommendation letter here</h5>}
+                        <svg className="w-12 h-12 text-primary" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 0v12h8V4H6zm1 2h6v1H7V6zm0 2h6v1H7V8zm0 2h6v1H7v-1zm0 2h6v1H7v-1zm3-6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
+                        {values.recommendationLetters && values.recommendationLetters.length > 0 ? <h5 className="text-md font-medium text-primary">{values.recommendationLetters.length} file(s) selected</h5> : <h5 className="text-md font-medium text-gray-900">Drag–n–Drop recommendation letter here</h5>}
                         <div className="flex items-center gap-2 text-sm text-gray-500"><span className="w-12 h-px bg-gray-300"></span><span>or</span><span className="w-12 h-px bg-gray-300"></span></div>
-                        <span className="text-purple-600 font-medium">Browse</span>
+                        <span className="text-primary font-medium">Browse</span>
                         <p className="text-xs text-gray-500">(File types: pdf, doc, docx, txt, rtf)</p>
                     </div>
                     <input type="file" className="hidden" accept=".pdf,.doc,.docx,.txt,.rtf" multiple ref={recommendationFileRef} onChange={(e) => handleFileChange(e, 'recommendationLetters', setValues)} />
@@ -1682,7 +2119,7 @@ const AutoJobApply: React.FC = () => {
 {Array.from(values.recommendationLetters).map((file: File, index: number) => (
                                 <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100">
                                 <div className="flex items-center">
-                                    <svg className="w-5 h-5 text-purple-600 mr-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 0v12h8V4H6zm1 2h6v1H7V6zm0 2h6v1H7V8zm0 2h6v1H7v-1zm0 2h6v1H7v-1zm3-6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
+                                    <svg className="w-5 h-5 text-primary mr-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 0v12h8V4H6zm1 2h6v1H7V6zm0 2h6v1H7V8zm0 2h6v1H7v-1zm0 2h6v1H7v-1zm3-6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
                                     <span className="text-sm text-gray-700">{file.name} ({(file.size / 1024).toFixed(1)} KB)</span>
                                 </div>
                                 <button type="button" onClick={(e) => { e.stopPropagation(); removeFile('recommendationLetters', index, setValuesWithPrev); }} className="ml-2 text-gray-400 hover:text-red-600 transition-colors">
@@ -1697,20 +2134,22 @@ const AutoJobApply: React.FC = () => {
             )}
 
             {/* Back / Save & Next — Back only from step 2 onward */}
-            <div className="flex justify-between items-center mt-8 pt-6 border-t border-gray-200">
+            <div className="flex justify-between items-center mt-8 pt-6 border-t border-border">
                 {currentStep >= 1 ? (
-                    <button type="button" onClick={() => setCurrentStep(s => Math.max(0, s - 1))} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50">
+                    <button type="button" onClick={() => { setErrors([]); setCurrentStep(s => Math.max(0, s - 1)); }} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50">
                         Back
                     </button>
                 ) : (
                     <div />
                 )}
-                <button type="button" onClick={handleSaveAndNext} disabled={!!savingSection} className="px-6 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2">
+                <button type="button" onClick={handleSaveAndNext} disabled={!!savingSection} className="px-6 py-2 lp-gradient-fill text-primary-foreground border-0 rounded-md hover:opacity-[0.97] disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2">
                     {savingSection ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                     {currentStep < TOTAL_STEPS - 1 ? (savingSection ? 'Saving…' : 'Save & Next') : (savingSection ? 'Saving…' : 'Finish')}
                 </button>
             </div>
         </div>
+        </div>
+        </>
                 );
             }}
         </Formik>

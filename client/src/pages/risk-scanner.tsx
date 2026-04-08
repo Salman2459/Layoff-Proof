@@ -10,7 +10,7 @@ import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Shield, AlertTriangle, TrendingDown, TrendingUp, Lightbulb, Target, Users, DollarSign } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getApiErrorMessage } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 interface RiskAnalysis {
@@ -71,11 +71,7 @@ export default function RiskScanner() {
 
   const analyzeRiskMutation = useMutation({
     mutationFn: async (data: typeof formData) => {
-      const response = await apiRequest("POST", "/api/risk-analysis", data);
-      if (!response.ok) {
-        throw new Error("Failed to analyze risk");
-      }
-      return response.json();
+      return await apiRequest("POST", "/api/risk-analysis", data);
     },
     onSuccess: (result: RiskAnalysis) => {
       setAnalysis(result);
@@ -84,10 +80,10 @@ export default function RiskScanner() {
         description: "Your job security risk analysis is ready",
       });
     },
-    onError: (error) => {
+    onError: (error: unknown) => {
       toast({
         title: "Analysis Failed",
-        description: error.message,
+        description: getApiErrorMessage(error, "Could not complete risk analysis."),
         variant: "destructive",
       });
     },

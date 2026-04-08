@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, getApiErrorMessage, queryClient } from "@/lib/queryClient";
 import GlobalHeader from "@/components/GlobalHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -131,13 +131,16 @@ export default function JobSearchOptimizer() {
         description: "Your job search profile has been saved successfully."
       });
     },
-    onError: (error) => {
+    onError: (error: unknown) => {
       toast({
         title: "Error",
-        description: "Failed to save profile. Please try again.",
-        variant: "destructive"
+        description: getApiErrorMessage(
+          error,
+          "Failed to save profile. Please try again."
+        ),
+        variant: "destructive",
       });
-    }
+    },
   });
 
   // Add job application mutation
@@ -170,9 +173,19 @@ export default function JobSearchOptimizer() {
       });
       toast({
         title: "Application Added",
-        description: "Job application has been added to your tracker."
+        description: "Job application has been added to your tracker.",
       });
-    }
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Error",
+        description: getApiErrorMessage(
+          error,
+          "Failed to add application. Please try again."
+        ),
+        variant: "destructive",
+      });
+    },
   });
 
   // Update job application mutation
@@ -199,9 +212,19 @@ export default function JobSearchOptimizer() {
       queryClient.invalidateQueries({ queryKey: ["/api/job-applications"] });
       toast({
         title: "Application Deleted",
-        description: "Job application has been removed from your tracker."
+        description: "Job application has been removed from your tracker.",
       });
-    }
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Error",
+        description: getApiErrorMessage(
+          error,
+          "Failed to delete application. Please try again."
+        ),
+        variant: "destructive",
+      });
+    },
   });
 
   const handleSaveProfile = () => {

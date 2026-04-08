@@ -22,7 +22,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Check, Loader2, CreditCard, XCircle, CheckCircle, Tag } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getApiErrorMessage } from "@/lib/queryClient";
 import GlobalHeader from "@/components/GlobalHeader";
 import GlobalFooter from "@/components/GlobalFooter";
 
@@ -122,16 +122,19 @@ const CheckoutForm = ({
 
   const fetchPriceBreakdown = async (couponCode?: string) => {
     try {
-      const response = await apiRequest("POST", "/api/stripe/get-price-breakdown", {
-        coupon: couponCode || ""
+      const data = await apiRequest("POST", "/api/stripe/get-price-breakdown", {
+        coupon: couponCode || "",
       });
-      const data =  response;
-
-      if (response.ok) {
+      if (data?.breakdown) {
         setPriceBreakdown(data.breakdown);
       }
     } catch (error) {
       console.error("Error fetching price breakdown:", error);
+      toast({
+        title: "Price update",
+        description: getApiErrorMessage(error),
+        variant: "destructive",
+      });
     }
   };
 
@@ -253,10 +256,9 @@ const CheckoutForm = ({
         console.log("✅ Payment succeeded:", paymentIntent.id);
 
         // Confirm subscription on backend
-        const confirmResponse = await apiRequest("POST", "/api/stripe/confirm-subscription", {
-          planId
+        const confirmData = await apiRequest("POST", "/api/stripe/confirm-subscription", {
+          planId,
         });
-        const confirmData = await confirmResponse.json();
 
         if (confirmData.success) {
           window.location.href = `${window.location.origin}/`;
@@ -273,8 +275,11 @@ const CheckoutForm = ({
       console.error("❌ Unexpected error during payment:", error);
       toast({
         title: "Payment Error",
-        description: "An unexpected error occurred. Please try again.",
-        variant: "destructive"
+        description: getApiErrorMessage(
+          error,
+          "An unexpected error occurred. Please try again."
+        ),
+        variant: "destructive",
       });
       setIsProcessing(false);
     }
@@ -373,7 +378,7 @@ const PlanSelection = ({ onPlanSelect }:any) => {
 
   return (
     <div className="grid md:grid-cols-2 gap-8">
-      <Card>
+      <Card  className="flex flex-col justify-between">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">Weekly Pro</CardTitle>
           <div className="text-3xl font-bold text-blue-600">
@@ -406,7 +411,7 @@ const PlanSelection = ({ onPlanSelect }:any) => {
         </CardFooter>
       </Card>
 
-      <Card className="border-blue-500 ring-2 ring-blue-500 shadow-xl">
+      <Card className="border-blue-500 ring-2 ring-blue-500 shadow-xl flex flex-col justify-between">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-2">
             <Badge className="bg-blue-600 text-white">Best Value</Badge>
@@ -478,7 +483,10 @@ export default function Subscribe() {
       console.error("❌ Error creating subscription:", error);
       toast({
         title: "Setup Error",
-        description: "Failed to initialize payment. Please try again.",
+        description: getApiErrorMessage(
+          error,
+          "Failed to initialize payment. Please try again."
+        ),
         variant: "destructive",
       });
     }

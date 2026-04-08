@@ -293,6 +293,8 @@ export interface ParsedResumeData {
   email: string;
   phone: string;
   profession: string;
+  /** Optional profile photo as a data URL (e.g. "data:image/png;base64,...") */
+  profileImageDataUrl?: string;
   summary: string;
   experience: Array<{
     title: string;

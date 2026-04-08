@@ -1,5 +1,5 @@
 import { Link } from "wouter";
-import { useState } from "react";
+import { useState, type ComponentType } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -13,19 +13,182 @@ import {
   Mail,
   Linkedin,
   MessageSquare,
-  Target,
   TrendingDown,
-  Globe,
   Briefcase,
-  BarChart3,
   Lock,
-  Bot
+  Bot,
+  type LucideProps,
 } from "lucide-react";
 import GlobalHeader from "@/components/GlobalHeader";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+import { elevateLandingToolCards } from "./data.js";
 
 const PROFILE_COMPLETE_STEP = 8; // All 8 steps completed = profile ready for dashboard
+
+type ToolIcon = ComponentType<LucideProps>;
+
+const TOOL_CARD_ICONS: Record<string, ToolIcon> = {
+  FileText,
+  Mail,
+  Users,
+  Linkedin,
+  MessageSquare,
+  TrendingDown,
+  Briefcase,
+  Award,
+  Bot,
+};
+
+type ToolCardTheme = {
+  /** Top accent bar */
+  bar: string;
+  /** Icon tile background */
+  iconTile: string;
+  /** List bullet color */
+  bullet: string;
+};
+
+function ToolPromoCard({
+  title,
+  description,
+  features,
+  icon: Icon,
+  theme,
+  popular,
+  premium,
+  comingSoonBadge,
+  comingSoonButton,
+  ctaLabel,
+  ctaDisabled,
+  onCtaClick,
+}: {
+  title: string;
+  description: string;
+  features: string[];
+  icon: ToolIcon;
+  theme: ToolCardTheme;
+  popular?: boolean;
+  premium?: boolean;
+  /** Small accent badge in header for coming-soon cards */
+  comingSoonBadge?: boolean;
+  /** Gray disabled CTA */
+  comingSoonButton?: boolean;
+  ctaLabel?: string;
+  ctaDisabled?: boolean;
+  onCtaClick?: () => void;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col overflow-hidden rounded-xl border border-border bg-card",
+        "shadow-md transition-[box-shadow,transform] duration-300 ease-out",
+        "hover:shadow-2xl hover:shadow-primary/20 hover:-translate-y-0.5",
+        "active:shadow-xl active:translate-y-0",
+        "has-[button:active]:shadow-xl has-[button:active]:translate-y-0",
+        "focus-within:shadow-2xl focus-within:shadow-primary/20 focus-within:-translate-y-0.5",
+        "dark:hover:shadow-primary/25 dark:focus-within:shadow-primary/25"
+      )}
+    >
+      <div
+        className={cn("h-1.5 w-full shrink-0 bg-gradient-to-r", theme.bar)}
+        aria-hidden
+      />
+      <div className="flex flex-1 flex-col p-6">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <div
+              className={cn(
+                "flex h-12 w-12 shrink-0 items-center justify-center rounded-xl shadow-sm",
+                theme.iconTile
+              )}
+            >
+              <Icon className="h-6 w-6 text-white" strokeWidth={2} />
+            </div>
+            <h3 className="text-left text-lg font-bold leading-snug text-card-foreground">
+              {title}
+            </h3>
+          </div>
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
+            {popular && (
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold text-white shadow-sm",
+                  "bg-gradient-to-r from-amber-400 to-yellow-500"
+                )}
+              >
+                <Star className="h-3 w-3 fill-white text-white" />
+                Popular
+              </span>
+            )}
+            {premium && (
+              <span className="inline-flex items-center rounded-full bg-primary px-2.5 py-0.5 text-xs font-semibold text-primary-foreground shadow-sm">
+                Premium
+              </span>
+            )}
+            {comingSoonBadge && !premium && (
+              <span className="inline-flex items-center rounded-full bg-primary px-2.5 py-0.5 text-xs font-semibold capitalize text-primary-foreground shadow-sm">
+                coming soon
+              </span>
+            )}
+          </div>
+        </div>
+
+        <p className="mb-4 text-sm leading-relaxed text-muted-foreground">
+          {description}
+        </p>
+
+        <ul className="mb-6 flex flex-1 flex-col gap-2">
+          {features.map((line) => (
+            <li
+              key={line}
+              className="flex items-start gap-2.5 text-sm text-card-foreground/90"
+            >
+              <span
+                className={cn(
+                  "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full",
+                  theme.bullet
+                )}
+              />
+              <span className="leading-snug">{line}</span>
+            </li>
+          ))}
+        </ul>
+
+        {comingSoonButton ? (
+          <Button
+            type="button"
+            disabled
+            className={cn(
+              "h-11 w-full cursor-not-allowed rounded-lg border border-border/80 bg-muted/90",
+              "font-semibold text-muted-foreground shadow-sm hover:bg-muted/90"
+            )}
+          >
+            Coming Soon
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            onClick={onCtaClick}
+            disabled={ctaDisabled}
+            className={cn(
+              "h-11 w-full rounded-lg border-0 font-semibold text-primary-foreground shadow-md",
+              "lp-gradient-fill shadow-teal-900/10 transition hover:opacity-[0.97] disabled:opacity-60",
+              "ring-1 ring-black/5 dark:ring-white/10"
+            )}
+          >
+            {(ctaLabel ?? "").includes("Sign Up") && (
+              <Lock className="mr-2 h-4 w-4" />
+            )}
+            {ctaLabel ?? "Try Now"}
+            <ArrowRight className="ml-2 h-4 w-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function ElevateLanding() {
   const { isAuthenticated } = useAuth();
@@ -34,67 +197,64 @@ export default function ElevateLanding() {
   const [aiAutoApplyChecking, setAiAutoApplyChecking] = useState(false);
 
   const handleToolAccess = (toolPath: string) => {
-    console.log("Accessing tool:", user);
-    // Trial users: expired OR used all trial messages
-    // console.log(user?.subscriptionEndDate)
+    // Guests must sign up / log in first — do not send them to pricing before an account exists.
+    if (!isAuthenticated) {
+      window.location.href = "/signup";
+      return;
+    }
 
     if (!user?.subscriptionEndDate) {
       toast({
         title: "Subscription Required",
-        description: " Please upgrade to access this tool.",
-        variant: "destructive"
+        description: "Please upgrade to access this tool.",
+        variant: "destructive",
       });
-      window.location.href = '/pricing';
+      window.location.href = "/pricing";
       return;
     }
 
-
-    if (user?.subscriptionEndDate && new Date(user?.subscriptionEndDate) < new Date()) {
+    if (new Date(user.subscriptionEndDate) < new Date()) {
       toast({
         title: "Subscription Ended",
-        description: "Your subscription has ended. Please upgrade to access this tool.",
-        variant: "destructive"
+        description:
+          "Your subscription has ended. Please upgrade to access this tool.",
+        variant: "destructive",
       });
-      window.location.href = '/pricing';
+      window.location.href = "/pricing";
       return;
     }
 
-
-    if (!isAuthenticated) {
-      // Redirect to login
-      window.location.href = '/signup';
-      return;
-    }
-    // If authenticated, navigate to tool
     window.location.href = toolPath;
   };
 
   /** AI Auto Apply card: if profile is complete (step 8), go to dashboard; else go to form. */
   const handleAIAutoApplyAccess = async () => {
+    if (!isAuthenticated) {
+      window.location.href = "/signup";
+      return;
+    }
+
     if (!user?.subscriptionEndDate) {
       toast({
         title: "Subscription Required",
-        description: " Please upgrade to access this tool.",
-        variant: "destructive"
+        description: "Please upgrade to access this tool.",
+        variant: "destructive",
       });
-      window.location.href = '/pricing';
+      window.location.href = "/pricing";
       return;
     }
     if (new Date(user.subscriptionEndDate) < new Date()) {
       toast({
         title: "Subscription Ended",
-        description: "Your subscription has ended. Please upgrade to access this tool.",
-        variant: "destructive"
+        description:
+          "Your subscription has ended. Please upgrade to access this tool.",
+        variant: "destructive",
       });
-      window.location.href = '/pricing';
-      return;
-    }
-    if (!isAuthenticated) {
-      window.location.href = '/signup';
+      window.location.href = "/pricing";
       return;
     }
 
-    const userId = (user as { id?: string })?.id;
+    const userId = user?.id;
     if (!userId) {
       window.location.href = '/tools/auto-job-apply';
       return;
@@ -119,7 +279,7 @@ export default function ElevateLanding() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+    <div className="min-h-screen lp-page-mesh">
       <GlobalHeader />
 
       {/* Hero Section */}
@@ -128,18 +288,21 @@ export default function ElevateLanding() {
           {/* Left Column - Content */}
           <div className="space-y-8">
             <div className="space-y-4">
-              <Badge variant="secondary" className="bg-purple-100 text-purple-700 hover:bg-purple-200">
+              <Badge
+                variant="secondary"
+                className="border border-violet-200/60 bg-violet-100/90 text-violet-800 hover:bg-violet-100 dark:border-violet-500/25 dark:bg-violet-950/50 dark:text-violet-200"
+              >
                 ✨ AI-Powered Career Platform
               </Badge>
 
-              <h1 className="text-5xl lg:text-6xl font-bold text-gray-900 leading-tight">
+              <h1 className="text-5xl font-bold leading-tight text-foreground lg:text-6xl">
                 Elevate Your{" "}
-                <span className="text-blue-600">Career</span>
+                <span className="lp-gradient-text">Career</span>
                 <br />
-                <span className="text-blue-600">Journey</span>
+                <span className="lp-gradient-text">Journey</span>
               </h1>
 
-              <p className="text-xl text-gray-600 leading-relaxed max-w-lg">
+              <p className="max-w-lg text-xl leading-relaxed text-muted-foreground">
                 Transform your job search & job security with our AI that helps you land your dream job faster & keep it!
               </p>
             </div>
@@ -148,36 +311,49 @@ export default function ElevateLanding() {
             <div className="grid grid-cols-2 gap-4">
               <div className="flex items-center space-x-2">
                 <CheckCircle className="w-5 h-5 text-green-500" />
-                <span className="text-sm text-gray-600">AI-powered career tools</span>
+                <span className="text-sm text-muted-foreground">
+                  AI-powered career tools
+                </span>
               </div>
               <div className="flex items-center space-x-2">
                 <CheckCircle className="w-5 h-5 text-green-500" />
-                <span className="text-sm text-gray-600">ATS-optimized content</span>
+                <span className="text-sm text-muted-foreground">
+                  ATS-optimized content
+                </span>
               </div>
               <div className="flex items-center space-x-2">
                 <CheckCircle className="w-5 h-5 text-green-500" />
-                <span className="text-sm text-gray-600">Layoff tracker -  Interview practice & prep </span>
+                <span className="text-sm text-muted-foreground">
+                  Layoff tracker - Interview practice & prep
+                </span>
               </div>
               <div className="flex items-center space-x-2">
                 <CheckCircle className="w-5 h-5 text-green-500" />
-                <span className="text-sm text-gray-600">AI generated resume & cover letter</span>
+                <span className="text-sm text-muted-foreground">
+                  AI generated resume & cover letter
+                </span>
               </div>
               <div className="flex items-center space-x-2">
                 <CheckCircle className="w-5 h-5 text-green-500" />
-                <span className="text-sm text-gray-600">Recruiter outreach generator</span>
+                <span className="text-sm text-muted-foreground">
+                  Recruiter outreach generator
+                </span>
               </div>
               <div className="flex items-center space-x-2">
                 <CheckCircle className="w-5 h-5 text-green-500" />
-                <span className="text-sm text-gray-600">Expert guidance</span>
+                <span className="text-sm text-muted-foreground">Expert guidance</span>
               </div>
             </div>
 
             {/* CTA Buttons */}
             <div className="flex flex-col sm:flex-row gap-4">
               <Link href="/login">
-                <Button size="lg" className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 text-lg">
+                <Button
+                  size="lg"
+                  className="border-0 px-8 py-3 text-lg text-primary-foreground shadow-lg lp-gradient-fill"
+                >
                   Get Started
-                  <ArrowRight className="w-5 h-5 ml-2" />
+                  <ArrowRight className="ml-2 h-5 w-5" />
                 </Button>
               </Link>
             </div>
@@ -197,53 +373,65 @@ export default function ElevateLanding() {
 
           {/* Right Column - Image */}
           <div className="relative">
-            <div className="rounded-2xl overflow-hidden shadow-2xl bg-gradient-to-br from-blue-500 to-purple-600 p-1">
-              <div className="bg-white rounded-xl p-8">
+            <div className="lp-ring-frame overflow-hidden shadow-2xl shadow-teal-500/15">
+              <div className="rounded-[13px] bg-card p-8">
                 <div className="space-y-6">
                   {/* Mock Dashboard Preview */}
                   <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-semibold text-gray-900">Career Dashboard</h3>
+                    <h3 className="text-lg font-semibold text-card-foreground">
+                      Career Dashboard
+                    </h3>
                     <Badge className="bg-green-100 text-green-700">Active</Badge>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-blue-50 rounded-lg p-4">
+                    <div className="rounded-lg bg-teal-500/10 p-4 dark:bg-teal-500/15">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="text-2xl font-bold text-blue-600">85%</p>
-                          <p className="text-sm text-gray-600">Profile Score</p>
+                          <p className="text-2xl font-bold text-primary">85%</p>
+                          <p className="text-sm text-muted-foreground">
+                            Profile Score
+                          </p>
                         </div>
-                        <TrendingUp className="w-8 h-8 text-blue-500" />
+                        <TrendingUp className="h-8 w-8 text-primary" />
                       </div>
                     </div>
-                    <div className="bg-purple-50 rounded-lg p-4">
+                    <div className="rounded-lg bg-violet-500/10 p-4 dark:bg-violet-500/15">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="text-2xl font-bold text-purple-600">12</p>
-                          <p className="text-sm text-gray-600">Applications</p>
+                          <p className="text-2xl font-bold text-violet-600 dark:text-violet-400">
+                            12
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            Applications
+                          </p>
                         </div>
-                        <Award className="w-8 h-8 text-purple-500" />
+                        <Award className="h-8 w-8 text-violet-500 dark:text-violet-400" />
                       </div>
                     </div>
                   </div>
 
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center justify-between rounded-lg bg-muted/60 p-3">
                       <span className="text-sm font-medium">Resume Score</span>
-                      <div className="w-24 bg-gray-200 rounded-full h-2">
-                        <div className="bg-blue-600 h-2 rounded-full w-20"></div>
+                      <div className="h-2 w-24 rounded-full bg-muted">
+                        <div className="h-2 w-20 rounded-full bg-primary" />
                       </div>
                     </div>
-                    <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                      <span className="text-sm font-medium">LinkedIn Optimization</span>
-                      <div className="w-24 bg-gray-200 rounded-full h-2">
-                        <div className="bg-green-600 h-2 rounded-full w-full"></div>
+                    <div className="flex items-center justify-between rounded-lg bg-muted/60 p-3">
+                      <span className="text-sm font-medium">
+                        LinkedIn Optimization
+                      </span>
+                      <div className="h-2 w-24 rounded-full bg-muted">
+                        <div className="h-2 w-full rounded-full bg-emerald-500" />
                       </div>
                     </div>
-                    <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                      <span className="text-sm font-medium">Interview Readiness</span>
-                      <div className="w-24 bg-gray-200 rounded-full h-2">
-                        <div className="bg-purple-600 h-2 rounded-full w-16"></div>
+                    <div className="flex items-center justify-between rounded-lg bg-muted/60 p-3">
+                      <span className="text-sm font-medium">
+                        Interview Readiness
+                      </span>
+                      <div className="h-2 w-24 rounded-full bg-muted">
+                        <div className="h-2 w-16 rounded-full bg-violet-500" />
                       </div>
                     </div>
                   </div>
@@ -255,257 +443,65 @@ export default function ElevateLanding() {
       </main>
 
       {/* Tools Section */}
-      <section className="py-20 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-4xl font-bold text-gray-900 mb-4">
+      <section className="border-y border-border/60 bg-card/80 py-20 backdrop-blur-sm">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="mb-16 text-center">
+            <h2 className="mb-4 text-4xl font-bold text-foreground">
               Powerful AI Tools for Every{" "}
-              <span className="text-blue-600">Career Stage</span>
+              <span className="lp-gradient-text">Career Stage</span>
             </h2>
-            <p className="text-xl text-gray-600 max-w-3xl mx-auto">
+            <p className="mx-auto max-w-3xl text-xl text-muted-foreground">
               From resume building to interview preparation, our comprehensive toolkit has everything you need to succeed in your career journey.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {/* Resume Builder */}
-            <div className="bg-white border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-shadow">
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-3 bg-blue-100 rounded-lg">
-                  <FileText className="w-6 h-6 text-blue-600" />
-                </div>
-                <span className="text-xs text-white bg-purple-600 px-2 py-1 rounded">Premium</span>
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Resume Builder</h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Create ATS-optimized resumes with AI assistance. Stand out from the crowd with professionally designed templates.
-              </p>
-              <Button
-                onClick={() => handleToolAccess('/tools/resume-builder')}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                {!isAuthenticated && <Lock className="w-4 h-4 mr-2" />}
-                {!isAuthenticated ? 'Sign Up to Access' : 'Try Now'}
-              </Button>
-            </div>
+          <div className="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-3">
+            {elevateLandingToolCards.map((card) => {
+              const Icon = TOOL_CARD_ICONS[card.iconKey];
+              if (!Icon) return null;
 
-            {/* Cover Letter Generator */}
-            <div className="bg-white border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-shadow">
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-3 bg-purple-100 rounded-lg">
-                  <Mail className="w-6 h-6 text-purple-600" />
-                </div>
-                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">Premium</span>
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Cover Letter Generator</h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Generate personalized cover letters that perfectly match job descriptions and company culture.
-              </p>
-              <Button
-                onClick={() => handleToolAccess('/tools/cover-letter')}
-                className="w-full bg-purple-600 hover:bg-purple-700 text-white"
-              >
-                {!isAuthenticated && <Lock className="w-4 h-4 mr-2" />}
-                {!isAuthenticated ? 'Sign Up to Access' : 'Try Now'}
-              </Button>
-            </div>
+              const comingSoon = card.access === "coming-soon";
+              const isAiAutoApply = card.access === "ai-auto-apply";
+              const toolPath =
+                card.access === "tool" ? card.toolPath : undefined;
 
-            {/* Interview Preparation */}
-            <div className="bg-white border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-shadow">
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-3 bg-green-100 rounded-lg">
-                  <Users className="w-6 h-6 text-green-600" />
-                </div>
-                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">Premium</span>
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Interview Preparation</h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Practice with AI-powered mock interviews. Get real-time feedback and improve your confidence.
-              </p>
-              <Button
-                onClick={() => handleToolAccess('/tools/interview-preparation')}
-                className="w-full bg-green-600 hover:bg-green-700 text-white"
-              >
-                {!isAuthenticated && <Lock className="w-4 h-4 mr-2" />}
-                {!isAuthenticated ? 'Sign Up to Access' : 'Try Now'}
-              </Button>
-            </div>
-
-            {/* LinkedIn Optimizer */}
-            <div className="bg-white border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-shadow">
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-3 bg-blue-100 rounded-lg">
-                  <Linkedin className="w-6 h-6 text-blue-600" />
-                </div>
-                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">Premium</span>
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">LinkedIn Optimizer</h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Optimize your LinkedIn profile for maximum visibility and professional networking opportunities.
-              </p>
-              <Button
-                onClick={() => handleToolAccess('/tools/linkedin-optimizer')}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                {!isAuthenticated && <Lock className="w-4 h-4 mr-2" />}
-                {!isAuthenticated ? 'Sign Up to Access' : 'Try Now'}
-              </Button>
-            </div>
-
-            {/* Recruiter Outreach Script Generator */}
-            <div className="bg-white border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-shadow">
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-3 bg-purple-100 rounded-lg">
-                  <MessageSquare className="w-6 h-6 text-purple-600" />
-                </div>
-                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">Premium</span>
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Recruiter Outreach Script Generator</h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Generate personalized outreach messages for recruiters and hiring managers that get responses.
-              </p>
-              <Button
-                onClick={() => handleToolAccess('/tools/recruiter-outreach')}
-                className="w-full bg-purple-600 hover:bg-purple-700 text-white"
-              >
-                {!isAuthenticated && <Lock className="w-4 h-4 mr-2" />}
-                {!isAuthenticated ? 'Sign Up to Access' : 'Try Now'}
-              </Button>
-            </div>
-
-
-            {/* Layoff Tracker */}
-            <div className="bg-white border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-shadow">
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-3 bg-red-100 rounded-lg">
-                  <TrendingDown className="w-6 h-6 text-red-600" />
-                </div>
-                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">Premium</span>
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Layoff Tracker</h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Real-time layoff tracking and job security insights to help you stay informed about market changes.
-              </p>
-              <Button
-                onClick={() => handleToolAccess('/dashboard')}
-                className="w-full bg-red-600 hover:bg-red-700 text-white"
-              >
-                {!isAuthenticated && <Lock className="w-4 h-4 mr-2" />}
-                {!isAuthenticated ? 'Sign Up to Access' : 'Try Now'}
-              </Button>
-              {/* <Button
-                className="w-full bg-gray-400 hover:bg-gray-700 text-white"
-              >
-                Coming Soon
-              </Button> */}
-            </div>
-
-            {/* Salary Negotiator */}
-            <div className="bg-white border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-shadow">
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-3 bg-yellow-100 rounded-lg">
-                  <Briefcase className="w-6 h-6 text-yellow-600" />
-                </div>
-                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">Premium</span>
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Salary Negotiator</h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Get data-driven insights and proven strategies for successful salary negotiations and raises.
-              </p>
-              {/* <Button
-                onClick={() => handleToolAccess('/tools/salary-negotiator')}
-                className="w-full bg-yellow-600 hover:bg-yellow-700 text-white"
-              >
-                {!isAuthenticated && <Lock className="w-4 h-4 mr-2" />}
-                {!isAuthenticated ? 'Sign Up to Access' : 'Try Now'}
-              </Button> */}
-              <Button
-                className="w-full bg-gray-400 hover:bg-gray-700 text-white"
-              >
-                Coming Soon
-              </Button>
-            </div>
-
-            {/* Skills Assessment */}
-            <div className="bg-white border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-shadow">
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-3 bg-orange-100 rounded-lg">
-                  <Award className="w-6 h-6 text-orange-600" />
-                </div>
-                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">Premium</span>
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Skills Assessment</h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Evaluate and improve your professional skills with comprehensive assessments and learning paths.
-              </p>
-              {/* <Button
-                onClick={() => handleToolAccess('/tools/skills-assessment')}
-                className="w-full bg-orange-600 hover:bg-orange-700 text-white"
-              >
-                {!isAuthenticated && <Lock className="w-4 h-4 mr-2" />}
-                {!isAuthenticated ? 'Sign Up to Access' : 'Try Now'}
-              </Button> */}
-              <Button
-                className="w-full bg-gray-400 hover:bg-gray-700 text-white"
-              >
-                Coming Soon
-              </Button>
-            </div>
-
-
-            {/* Networking Assistant */}
-            <div className="bg-white border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-shadow">
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-3 bg-violet-100 rounded-lg">
-                  <Users className="w-6 h-6 text-violet-600" />
-                </div>
-                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">Premium</span>
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Networking Assistant</h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Build meaningful professional connections with AI-powered networking strategies and templates.
-              </p>
-              {/* <Button
-                onClick={() => handleToolAccess('/tools/networking-assistant')}
-                className="w-full bg-violet-600 hover:bg-violet-700 text-white"
-              >
-                {!isAuthenticated && <Lock className="w-4 h-4 mr-2" />}
-                {!isAuthenticated ? 'Sign Up to Access' : 'Try Now'}
-              </Button> */}
-              <Button
-                className="w-full bg-gray-400 hover:bg-gray-700 text-white"
-              >
-                Coming Soon
-              </Button>
-            </div>
-
-
-            {/* Auto JOB Apply */}
-            <div className="bg-white border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-shadow">
-              <div className="flex items-center justify-between mb-4">
-                <div className="p-3 bg-violet-100 rounded-lg">
-                  <Bot className="w-6 h-6 text-violet-600" />
-                </div>
-                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">Premium</span>
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">AI Auto Apply</h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Automate your job applications with AI-powered precision and smart optimization.
-              </p>
-              <Button
-                onClick={handleAIAutoApplyAccess}
-                disabled={aiAutoApplyChecking}
-                className="w-full bg-violet-600 hover:bg-violet-700 text-white"
-              >
-                {!isAuthenticated && <Lock className="w-4 h-4 mr-2" />}
-                {aiAutoApplyChecking ? 'Checking...' : !isAuthenticated ? 'Sign Up to Access' : 'Try Now'}
-              </Button>
-              {/* <Button
-                className="w-full bg-gray-400 hover:bg-gray-700 text-white"
-              >
-                Coming Soon
-              </Button> */}
-            </div>
+              return (
+                <ToolPromoCard
+                  key={card.id}
+                  title={card.title}
+                  description={card.description}
+                  features={card.features}
+                  icon={Icon}
+                  theme={card.theme}
+                  popular={card.popular}
+                  premium={card.premium}
+                  comingSoonButton={comingSoon}
+                  ctaLabel={
+                    comingSoon
+                      ? undefined
+                      : isAiAutoApply
+                        ? aiAutoApplyChecking
+                          ? "Checking..."
+                          : !isAuthenticated
+                            ? "Sign Up to Access"
+                            : "Try Now"
+                        : !isAuthenticated
+                          ? "Sign Up to Access"
+                          : "Try Now"
+                  }
+                  ctaDisabled={isAiAutoApply ? aiAutoApplyChecking : undefined}
+                  onCtaClick={
+                    comingSoon
+                      ? undefined
+                      : isAiAutoApply
+                        ? handleAIAutoApplyAccess
+                        : toolPath
+                          ? () => handleToolAccess(toolPath)
+                          : undefined
+                  }
+                />
+              );
+            })}
           </div>
         </div>
 
@@ -515,77 +511,159 @@ export default function ElevateLanding() {
       </section>
 
       {/* CTA Section */}
-      <section className="bg-gradient-to-r from-blue-600 to-purple-600 py-16" style={{ display: !isAuthenticated ? "block" : "none" }}>
-        <div className="max-w-4xl mx-auto text-center px-4 sm:px-6 lg:px-8">
-          <h2 className="text-3xl font-bold text-white mb-4">
+      <section
+        className="lp-gradient-cta relative py-20 md:py-24"
+        style={{ display: !isAuthenticated ? "block" : "none" }}
+      >
+        <div
+          className="pointer-events-none absolute -left-24 top-1/2 z-[1] h-[28rem] w-[28rem] -translate-y-1/2 rounded-full bg-cyan-300/25 blur-3xl motion-reduce:opacity-50"
+          aria-hidden
+        />
+        <div
+          className="pointer-events-none absolute -right-20 bottom-0 z-[1] h-72 w-72 rounded-full bg-violet-400/18 blur-3xl motion-reduce:opacity-50"
+          aria-hidden
+        />
+        <div className="relative z-10 mx-auto max-w-3xl px-4 text-center sm:px-6 lg:px-8">
+          <p className="mb-3 text-sm font-semibold uppercase tracking-[0.2em] text-teal-100/90">
+            Take the next step
+          </p>
+          <h2 className="mb-5 text-balance text-3xl font-bold tracking-tight text-white drop-shadow-sm md:text-4xl">
             Ready to Transform Your Career?
           </h2>
-          <p className="text-xl text-blue-100 mb-8">
-            Join thousands of professionals who have already elevated their careers with our AI-powered platform.
+          <p className="mx-auto mb-10 max-w-2xl text-pretty text-lg leading-relaxed text-white/85 md:text-xl">
+            Join thousands of professionals who have already elevated their
+            careers with our AI-powered platform.
           </p>
           <Link href="/magic-login">
-            <Button size="lg" className="bg-white text-blue-600 hover:bg-gray-100 px-8 py-3 text-lg font-semibold">
+            <Button
+              size="lg"
+              className="group border-2 border-white/40 bg-white px-10 py-6 text-lg font-semibold text-teal-800 shadow-2xl shadow-teal-950/25 ring-4 ring-white/10 transition hover:-translate-y-0.5 hover:border-white/60 hover:bg-teal-50 hover:shadow-teal-950/30"
+            >
               Start Your Journey
-              <ArrowRight className="w-5 h-5 ml-2" />
+              <ArrowRight className="ml-2 h-5 w-5 transition-transform group-hover:translate-x-0.5" />
             </Button>
           </Link>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-gray-200">
-        <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-            {/* Company Info */}
+      <footer className="lp-footer relative">
+        <div className="relative z-[2] mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 gap-8 md:grid-cols-4">
             <div className="space-y-4">
-              <div className="flex items-center space-x-2">
-                <div className="p-1.5 rounded-lg bg-blue-600 text-white">
-                  <Award className="w-5 h-5" />
+              <Link href="/" className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg lp-gradient-fill shadow-md shadow-teal-600/20 ring-1 ring-primary/20">
+                  <span className="text-sm font-bold text-primary-foreground">
+                    LP
+                  </span>
                 </div>
-                <span className="text-lg font-bold text-gray-900">ElevateJobs</span>
-              </div>
-              <p className="text-sm text-gray-600">
+                <span className="lp-gradient-text text-xl font-bold">
+                  Layoff Proof
+                </span>
+              </Link>
+              <p className="max-w-xs text-sm leading-relaxed text-muted-foreground">
                 Empowering careers with AI-powered tools and insights.
               </p>
             </div>
 
-            {/* Tools */}
             <div>
-              <h3 className="text-sm font-semibold text-gray-900 mb-4">Tools</h3>
-              <ul className="space-y-2 text-sm text-gray-600">
-                <li><Link href="/tools/resume-builder" className="hover:text-blue-600">Resume Builder</Link></li>
-                <li><Link href="/tools/cover-letter-generator" className="hover:text-blue-600">Cover Letter Generator</Link></li>
-                <li><Link href="/tools/interview-preparation" className="hover:text-blue-600">Interview Prep</Link></li>
-                <li><Link href="/tools/linkedin-optimizer" className="hover:text-blue-600">LinkedIn Optimizer</Link></li>
+              <h3 className="mb-4 text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+                Tools
+              </h3>
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li>
+                  <Link
+                    href="/tools/resume-builder"
+                    className="transition-colors hover:text-primary"
+                  >
+                    Resume Builder
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    href="/tools/cover-letter-generator"
+                    className="transition-colors hover:text-primary"
+                  >
+                    Cover Letter Generator
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    href="/tools/interview-preparation"
+                    className="transition-colors hover:text-primary"
+                  >
+                    Interview Prep
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    href="/tools/linkedin-optimizer"
+                    className="transition-colors hover:text-primary"
+                  >
+                    LinkedIn Optimizer
+                  </Link>
+                </li>
               </ul>
             </div>
 
-            {/* Company */}
             <div>
-              <h3 className="text-sm font-semibold text-gray-900 mb-4">Company</h3>
-              <ul className="space-y-2 text-sm text-gray-600">
-                <li><a href="#" className="hover:text-blue-600">About</a></li>
-                <li><Link href="/pricing" className="hover:text-blue-600">Pricing</Link></li>
-                <li><a href="#" className="hover:text-blue-600">Contact</a></li>
+              <h3 className="mb-4 text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+                Company
+              </h3>
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li>
+                  <a href="#" className="transition-colors hover:text-primary">
+                    About
+                  </a>
+                </li>
+                <li>
+                  <Link
+                    href="/pricing"
+                    className="transition-colors hover:text-primary"
+                  >
+                    Pricing
+                  </Link>
+                </li>
+                <li>
+                  <a href="#" className="transition-colors hover:text-primary">
+                    Contact
+                  </a>
+                </li>
               </ul>
             </div>
 
-            {/* Support */}
             <div>
-              <h3 className="text-sm font-semibold text-gray-900 mb-4">Support</h3>
-              <ul className="space-y-2 text-sm text-gray-600">
-                <li><a href="#" className="hover:text-blue-600">Help Center</a></li>
-                <li><a href="#" className="hover:text-blue-600">Privacy Policy</a></li>
-                <li><a href="#" className="hover:text-blue-600">Terms of Service</a></li>
-                <li><a href="#" className="hover:text-blue-600">Contact Support</a></li>
+              <h3 className="mb-4 text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+                Support
+              </h3>
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li>
+                  <a href="#" className="transition-colors hover:text-primary">
+                    Help Center
+                  </a>
+                </li>
+                <li>
+                  <a href="#" className="transition-colors hover:text-primary">
+                    Privacy Policy
+                  </a>
+                </li>
+                <li>
+                  <a href="#" className="transition-colors hover:text-primary">
+                    Terms of Service
+                  </a>
+                </li>
+                <li>
+                  <a href="#" className="transition-colors hover:text-primary">
+                    Contact Support
+                  </a>
+                </li>
               </ul>
             </div>
           </div>
 
-          {/* Bottom Footer */}
-          <div className="mt-8 pt-8 border-t border-gray-200">
-            <p className="text-center text-sm text-gray-500">
-              © 2024 ElevateJobs. All rights reserved.
+          <div className="mt-8 border-t border-border pt-8">
+            <p className="text-center text-sm text-muted-foreground">
+              © {new Date().getFullYear()} Layoff Proof. All rights reserved.
             </p>
           </div>
         </div>

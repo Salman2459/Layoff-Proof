@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiRequest } from '@/lib/queryClient';
+import { apiRequest, getApiErrorMessage } from '@/lib/queryClient';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -47,8 +47,7 @@ export default function PromotionPlanner() {
   // Generate promotion plan mutation
   const generatePlanMutation = useMutation({
     mutationFn: async (data: InsertPromotionPlan) => {
-      const response = await apiRequest('POST', '/api/promotion-plans/generate', data);
-      return response.json();
+      return await apiRequest("POST", "/api/promotion-plans/generate", data);
     },
     onSuccess: (data) => {
       setCurrentPlan(data.plan);
@@ -60,10 +59,10 @@ export default function PromotionPlanner() {
       });
       queryClient.invalidateQueries({ queryKey: ['/api/promotion-plans/current'] });
     },
-    onError: (error: any) => {
+    onError: (error: unknown) => {
       toast({
         title: "Error",
-        description: error.message || "Failed to generate promotion plan",
+        description: getApiErrorMessage(error, "Failed to generate promotion plan"),
         variant: "destructive",
       });
     },
@@ -72,10 +71,11 @@ export default function PromotionPlanner() {
   // Save progress mutation
   const saveProgressMutation = useMutation({
     mutationFn: async (strategies: Strategy[]) => {
-      const response = await apiRequest('PUT', `/api/promotion-plans/${currentPlan?.id}/progress`, {
-        strategies,
-      });
-      return response.json();
+      return await apiRequest(
+        "PUT",
+        `/api/promotion-plans/${currentPlan?.id}/progress`,
+        { strategies }
+      );
     },
     onSuccess: () => {
       toast({
@@ -84,10 +84,10 @@ export default function PromotionPlanner() {
       });
       queryClient.invalidateQueries({ queryKey: ['/api/promotion-plans/current'] });
     },
-    onError: (error: any) => {
+    onError: (error: unknown) => {
       toast({
         title: "Error",
-        description: error.message || "Failed to save progress",
+        description: getApiErrorMessage(error, "Failed to save progress"),
         variant: "destructive",
       });
     },

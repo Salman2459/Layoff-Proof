@@ -2,58 +2,69 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── Layoff Proof theme: teal + violet + warm ink (light / dark) ─── */
 :root {
-  --background: hsl(210, 20%, 98%);
-  --foreground: hsl(222, 84%, 4.9%);
-  --muted: hsl(210, 40%, 96%);
-  --muted-foreground: hsl(215, 13.8%, 34.1%);
+  --background: hsl(165, 28%, 97%);
+  --foreground: hsl(222, 35%, 12%);
+  --muted: hsl(165, 18%, 93%);
+  --muted-foreground: hsl(215, 14%, 38%);
   --popover: hsl(0, 0%, 100%);
-  --popover-foreground: hsl(222, 84%, 4.9%);
+  --popover-foreground: hsl(222, 35%, 12%);
   --card: hsl(0, 0%, 100%);
-  --card-foreground: hsl(222, 84%, 4.9%);
-  --border: hsl(214, 32%, 91%);
-  --input: hsl(214, 32%, 91%);
-  --primary: hsl(221, 83%, 53%);
-  --primary-foreground: hsl(210, 40%, 98%);
-  --secondary: hsl(210, 40%, 96%);
-  --secondary-foreground: hsl(222, 47%, 11%);
-  --accent: hsl(210, 40%, 96%);
-  --accent-foreground: hsl(222, 47%, 11%);
+  --card-foreground: hsl(222, 35%, 12%);
+  --border: hsl(165, 16%, 86%);
+  --input: hsl(165, 16%, 88%);
+  --primary: hsl(172, 56%, 34%);
+  --primary-foreground: hsl(0, 0%, 100%);
+  --secondary: hsl(262, 32%, 94%);
+  --secondary-foreground: hsl(262, 35%, 22%);
+  --accent: hsl(262, 38%, 93%);
+  --accent-foreground: hsl(262, 42%, 24%);
   --destructive: hsl(0, 72%, 51%);
-  --destructive-foreground: hsl(210, 40%, 98%);
-  --success: hsl(142, 71%, 45%);
-  --success-foreground: hsl(210, 40%, 98%);
-  --warning: hsl(38, 92%, 50%);
-  --warning-foreground: hsl(222, 84%, 4.9%);
-  --ring: hsl(221, 83%, 53%);
+  --destructive-foreground: hsl(0, 0%, 100%);
+  --success: hsl(152, 60%, 36%);
+  --success-foreground: hsl(0, 0%, 100%);
+  --warning: hsl(32, 95%, 44%);
+  --warning-foreground: hsl(222, 35%, 12%);
+  --ring: hsl(172, 56%, 38%);
   --radius: 0.75rem;
+
+  /* Brand accents for gradients (same family as primary) */
+  --brand-teal: hsl(172, 56%, 34%);
+  --brand-teal-bright: hsl(172, 49%, 45%);
+  --brand-violet: hsl(262, 52%, 48%);
+  --brand-violet-deep: hsl(262, 48%, 38%);
 }
 
 .dark {
-  --background: hsl(222, 84%, 4.9%);
-  --foreground: hsl(210, 40%, 98%);
-  --muted: hsl(217, 32%, 17.5%);
-  --muted-foreground: hsl(215, 20.2%, 65.1%);
-  --popover: hsl(222, 84%, 4.9%);
-  --popover-foreground: hsl(210, 40%, 98%);
-  --card: hsl(222, 84%, 4.9%);
-  --card-foreground: hsl(210, 40%, 98%);
-  --border: hsl(217, 32%, 17.5%);
-  --input: hsl(217, 32%, 17.5%);
-  --primary: hsl(217, 91%, 60%);
-  --primary-foreground: hsl(222, 47%, 11%);
-  --secondary: hsl(217, 32%, 17.5%);
-  --secondary-foreground: hsl(210, 40%, 98%);
-  --accent: hsl(217, 32%, 17.5%);
-  --accent-foreground: hsl(210, 40%, 98%);
-  --destructive: hsl(0, 62.8%, 30.6%);
-  --destructive-foreground: hsl(210, 40%, 98%);
-  --success: hsl(142, 71%, 45%);
-  --success-foreground: hsl(210, 40%, 98%);
+  --background: hsl(222, 24%, 9%);
+  --foreground: hsl(165, 20%, 96%);
+  --muted: hsl(222, 18%, 16%);
+  --muted-foreground: hsl(215, 16%, 65%);
+  --popover: hsl(222, 24%, 11%);
+  --popover-foreground: hsl(165, 20%, 96%);
+  --card: hsl(222, 22%, 12%);
+  --card-foreground: hsl(165, 20%, 96%);
+  --border: hsl(222, 16%, 20%);
+  --input: hsl(222, 16%, 18%);
+  --primary: hsl(172, 49%, 48%);
+  --primary-foreground: hsl(222, 35%, 8%);
+  --secondary: hsl(262, 22%, 20%);
+  --secondary-foreground: hsl(262, 25%, 92%);
+  --accent: hsl(262, 24%, 18%);
+  --accent-foreground: hsl(262, 30%, 95%);
+  --destructive: hsl(0, 62%, 46%);
+  --destructive-foreground: hsl(0, 0%, 100%);
+  --success: hsl(152, 55%, 42%);
+  --success-foreground: hsl(0, 0%, 100%);
   --warning: hsl(38, 92%, 50%);
-  --warning-foreground: hsl(222, 84%, 4.9%);
-  --ring: hsl(217, 91%, 60%);
-  --radius: 0.75rem;
+  --warning-foreground: hsl(222, 35%, 12%);
+  --ring: hsl(172, 49%, 52%);
+
+  --brand-teal: hsl(172, 49%, 48%);
+  --brand-teal-bright: hsl(172, 55%, 58%);
+  --brand-violet: hsl(262, 48%, 62%);
+  --brand-violet-deep: hsl(262, 45%, 48%);
 }
 
 @layer base {
@@ -68,50 +79,249 @@
 
 @layer utilities {
   .text-success {
-    color: hsl(var(--success));
+    color: var(--success);
   }
-  
+
   .text-warning {
-    color: hsl(var(--warning));
+    color: var(--warning);
   }
-  
+
   .bg-success {
-    background-color: hsl(var(--success));
+    background-color: var(--success);
   }
-  
+
   .bg-warning {
-    background-color: hsl(var(--warning));
+    background-color: var(--warning);
   }
-  
+
   .bg-success\/10 {
-    background-color: hsl(var(--success) / 0.1);
+    background-color: color-mix(in srgb, var(--success) 12%, transparent);
   }
-  
+
   .bg-warning\/10 {
-    background-color: hsl(var(--warning) / 0.1);
+    background-color: color-mix(in srgb, var(--warning) 12%, transparent);
+  }
+
+  /** Full-page soft mesh behind content */
+  .lp-page-mesh {
+    background-color: var(--background);
+    background-image: radial-gradient(
+        1200px circle at 12% -10%,
+        color-mix(in srgb, var(--brand-teal) 14%, transparent),
+        transparent 52%
+      ),
+      radial-gradient(
+        900px circle at 88% 5%,
+        color-mix(in srgb, var(--brand-violet) 12%, transparent),
+        transparent 48%
+      ),
+      radial-gradient(
+        800px circle at 50% 100%,
+        color-mix(in srgb, var(--brand-teal-bright) 8%, transparent),
+        transparent 55%
+      );
+  }
+
+  /**
+   * Landing CTA band — deep teal → ocean → indigo → violet with light wells
+   */
+  .lp-gradient-cta {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+    background-color: hsl(192 78% 22%);
+    background-image: radial-gradient(
+        100% 120% at 0% 0%,
+        color-mix(in srgb, #2dd4bf 55%, transparent),
+        transparent 58%
+      ),
+      radial-gradient(
+        90% 80% at 100% 0%,
+        color-mix(in srgb, #a78bfa 45%, transparent),
+        transparent 52%
+      ),
+      radial-gradient(
+        80% 60% at 50% 100%,
+        color-mix(in srgb, #6366f1 35%, transparent),
+        transparent 55%
+      ),
+      linear-gradient(
+        122deg,
+        hsl(172 72% 26%) 0%,
+        hsl(195 75% 28%) 22%,
+        hsl(230 62% 34%) 48%,
+        hsl(262 58% 40%) 74%,
+        hsl(283 52% 44%) 100%
+      );
+  }
+
+  .lp-gradient-cta::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    opacity: 0.35;
+    background-image: linear-gradient(
+        rgba(255, 255, 255, 0.06) 1px,
+        transparent 1px
+      ),
+      linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0.06) 1px,
+        transparent 1px
+      );
+    background-size: 48px 48px;
+    mask-image: radial-gradient(
+      ellipse 85% 70% at 50% 40%,
+      black 15%,
+      transparent 70%
+    );
+    pointer-events: none;
+  }
+
+  .lp-gradient-cta::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    background: linear-gradient(
+      165deg,
+      transparent 40%,
+      color-mix(in srgb, white 8%, transparent) 50%,
+      transparent 60%
+    );
+    pointer-events: none;
+  }
+
+  /** Logo tile, primary buttons override */
+  .lp-gradient-fill {
+    background: linear-gradient(
+      135deg,
+      var(--brand-teal) 0%,
+      var(--brand-violet) 100%
+    );
+  }
+
+  .lp-gradient-fill:hover {
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--brand-teal) 88%, black) 0%,
+      color-mix(in srgb, var(--brand-violet) 88%, black) 100%
+    );
+  }
+
+  .lp-gradient-text {
+    background: linear-gradient(
+      135deg,
+      var(--brand-teal) 0%,
+      var(--brand-violet) 92%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .lp-ring-frame {
+    background: linear-gradient(
+      135deg,
+      var(--brand-teal-bright),
+      var(--brand-violet)
+    );
+    padding: 3px;
+    border-radius: 1rem;
   }
 
   .gradient-bg {
-    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(217, 91%, 60%) 100%);
+    background: linear-gradient(
+      135deg,
+      var(--brand-teal) 0%,
+      var(--brand-violet) 100%
+    );
   }
-  
+
   .glass-effect {
-    backdrop-filter: blur(10px);
-    background-color: rgba(255, 255, 255, 0.8);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(12px);
+    background-color: color-mix(in srgb, var(--card) 82%, transparent);
+    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   }
-  
+
   .dark .glass-effect {
-    background-color: rgba(34, 40, 49, 0.8);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background-color: color-mix(in srgb, var(--card) 75%, transparent);
+    border: 1px solid color-mix(in srgb, var(--foreground) 8%, transparent);
   }
-  
+
   .hover-lift {
     transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
   }
-  
+
   .hover-lift:hover {
     transform: translateY(-2px);
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 12px 28px color-mix(in srgb, var(--foreground) 8%, transparent);
+  }
+
+  /**
+   * Site footer — soft mint → lilac wash (no black) + brand accent rail
+   */
+  .lp-footer {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    color: var(--foreground);
+    background-color: color-mix(in srgb, var(--background) 88%, var(--brand-teal) 12%);
+    background-image: radial-gradient(
+        1000px ellipse at 10% 110%,
+        color-mix(in srgb, var(--brand-teal) 24%, transparent),
+        transparent 58%
+      ),
+      radial-gradient(
+        780px ellipse at 94% -8%,
+        color-mix(in srgb, var(--brand-violet) 18%, transparent),
+        transparent 52%
+      ),
+      linear-gradient(
+        185deg,
+        hsl(168 32% 96%) 0%,
+        hsl(165 28% 93%) 42%,
+        hsl(262 28% 94%) 100%
+      );
+  }
+
+  .lp-footer::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 3px;
+    z-index: 1;
+    background: linear-gradient(
+      90deg,
+      var(--brand-teal) 0%,
+      var(--brand-teal-bright) 35%,
+      var(--brand-violet) 72%,
+      var(--brand-violet-deep) 100%
+    );
+    opacity: 0.92;
+  }
+
+  /* Dark mode: deep teal–indigo wash (not neutral black) */
+  .dark .lp-footer {
+    background-color: color-mix(in srgb, var(--card) 78%, var(--brand-teal) 22%);
+    background-image: radial-gradient(
+        900px ellipse at 10% 115%,
+        color-mix(in srgb, var(--brand-teal) 35%, transparent),
+        transparent 58%
+      ),
+      radial-gradient(
+        720px ellipse at 92% -12%,
+        color-mix(in srgb, var(--brand-violet) 28%, transparent),
+        transparent 52%
+      ),
+      linear-gradient(
+        185deg,
+        hsl(222 28% 16%) 0%,
+        hsl(200 26% 14%) 45%,
+        hsl(262 26% 15%) 100%
+      );
   }
 }

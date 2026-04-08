@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, getApiErrorMessage, queryClient } from "@/lib/queryClient";
 import GlobalHeader from "@/components/GlobalHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,7 +28,9 @@ import {
   Filter,
   Search,
   UserPlus,
-  MessageSquare
+  MessageSquare,
+  Sparkles,
+  Download
 } from "lucide-react";
 
 interface NetworkConnection {
@@ -49,15 +51,50 @@ interface NetworkConnection {
   createdAt: string;
 }
 
+type MessageContextType = "cold-outreach" | "follow-up" | "job-inquiry";
+
+type TemplateKey = "cold-outreach" | "event-follow-up" | "recruiter-message";
+
+interface SavedTemplate {
+  key: TemplateKey;
+  title: string;
+  content: string;
+  updatedAt: string;
+}
+
+function templatesStorageKey(userId: string | undefined) {
+  return userId ? `lp:networkingAssistant:templates:${userId}` : null;
+}
+
+function loadTemplates(userId: string | undefined): SavedTemplate[] {
+  const key = templatesStorageKey(userId);
+  if (!key) return [];
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveTemplates(userId: string | undefined, templates: SavedTemplate[]) {
+  const key = templatesStorageKey(userId);
+  if (!key) return;
+  localStorage.setItem(key, JSON.stringify(templates));
+}
+
 export default function NetworkingAssistant() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState("connections");
+  const [activeTab, setActiveTab] = useState("dashboard");
   const [showAddConnection, setShowAddConnection] = useState(false);
   const [editingConnection, setEditingConnection] = useState<NetworkConnection | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterRelationship, setFilterRelationship] = useState("all");
+  const userId = (user as any)?.id as string | undefined;
 
   // New connection form state
   const [newConnection, setNewConnection] = useState({
@@ -80,6 +117,101 @@ export default function NetworkingAssistant() {
   const { data: connections = [] } = useQuery({
     queryKey: ["/api/network-connections"],
     enabled: isAuthenticated,
+  });
+
+  const followUpConnections = useMemo(() => {
+    return connections.filter((connection: NetworkConnection) =>
+      connection.followUpDate && new Date(connection.followUpDate) <= new Date()
+    );
+  }, [connections]);
+
+  const upcomingFollowUps = useMemo(() => {
+    const now = new Date();
+    const sevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    return connections
+      .filter((c: NetworkConnection) => c.followUpDate)
+      .filter((c: NetworkConnection) => {
+        const d = new Date(c.followUpDate!);
+        return d > now && d <= sevenDays;
+      })
+      .sort((a: NetworkConnection, b: NetworkConnection) => {
+        return new Date(a.followUpDate!).getTime() - new Date(b.followUpDate!).getTime();
+      })
+      .slice(0, 5);
+  }, [connections]);
+
+  const defaultTemplates: SavedTemplate[] = useMemo(() => ([
+    {
+      key: "cold-outreach",
+      title: "Cold outreach",
+      content:
+        "Hi {name},\n\nI came across your profile and was impressed by your work at {company}. I’m currently exploring opportunities in {topic} and would love to connect and learn from your experience in {field}.\n\nIf you’re open to it, would you have 10 minutes for a quick chat this week?\n\nBest,\n{yourName}",
+      updatedAt: new Date().toISOString(),
+    },
+    {
+      key: "event-follow-up",
+      title: "Event follow-up",
+      content:
+        "Hi {name},\n\nGreat meeting you at {event}. I enjoyed our conversation about {topic}. I’d love to stay in touch and learn more about your work at {company}.\n\nWould you be open to a quick coffee chat next week?\n\nBest,\n{yourName}",
+      updatedAt: new Date().toISOString(),
+    },
+    {
+      key: "recruiter-message",
+      title: "Recruiter message",
+      content:
+        "Hi {name},\n\nThanks for connecting. I’m interested in roles related to {role} and I’d love to learn more about what you’re hiring for at {company}. If helpful, I can share a quick summary of my experience.\n\nWould you have 10 minutes this week?\n\nBest,\n{yourName}",
+      updatedAt: new Date().toISOString(),
+    },
+  ]), []);
+
+  const [templates, setTemplates] = useState<SavedTemplate[]>(() => {
+    if (typeof window === "undefined") return defaultTemplates;
+    const saved = loadTemplates(userId);
+    return saved.length ? saved : defaultTemplates;
+  });
+
+  const persistTemplates = (next: SavedTemplate[]) => {
+    setTemplates(next);
+    if (typeof window !== "undefined") saveTemplates(userId, next);
+  };
+
+  const [messageContextType, setMessageContextType] = useState<MessageContextType>("cold-outreach");
+  const [selectedContactId, setSelectedContactId] = useState<string>("");
+  const [messageContext, setMessageContext] = useState<string>("");
+  const [generatedMessage, setGeneratedMessage] = useState<string>("");
+
+  const generateMessageMutation = useMutation({
+    mutationFn: async () => {
+      const selected = connections.find((c: NetworkConnection) => c.id === selectedContactId) as NetworkConnection | undefined;
+      const payload = {
+        contextType: messageContextType,
+        context: messageContext,
+        contact: selected
+          ? {
+              name: selected.contactName,
+              company: selected.company,
+              role: selected.role,
+              linkedInUrl: selected.contactLinkedIn,
+              notes: selected.notes,
+            }
+          : {},
+      };
+      return await apiRequest("POST", "/api/networking-assistant/generate-message", payload);
+    },
+    onSuccess: async (resp) => {
+      const msg = String((resp as any)?.message || "").trim();
+      setGeneratedMessage(msg);
+      if (!msg) {
+        toast({ title: "No message generated", description: "Please try again with more context.", variant: "destructive" });
+      }
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Error",
+        description: getApiErrorMessage(error, "Failed to generate message."),
+        variant: "destructive",
+      });
+    },
   });
 
   // Add connection mutation
@@ -113,9 +245,19 @@ export default function NetworkingAssistant() {
       });
       toast({
         title: "Connection Added",
-        description: "New connection has been added to your network."
+        description: "New connection has been added to your network.",
       });
-    }
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Error",
+        description: getApiErrorMessage(
+          error,
+          "Failed to add connection. Please try again."
+        ),
+        variant: "destructive",
+      });
+    },
   });
 
   // Update connection mutation
@@ -128,9 +270,19 @@ export default function NetworkingAssistant() {
       setEditingConnection(null);
       toast({
         title: "Connection Updated",
-        description: "Connection has been updated successfully."
+        description: "Connection has been updated successfully.",
       });
-    }
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Error",
+        description: getApiErrorMessage(
+          error,
+          "Failed to update connection. Please try again."
+        ),
+        variant: "destructive",
+      });
+    },
   });
 
   // Delete connection mutation
@@ -142,9 +294,19 @@ export default function NetworkingAssistant() {
       queryClient.invalidateQueries({ queryKey: ["/api/network-connections"] });
       toast({
         title: "Connection Deleted",
-        description: "Connection has been removed from your network."
+        description: "Connection has been removed from your network.",
       });
-    }
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Error",
+        description: getApiErrorMessage(
+          error,
+          "Failed to delete connection. Please try again."
+        ),
+        variant: "destructive",
+      });
+    },
   });
 
   const handleAddConnection = () => {
@@ -239,10 +401,7 @@ export default function NetworkingAssistant() {
     return matchesSearch && matchesStatus && matchesRelationship;
   });
 
-  // Get connections needing follow-up
-  const followUpConnections = connections.filter((connection: NetworkConnection) => 
-    connection.followUpDate && new Date(connection.followUpDate) <= new Date()
-  );
+  // (moved) followUpConnections is memoized above
 
   if (isLoading) {
     return (
@@ -293,8 +452,10 @@ export default function NetworkingAssistant() {
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="connections">My Network</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-4">
+            <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+            <TabsTrigger value="connections">Contacts</TabsTrigger>
+            <TabsTrigger value="messages">Message Generator</TabsTrigger>
             <TabsTrigger value="follow-ups">
               Follow-ups
               {followUpConnections.length > 0 && (
@@ -303,8 +464,259 @@ export default function NetworkingAssistant() {
                 </Badge>
               )}
             </TabsTrigger>
-            <TabsTrigger value="templates">Templates</TabsTrigger>
           </TabsList>
+
+          {/* Dashboard Tab */}
+          <TabsContent value="dashboard">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="w-5 h-5" />
+                    Overview of connections
+                  </CardTitle>
+                  <CardDescription>
+                    A quick snapshot of your network and follow-ups
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="p-4 rounded-xl bg-white border border-gray-200">
+                      <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Total contacts</p>
+                      <p className="text-2xl font-extrabold text-gray-900">{connections.length}</p>
+                    </div>
+                    <div className="p-4 rounded-xl bg-white border border-gray-200">
+                      <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Due follow-ups</p>
+                      <p className="text-2xl font-extrabold text-red-600">{followUpConnections.length}</p>
+                    </div>
+                    <div className="p-4 rounded-xl bg-white border border-gray-200">
+                      <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Next 7 days</p>
+                      <p className="text-2xl font-extrabold text-violet-700">{upcomingFollowUps.length}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Calendar className="w-5 h-5" />
+                    Upcoming follow-ups
+                  </CardTitle>
+                  <CardDescription>
+                    Reminders for the next 7 days
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {upcomingFollowUps.length === 0 ? (
+                    <div className="text-sm text-gray-600">No follow-ups scheduled in the next 7 days.</div>
+                  ) : (
+                    <div className="space-y-3">
+                      {upcomingFollowUps.map((c: NetworkConnection) => (
+                        <div key={c.id} className="p-3 rounded-lg border border-gray-200 bg-white">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="font-semibold text-gray-900 truncate">{c.contactName}</div>
+                              <div className="text-xs text-gray-500 truncate">
+                                {[c.company, c.role].filter(Boolean).join(" • ") || "—"}
+                              </div>
+                            </div>
+                            <div className="text-xs font-semibold text-violet-700 whitespace-nowrap">
+                              {new Date(c.followUpDate!).toLocaleDateString()}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="mt-6">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Download className="w-5 h-5" />
+                      Export contacts as CSV
+                    </CardTitle>
+                    <CardDescription>Download your contacts for backup or sharing</CardDescription>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      const headers = ["name", "company", "role", "linkedin_url", "last_contact_date", "notes"];
+                      const rows = connections.map((c: NetworkConnection) => ([
+                        c.contactName || "",
+                        c.company || "",
+                        c.role || "",
+                        c.contactLinkedIn || "",
+                        c.lastContact ? new Date(c.lastContact).toISOString().split("T")[0] : "",
+                        (c.notes || "").replace(/\r?\n/g, " "),
+                      ]));
+                      const csv = [headers, ...rows]
+                        .map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(","))
+                        .join("\n");
+                      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = "networking-contacts.csv";
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                  >
+                    Download CSV
+                  </Button>
+                </CardHeader>
+              </Card>
+            </div>
+          </TabsContent>
+
+          {/* Message Generator Tab */}
+          <TabsContent value="messages">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Sparkles className="w-5 h-5" />
+                    AI Message Generator
+                  </CardTitle>
+                  <CardDescription>
+                    Input a context and get a personalized message
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <Label>Context type</Label>
+                    <Select value={messageContextType} onValueChange={(v) => setMessageContextType(v as MessageContextType)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="cold-outreach">Cold outreach</SelectItem>
+                        <SelectItem value="follow-up">Follow-up</SelectItem>
+                        <SelectItem value="job-inquiry">Job inquiry</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <Label>Contact (optional)</Label>
+                    <Select value={selectedContactId} onValueChange={setSelectedContactId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a contact to personalize" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {connections.map((c: NetworkConnection) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.contactName}{c.company ? ` (${c.company})` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <Label>Extra context</Label>
+                    <Textarea
+                      value={messageContext}
+                      onChange={(e) => setMessageContext(e.target.value)}
+                      placeholder='Example: "Met at a meetup. Want to follow up and ask for advice on interviewing."'
+                      rows={5}
+                    />
+                  </div>
+
+                  <Button
+                    className="w-full bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700"
+                    onClick={() => generateMessageMutation.mutate()}
+                    disabled={generateMessageMutation.isPending}
+                  >
+                    {generateMessageMutation.isPending ? "Generating..." : "Generate message"}
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Generated message</CardTitle>
+                  <CardDescription>Copy and paste into LinkedIn or email</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {generatedMessage ? (
+                    <>
+                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 whitespace-pre-wrap text-sm text-gray-800">
+                        {generatedMessage}
+                      </div>
+                      <Button
+                        variant="outline"
+                        onClick={async () => {
+                          await navigator.clipboard.writeText(generatedMessage);
+                          toast({ title: "Copied", description: "Message copied to clipboard." });
+                        }}
+                      >
+                        Copy
+                      </Button>
+                    </>
+                  ) : (
+                    <div className="text-sm text-gray-600">
+                      Generate a message to see it here.
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="mt-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <MessageSquare className="w-5 h-5" />
+                    Templates
+                  </CardTitle>
+                  <CardDescription>
+                    Pre-built templates you can customize and save
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {templates.map((t, idx) => (
+                    <div key={t.key} className="border border-gray-200 rounded-lg p-4 bg-white">
+                      <div className="flex items-center justify-between gap-3 mb-3">
+                        <div className="font-semibold text-gray-900">{t.title}</div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const next = templates.map((x, i) =>
+                              i === idx ? { ...x, updatedAt: new Date().toISOString() } : x
+                            );
+                            persistTemplates(next);
+                            toast({ title: "Saved", description: "Template saved." });
+                          }}
+                        >
+                          Save
+                        </Button>
+                      </div>
+                      <Textarea
+                        value={t.content}
+                        onChange={(e) => {
+                          const next = templates.map((x, i) =>
+                            i === idx ? { ...x, content: e.target.value } : x
+                          );
+                          persistTemplates(next);
+                        }}
+                        rows={6}
+                      />
+                      <p className="text-xs text-gray-500 mt-2">
+                        Variables: {"{name} {company} {role} {event} {topic} {field} {yourName}"}
+                      </p>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
 
           {/* Connections Tab */}
           <TabsContent value="connections">
@@ -771,6 +1183,21 @@ export default function NetworkingAssistant() {
                               <Edit3 className="w-4 h-4 mr-2" />
                               Update
                             </Button>
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                updateConnectionMutation.mutate({
+                                  id: connection.id,
+                                  data: {
+                                    ...connection,
+                                    followUpDate: "",
+                                    lastContact: new Date().toISOString(),
+                                  },
+                                });
+                              }}
+                            >
+                              Mark completed
+                            </Button>
                           </div>
                         </div>
                       </div>
@@ -781,86 +1208,6 @@ export default function NetworkingAssistant() {
             </Card>
           </TabsContent>
 
-          {/* Templates Tab */}
-          <TabsContent value="templates">
-            <div className="grid gap-6 md:grid-cols-2">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <MessageSquare className="w-5 h-5" />
-                    LinkedIn Connection Request
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <p className="text-sm text-gray-700">
-                      "Hi [Name], I came across your profile and was impressed by your work at [Company]. I'm currently [your role/situation] and would love to connect and learn from your experience in [their field/expertise]. Thanks!"
-                    </p>
-                  </div>
-                  <Button variant="outline" className="mt-4 w-full">
-                    Copy Template
-                  </Button>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Mail className="w-5 h-5" />
-                    Follow-up Email
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <p className="text-sm text-gray-700">
-                      "Hi [Name], I hope you're doing well! I wanted to follow up on our conversation about [topic]. I've been thinking about what you said regarding [specific point], and I'd love to continue our discussion. Are you available for a coffee chat sometime next week?"
-                    </p>
-                  </div>
-                  <Button variant="outline" className="mt-4 w-full">
-                    Copy Template
-                  </Button>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Users className="w-5 h-5" />
-                    Informational Interview Request
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <p className="text-sm text-gray-700">
-                      "Hi [Name], I'm [your name] and I'm exploring opportunities in [field/industry]. I came across your background and was really impressed by your journey from [previous role] to [current role]. Would you be open to a brief 15-20 minute conversation about your experience and any insights you might have for someone looking to transition into this space?"
-                    </p>
-                  </div>
-                  <Button variant="outline" className="mt-4 w-full">
-                    Copy Template
-                  </Button>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Building2 className="w-5 h-5" />
-                    Thank You After Meeting
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <p className="text-sm text-gray-700">
-                      "Hi [Name], Thank you so much for taking the time to meet with me today. I really enjoyed our conversation about [specific topic discussed] and found your insights about [specific insight] particularly valuable. I'll definitely [action you mentioned you'd take]. Looking forward to staying in touch!"
-                    </p>
-                  </div>
-                  <Button variant="outline" className="mt-4 w-full">
-                    Copy Template
-                  </Button>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
         </Tabs>
       </div>
     </div>

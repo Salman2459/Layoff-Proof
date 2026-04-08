@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, getApiErrorMessage, queryClient } from "@/lib/queryClient";
 import GlobalHeader from "@/components/GlobalHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -142,13 +142,16 @@ export default function PortfolioBuilder() {
         description: "Your portfolio has been updated successfully."
       });
     },
-    onError: (error) => {
+    onError: (error: unknown) => {
       toast({
         title: "Error",
-        description: "Failed to save portfolio. Please try again.",
-        variant: "destructive"
+        description: getApiErrorMessage(
+          error,
+          "Failed to save portfolio. Please try again."
+        ),
+        variant: "destructive",
       });
-    }
+    },
   });
 
   // Add/Update project mutation
@@ -194,9 +197,19 @@ export default function PortfolioBuilder() {
       });
       toast({
         title: "Project Saved",
-        description: "Project has been added to your portfolio."
+        description: "Project has been added to your portfolio.",
       });
-    }
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Error",
+        description: getApiErrorMessage(
+          error,
+          "Failed to save project. Please try again."
+        ),
+        variant: "destructive",
+      });
+    },
   });
 
   // Delete project mutation
@@ -212,9 +225,19 @@ export default function PortfolioBuilder() {
       queryClient.invalidateQueries({ queryKey: ["/api/portfolios/current"] });
       toast({
         title: "Project Deleted",
-        description: "Project has been removed from your portfolio."
+        description: "Project has been removed from your portfolio.",
       });
-    }
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Error",
+        description: getApiErrorMessage(
+          error,
+          "Failed to delete project. Please try again."
+        ),
+        variant: "destructive",
+      });
+    },
   });
 
   const handleSavePortfolio = () => {

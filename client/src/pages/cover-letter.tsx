@@ -407,7 +407,7 @@ export default function CoverLetter() {
                     <div><Label htmlFor="tools">Tools & Methods</Label><Textarea id="tools" placeholder="Tools and methods you use to stay organized..." value={personalData.tools} onChange={(e) => setPersonalData({ ...personalData, tools: e.target.value })} /></div>
                     <div className="border-t pt-4"><h3 className="font-semibold mb-4">Job Details</h3>
                       <div className="space-y-4">
-                        <div><Label htmlFor="manual-position">Position Applied For *</Label><Input id="manual-position" placeholder="e.g., Senior Software Engineer" value={jobDetails.position} onChange={(e) => setJobDetails({ ...jobDetails, position: e.target.value })} /></div>
+                        <div><Label htmlFor="manual-position">Position Applied For *</Label><Input id="manual-position" placeholder="e.g., Software Engineer" value={jobDetails.position} onChange={(e) => setJobDetails({ ...jobDetails, position: e.target.value })} /></div>
                         <div><Label htmlFor="manual-company">Company Name *</Label><Input id="manual-company" placeholder="e.g., Google" value={jobDetails.company} onChange={(e) => setJobDetails({ ...jobDetails, company: e.target.value })} /></div>
                         <div><Label htmlFor="manual-reason">Reason for Interest *</Label><Input id="manual-reason" placeholder="e.g., career advancement, skill development" value={jobDetails.reason} onChange={(e) => setJobDetails({ ...jobDetails, reason: e.target.value })} /></div>
                       </div>

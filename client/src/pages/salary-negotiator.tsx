@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, getApiErrorMessage, queryClient } from "@/lib/queryClient";
 import GlobalHeader from "@/components/GlobalHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,6 +19,7 @@ import {
   Briefcase,
   Plus,
   Trash2,
+  Loader2,
   ChevronRight,
   FileText,
   BarChart3
@@ -40,6 +41,9 @@ export default function SalaryNegotiator() {
   const { isAuthenticated, isLoading } = useAuth();
   const { toast } = useToast();
   const [step, setStep] = useState(1);
+  const [deletingResearchId, setDeletingResearchId] = useState<string | null>(
+    null,
+  );
   const [formData, setFormData] = useState<SalaryData>({
     jobTitle: "",
     location: "",
@@ -52,6 +56,10 @@ export default function SalaryNegotiator() {
     industry: ""
   });
   const [strategy, setStrategy] = useState<any>(null);
+  const cleanedStrategyText = String(strategy?.negotiationStrategy || "")
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    .replace(/^\s{0,3}#{1,6}\s*$/gm, "")
+    .trim();
 
   // Fetch existing salary research
   const { data: existingResearch } = useQuery({
@@ -85,13 +93,42 @@ export default function SalaryNegotiator() {
         description: "Your personalized salary negotiation strategy is ready!"
       });
     },
-    onError: (error) => {
+    onError: (error: unknown) => {
       toast({
         title: "Error",
-        description: "Failed to generate strategy. Please try again.",
-        variant: "destructive"
+        description: getApiErrorMessage(
+          error,
+          "Failed to generate strategy. Please try again."
+        ),
+        variant: "destructive",
       });
-    }
+    },
+  });
+
+  const deleteResearchMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return await apiRequest("DELETE", `/api/salary-research/${id}`);
+    },
+    onMutate: async (id: string) => {
+      setDeletingResearchId(id);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/salary-research"] });
+      toast({
+        title: "Deleted",
+        description: "Previous research removed.",
+      });
+    },
+    onSettled: () => {
+      setDeletingResearchId(null);
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Error",
+        description: getApiErrorMessage(error, "Failed to delete research."),
+        variant: "destructive",
+      });
+    },
   });
 
   const handleNext = () => {
@@ -187,11 +224,11 @@ export default function SalaryNegotiator() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-yellow-50 via-white to-orange-50">
+    <div className="min-h-screen lp-page-mesh">
       <GlobalHeader />
 
       {/* Header */}
-      <div className="bg-gradient-to-r from-yellow-600 to-orange-600 text-white py-16">
+      <div className="lp-gradient-fill text-primary-foreground py-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center">
             <div className="flex items-center justify-center mb-4">
@@ -200,7 +237,7 @@ export default function SalaryNegotiator() {
               </div>
               <h1 className="text-4xl font-bold">Salary Negotiator</h1>
             </div>
-            <p className="text-xl text-yellow-100 max-w-3xl mx-auto">
+            <p className="text-xl text-primary-foreground/80 max-w-3xl mx-auto">
               Get data-driven insights and proven strategies for successful salary negotiations.
             </p>
           </div>
@@ -212,22 +249,22 @@ export default function SalaryNegotiator() {
         {/* Progress Indicator */}
         <div className="mb-8">
           <div className="flex items-center justify-between">
-            <div className={`flex items-center ${step >= 1 ? 'text-yellow-600' : 'text-gray-400'}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step >= 1 ? 'bg-yellow-600 text-white' : 'bg-gray-200'}`}>
+            <div className={`flex items-center ${step >= 1 ? 'text-primary' : 'text-muted-foreground'}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step >= 1 ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
                 1
               </div>
               <span className="ml-2 font-medium">Job Details</span>
             </div>
             <ChevronRight className="w-5 h-5 text-gray-400" />
-            <div className={`flex items-center ${step >= 2 ? 'text-yellow-600' : 'text-gray-400'}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step >= 2 ? 'bg-yellow-600 text-white' : 'bg-gray-200'}`}>
+            <div className={`flex items-center ${step >= 2 ? 'text-primary' : 'text-muted-foreground'}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step >= 2 ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
                 2
               </div>
               <span className="ml-2 font-medium">Background & Goals</span>
             </div>
             <ChevronRight className="w-5 h-5 text-gray-400" />
-            <div className={`flex items-center ${step >= 3 ? 'text-yellow-600' : 'text-gray-400'}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step >= 3 ? 'bg-yellow-600 text-white' : 'bg-gray-200'}`}>
+            <div className={`flex items-center ${step >= 3 ? 'text-primary' : 'text-muted-foreground'}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step >= 3 ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
                 3
               </div>
               <span className="ml-2 font-medium">Strategy</span>
@@ -311,7 +348,7 @@ export default function SalaryNegotiator() {
               </div>
 
               <div className="flex justify-end">
-                <Button onClick={handleNext} className="bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-700 hover:to-orange-700">
+                <Button onClick={handleNext} className="lp-gradient-fill text-primary-foreground border-0">
                   Next Step
                   <ChevronRight className="w-4 h-4 ml-2" />
                 </Button>
@@ -429,7 +466,7 @@ export default function SalaryNegotiator() {
                 <Button 
                   onClick={handleNext} 
                   disabled={generateStrategyMutation.isPending}
-                  className="bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-700 hover:to-orange-700"
+                  className="lp-gradient-fill text-primary-foreground border-0"
                 >
                   {generateStrategyMutation.isPending ? "Generating Strategy..." : "Generate Strategy"}
                   <TrendingUp className="w-4 h-4 ml-2" />
@@ -444,7 +481,7 @@ export default function SalaryNegotiator() {
           <div className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
+                <CardTitle className="flex items-center gap-2 uppercase font-extrabold tracking-[0.16em]">
                   <Award className="w-5 h-5" />
                   Your Personalized Negotiation Strategy
                 </CardTitle>
@@ -467,7 +504,7 @@ export default function SalaryNegotiator() {
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Target</p>
-                      <p className="text-xl font-bold text-yellow-600">${parseInt(formData.targetSalary).toLocaleString()}</p>
+                      <p className="text-xl font-bold text-primary">${parseInt(formData.targetSalary).toLocaleString()}</p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Market Average</p>
@@ -483,14 +520,16 @@ export default function SalaryNegotiator() {
             {strategy.negotiationStrategy && (
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 uppercase font-extrabold tracking-[0.16em]">
                     <FileText className="w-5 h-5" />
                     Negotiation Strategy
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="prose max-w-none">
-                    <div className="whitespace-pre-wrap text-gray-700">{strategy.negotiationStrategy}</div>
+                    <div className="whitespace-pre-wrap text-gray-700">
+                      {cleanedStrategyText}
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -573,9 +612,25 @@ export default function SalaryNegotiator() {
                           <span>Target: ${parseInt(research.targetSalary).toLocaleString()}</span>
                         </div>
                       </div>
-                      <Badge variant="outline" className="text-xs">
-                        {new Date(research.createdAt).toLocaleDateString()}
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs">
+                          {new Date(research.createdAt).toLocaleDateString()}
+                        </Badge>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => deleteResearchMutation.mutate(research.id)}
+                          disabled={deleteResearchMutation.isPending}
+                          aria-label="Delete previous research"
+                        >
+                          {deletingResearchId === research.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 ))}

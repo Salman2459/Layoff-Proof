@@ -8,6 +8,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { User, Menu, LogOut, Settings } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 function GlobalHeader() {
   const { user, isAuthenticated } = useAuth();
@@ -15,69 +16,55 @@ function GlobalHeader() {
 
   const handleLogout = async () => {
     try {
-      const response = await fetch('/api/auth/logout', {
-        method: 'POST',
+      const response = await fetch("/api/auth/logout", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
+        credentials: "include",
+        cache: "no-store",
       });
 
       if (response.ok) {
-        // Redirect to home page after successful logout
-        window.location.href = '/';
+        window.location.href = "/";
       } else {
-        console.error('Logout failed');
-        // Fallback redirect to home page
-        window.location.href = '/';
+        console.error("Logout failed");
+        window.location.href = "/";
       }
     } catch (error) {
-      console.error('Logout error:', error);
-      // Fallback redirect to home page
-      window.location.href = '/';
+      console.error("Logout error:", error);
+      window.location.href = "/";
     }
   };
 
+  const navLink = (path: string) =>
+    cn(
+      "text-sm font-medium transition-colors hover:text-primary",
+      location === path
+        ? "text-primary"
+        : "text-muted-foreground"
+    );
+
   return (
-    <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 sticky top-0 z-50">
+    <header className="sticky top-0 z-50 border-b border-border bg-background/90 backdrop-blur-md supports-[backdrop-filter]:bg-background/75">
       <div className="container mx-auto px-4">
-        <div className="flex items-center justify-between h-16">
-          {/* Logo */}
+        <div className="flex h-16 items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm">LP</span>
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg lp-gradient-fill shadow-sm">
+              <span className="text-sm font-bold text-primary-foreground">LP</span>
             </div>
-            <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-              Layoff Proof
-            </h1>
+            <h1 className="lp-gradient-text text-xl font-bold">Layoff Proof</h1>
           </Link>
 
-          {/* Navigation */}
-          <nav className="hidden md:flex items-center space-x-6">
-            <Link
-              href="/"
-              className={`text-sm font-medium transition-colors hover:text-blue-600 ${location?.startsWith('/tools') ? 'text-blue-600' : 'text-gray-700 dark:text-gray-300'
-                }`}
-            >
+          <nav className="hidden items-center space-x-6 md:flex">
+            <Link href="/" className={navLink("/")}>
               Home
             </Link>
-            {/* <Link 
-              href="/tools/layoff-tracker" 
-              className={`text-sm font-medium transition-colors hover:text-blue-600 ${
-                location === '/tools/layoff-tracker' ? 'text-blue-600' : 'text-gray-700 dark:text-gray-300'
-              }`}
-            >
-              Layoff Tracker
-            </Link> */}
-            <Link
-              href="/pricing"
-              className={`text-sm font-medium transition-colors hover:text-blue-600 ${location === '/pricing' ? 'text-blue-600' : 'text-gray-700 dark:text-gray-300'
-                }`}
-            >
+            <Link href="/pricing" className={navLink("/pricing")}>
               Pricing
             </Link>
           </nav>
 
-          {/* Auth Actions */}
           <div className="flex items-center gap-4">
             {!isAuthenticated ? (
               <>
@@ -87,7 +74,10 @@ function GlobalHeader() {
                   </Button>
                 </Link>
                 <Link href="/signup">
-                  <Button size="sm" className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700">
+                  <Button
+                    size="sm"
+                    className="border-0 text-primary-foreground shadow-md lp-gradient-fill"
+                  >
                     Sign Up
                   </Button>
                 </Link>
@@ -95,51 +85,62 @@ function GlobalHeader() {
             ) : (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="flex items-center gap-2">
-                    <User className="w-4 h-4" />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="flex items-center gap-2"
+                  >
+                    <User className="h-4 w-4" />
                     <span className="hidden md:inline">
-                      {(user as any)?.firstName || (user as any)?.email}
+                      {(user as { firstName?: string; email?: string })
+                        ?.firstName ||
+                        (user as { email?: string })?.email}
                     </span>
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
                   <DropdownMenuItem asChild>
-                    <Link href="/profile" className="flex items-center gap-2 w-full">
-                      <Settings className="w-4 h-4" />
+                    <Link
+                      href="/profile"
+                      className="flex w-full items-center gap-2"
+                    >
+                      <Settings className="h-4 w-4" />
                       Profile
                     </Link>
                   </DropdownMenuItem>
-                  {/* <DropdownMenuItem asChild>
-                    <Link href="/dashboard" className="flex items-center gap-2 w-full">
-                      <User className="w-4 h-4" />
-                      Dashboard
-                    </Link>
-                  </DropdownMenuItem> */}
-                  <DropdownMenuItem onClick={handleLogout} className="flex items-center gap-2">
-                    <LogOut className="w-4 h-4" />
+                  <DropdownMenuItem
+                    onClick={handleLogout}
+                    className="flex items-center gap-2"
+                  >
+                    <LogOut className="h-4 w-4" />
                     Log Out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
 
-            {/* Mobile Menu */}
             <div className="md:hidden">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="sm">
-                    <Menu className="w-4 h-4" />
+                    <Menu className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
                   <DropdownMenuItem asChild>
-                    <Link href="/tools" className="w-full">Career Tools</Link>
+                    <Link href="/" className="w-full">
+                      Home
+                    </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
-                    <Link href="/tools/layoff-tracker" className="w-full">Layoff Tracker</Link>
+                    <Link href="/dashboard" className="w-full">
+                      Layoff Tracker
+                    </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
-                    <Link href="/pricing" className="w-full">Pricing</Link>
+                    <Link href="/pricing" className="w-full">
+                      Pricing
+                    </Link>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

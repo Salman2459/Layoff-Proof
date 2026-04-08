@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import cookieParser from "cookie-parser";
 import { createServer, type Server } from "http";
 import "./types"; // Import session and request type extensions
 import { storage } from "./storage";
@@ -9,20 +10,26 @@ import { setupGoogleAuth } from "./googleAuth";
 // import { setupLinkedInAuth } from "./linkedinAuth";
 import { analyzeJobSecurityRisk } from "./anthropic";
 import { dataIntegrator } from "./data-integrator";
-import { insertCompanySchema, updateUserProfileSchema, ParsedResumeData, userJobProfiles, userDocuments } from "@shared/schema";
+import {
+  insertCompanySchema,
+  updateUserProfileSchema,
+  ParsedResumeData,
+  userJobProfiles,
+  userDocuments,
+} from "@shared/schema";
 import multer from "multer";
 import fs from "fs";
 import path from "path";
 import puppeteer from "puppeteer-extra";
 import * as cheerio from "cheerio";
 import axios from "axios";
-import { Formidable } from 'formidable';
-import pdf from 'pdf-parse/lib/pdf-parse.js';
+import { Formidable } from "formidable";
+import pdf from "pdf-parse/lib/pdf-parse.js";
 import mammoth from "mammoth";
 import docxParser from "docx-parser";
-import Anthropic from '@anthropic-ai/sdk';
+import Anthropic from "@anthropic-ai/sdk";
 import { db } from "./db";
-import Parser from 'rss-parser';
+import Parser from "rss-parser";
 import { eq, and, gte, lte, desc, sql } from "drizzle-orm";
 import { layoffs } from "@shared/schema";
 import {
@@ -32,7 +39,7 @@ import {
   createSubscription,
   createPaymentIntent,
   cancelSubscription,
-  getSubscription
+  getSubscription,
 } from "./stripe";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import { cloudinary } from "./cloudinary";
@@ -42,31 +49,37 @@ const rssParser = new Parser();
 export async function registerRoutes(app: Express): Promise<Server> {
   // Configure multer for file uploads
   const upload = multer({
-    dest: './uploads/',
+    dest: "./uploads/",
     limits: {
       fileSize: 5 * 1024 * 1024, // 5MB limit
     },
     fileFilter: (req, file, cb) => {
       // Accept only text files, PDFs, and documents
       const allowedTypes = [
-        'text/plain',
-        'application/pdf',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        "text/plain",
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       ];
       if (allowedTypes.includes(file.mimetype)) {
         cb(null, true);
       } else {
-        cb(new Error('Invalid file type. Please upload .txt, .pdf, .doc, or .docx files.'));
+        cb(
+          new Error(
+            "Invalid file type. Please upload .txt, .pdf, .doc, or .docx files.",
+          ),
+        );
       }
-    }
+    },
   });
 
   // Session middleware (from replitAuth but without the problematic strategy)
-  const session = await import('express-session');
-  const connectPg = await import('connect-pg-simple');
+  const session = await import("express-session");
+  const connectPg = await import("connect-pg-simple");
 
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
+  const sessionSecret =
+    process.env.SESSION_SECRET || "layoff-proof-dev-secret-key-2024";
   const pgStore = connectPg.default(session.default);
   const sessionStore = new pgStore({
     conString: process.env.DATABASE_URL,
@@ -76,28 +89,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.set("trust proxy", 1);
-  app.use(session.default({
-    secret: process.env.SESSION_SECRET || 'layoff-proof-dev-secret-key-2024', // Fallback for development
-    store: sessionStore,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      secure: false, // Set to false for development (HTTP)
-      maxAge: sessionTtl,
-    },
-  }));
+  // Required for res.clearCookie(..., { signed: true }) (e.g. session logout)
+  app.use(cookieParser(sessionSecret));
+  app.use(
+    session.default({
+      secret: sessionSecret,
+      store: sessionStore,
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        secure: false, // Set to false for development (HTTP)
+        maxAge: sessionTtl,
+      },
+    }),
+  );
 
   // Initialize Passport
-  const passport = await import('passport');
+  const passport = await import("passport");
   app.use(passport.default.initialize());
   app.use(passport.default.session());
   puppeteer.use(StealthPlugin());
 
-
-
-
-  // Auth middleware  
+  // Auth middleware
   setupMagicAuth(app);
   setupPasswordAuth(app);
   setupGoogleAuth(app);
@@ -114,18 +128,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return false;
     }
 
-
-
     if (!user?.subscriptionEndDate) {
       return false;
     }
 
-    if (user?.subscriptionEndDate && new Date(user?.subscriptionEndDate) < new Date()) {
+    if (
+      user?.subscriptionEndDate &&
+      new Date(user?.subscriptionEndDate) < new Date()
+    ) {
       return false;
     }
 
     return user;
-
   }
 
   async function DetuctCredits(user: any) {
@@ -137,8 +151,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
-  // Auth routes
-  app.get('/api/auth/user', isAuthenticatedAny, async (req: any, res) => {
+  // Auth routes — never cache: browsers may serve a stale 200 after logout.
+  app.use("/api/auth/user", (_req, res, next) => {
+    res.set("Cache-Control", "private, no-store, no-cache, must-revalidate");
+    res.set("Pragma", "no-cache");
+    next();
+  });
+
+  app.get("/api/auth/user", isAuthenticatedAny, async (req: any, res) => {
     try {
       const user = req.user;
       res.json(user);
@@ -148,10 +168,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-
-
   // Company routes
-  app.get('/api/companies/search', isAuthenticated, async (req, res) => {
+  app.get("/api/companies/search", isAuthenticated, async (req, res) => {
     try {
       const query = req.query.q as string;
       if (!query || query.length < 2) {
@@ -165,7 +183,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/companies/:id', isAuthenticated, async (req, res) => {
+  app.get("/api/companies/:id", isAuthenticated, async (req, res) => {
     try {
       const { id } = req.params;
       const company = await storage.getCompany(id);
@@ -179,7 +197,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/companies', isAuthenticated, async (req, res) => {
+  app.post("/api/companies", isAuthenticated, async (req, res) => {
     try {
       const validated = insertCompanySchema.parse(req.body);
       const company = await storage.createCompany(validated);
@@ -191,25 +209,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // User company selection
-  app.post('/api/user/select-company', isAuthenticated, async (req: any, res) => {
-    try {
-      const userId = req.user.claims.sub;
-      const { companyId } = req.body;
+  app.post(
+    "/api/user/select-company",
+    isAuthenticated,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims.sub;
+        const { companyId } = req.body;
 
-      if (!companyId) {
-        return res.status(400).json({ message: "Company ID is required" });
+        if (!companyId) {
+          return res.status(400).json({ message: "Company ID is required" });
+        }
+
+        await storage.updateUserSelectedCompany(userId, companyId);
+        res.json({ message: "Company selected successfully" });
+      } catch (error) {
+        console.error("Error selecting company:", error);
+        res.status(500).json({ message: "Failed to select company" });
       }
-
-      await storage.updateUserSelectedCompany(userId, companyId);
-      res.json({ message: "Company selected successfully" });
-    } catch (error) {
-      console.error("Error selecting company:", error);
-      res.status(500).json({ message: "Failed to select company" });
-    }
-  });
+    },
+  );
 
   // Dashboard stats - public access for homepage
-  app.get('/api/dashboard/stats', async (req, res) => {
+  app.get("/api/dashboard/stats", async (req, res) => {
     try {
       const stats = await storage.getCompaniesWithLayoffStats();
       res.json(stats);
@@ -220,7 +242,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Notifications
-  app.get('/api/notifications', isAuthenticated, async (req: any, res) => {
+  app.get("/api/notifications", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
       const notifications = await storage.getUserNotifications(userId);
@@ -231,7 +253,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/notifications/:id/read', isAuthenticated, async (req, res) => {
+  app.post("/api/notifications/:id/read", isAuthenticated, async (req, res) => {
     try {
       const { id } = req.params;
       await storage.markNotificationAsRead(id);
@@ -243,19 +265,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Company activities
-  app.get('/api/companies/:id/activities', isAuthenticated, async (req, res) => {
-    try {
-      const { id } = req.params;
-      const activities = await storage.getCompanyActivities(id);
-      res.json(activities);
-    } catch (error) {
-      console.error("Error fetching company activities:", error);
-      res.status(500).json({ message: "Failed to fetch company activities" });
-    }
-  });
+  app.get(
+    "/api/companies/:id/activities",
+    isAuthenticated,
+    async (req, res) => {
+      try {
+        const { id } = req.params;
+        const activities = await storage.getCompanyActivities(id);
+        res.json(activities);
+      } catch (error) {
+        console.error("Error fetching company activities:", error);
+        res.status(500).json({ message: "Failed to fetch company activities" });
+      }
+    },
+  );
 
   // Layoff events
-  app.get('/api/companies/:id/layoffs', isAuthenticated, async (req, res) => {
+  app.get("/api/companies/:id/layoffs", isAuthenticated, async (req, res) => {
     try {
       const { id } = req.params;
       const layoffs = await storage.getLayoffEventsByCompany(id);
@@ -267,16 +293,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // User profile management
-  app.put('/api/user/profile', isAuthenticatedAny, async (req: any, res) => {
+  app.put("/api/user/profile", isAuthenticatedAny, async (req: any, res) => {
     try {
       const userId = req.user.id; // Make sure this exists
-      console.log('User ID:', userId); // Add logging
-      console.log('Request body:', req.body); // Add logging
+      console.log("User ID:", userId); // Add logging
+      console.log("Request body:", req.body); // Add logging
 
       const validated = updateUserProfileSchema.parse(req.body);
       const user = await storage.updateUserProfile(userId, validated);
 
-      console.log('Updated user:', user); // Add logging
+      console.log("Updated user:", user); // Add logging
       res.json(user);
     } catch (error) {
       console.error("Error updating user profile:", error);
@@ -285,7 +311,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Historical layoff data - public access for homepage
-  app.get('/api/analytics/historical', async (req, res) => {
+  app.get("/api/analytics/historical", async (req, res) => {
     try {
       const historicalData = await storage.getHistoricalLayoffData();
       res.json(historicalData);
@@ -295,10 +321,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Layoff trends - public access for homepage  
-  app.get('/api/analytics/trends', async (req, res) => {
+  // Layoff trends - public access for homepage
+  app.get("/api/analytics/trends", async (req, res) => {
     try {
-      const timeframe = (req.query.timeframe as 'month' | 'quarter' | 'year') || 'month';
+      const timeframe =
+        (req.query.timeframe as "month" | "quarter" | "year") || "month";
       const trends = await storage.getLayoffTrends(timeframe);
       res.json(trends);
     } catch (error) {
@@ -308,7 +335,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Recent layoffs endpoint
-  app.get('/api/layoffs/recent', async (req, res) => {
+  app.get("/api/layoffs/recent", async (req, res) => {
     try {
       const recentLayoffs = await storage.getRecentLayoffs();
       res.json(recentLayoffs);
@@ -319,7 +346,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Companies endpoint
-  app.get('/api/companies', async (req, res) => {
+  app.get("/api/companies", async (req, res) => {
     try {
       const companies = await storage.getAllCompanies();
       res.json(companies);
@@ -355,9 +382,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const calculateSubscriptionEndDate = (user, days) => {
     const now = new Date();
     // If user has active subscription, stack on top
-    const startDate = (user.subscriptionEndDate && new Date(user.subscriptionEndDate) > now)
-      ? new Date(user.subscriptionEndDate)
-      : now;
+    const startDate =
+      user.subscriptionEndDate && new Date(user.subscriptionEndDate) > now
+        ? new Date(user.subscriptionEndDate)
+        : now;
 
     startDate.setDate(startDate.getDate() + days);
     return startDate;
@@ -372,17 +400,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`✅ Found product: ${product.id}`);
       } catch (error) {
         if (error.code === "resource_missing") {
-          throw new Error(`Configured Stripe Product ID not found: ${planConfig.productId}`);
+          throw new Error(
+            `Configured Stripe Product ID not found: ${planConfig.productId}`,
+          );
         }
         throw error;
       }
 
-      const prices = await stripe.prices.list({ product: product.id, active: true });
+      const prices = await stripe.prices.list({
+        product: product.id,
+        active: true,
+      });
       const correctPrice = prices.data.find(
         (p) =>
           p.unit_amount === planConfig.unit_amount &&
           p.currency === "usd" &&
-          p.recurring?.interval === planConfig.interval
+          p.recurring?.interval === planConfig.interval,
       );
 
       if (correctPrice) {
@@ -390,7 +423,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return correctPrice.id;
       }
 
-      console.warn(`⚠️ No correct price found for ${product.id}. Creating a new one.`);
+      console.warn(
+        `⚠️ No correct price found for ${product.id}. Creating a new one.`,
+      );
       const newPrice = await stripe.prices.create({
         unit_amount: planConfig.unit_amount,
         currency: "usd",
@@ -406,126 +441,155 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
 
   // Create subscription
-  app.post("/api/stripe/create-subscription", isAuthenticatedAny, async (req, res) => {
-    try {
-      const { planId, coupon } = req.body;
-      const selectedPlan = PLANS[planId];
+  app.post(
+    "/api/stripe/create-subscription",
+    isAuthenticatedAny,
+    async (req, res) => {
+      try {
+        const { planId, coupon } = req.body;
+        const selectedPlan = PLANS[planId];
 
-      if (!selectedPlan) {
-        return res.status(400).json({ message: "Invalid subscription plan selected." });
-      }
+        if (!selectedPlan) {
+          return res
+            .status(400)
+            .json({ message: "Invalid subscription plan selected." });
+        }
 
-      const user = req.user;
-      let stripeCustomerId = user.stripeCustomerId;
+        const user = req.user;
+        let stripeCustomerId = user.stripeCustomerId;
 
-      if (!stripeCustomerId) {
-        const customer = await stripe.customers.create({
-          email: user.email,
-          name: user.name,
+        if (!stripeCustomerId) {
+          const customer = await stripe.customers.create({
+            email: user.email,
+            name: user.name,
+          });
+          stripeCustomerId = customer.id;
+          await storage.updateUser(user.id, { stripeCustomerId });
+        }
+
+        const priceId = await getOrCreatePrice(selectedPlan);
+
+        const subscription = await stripe.subscriptions.create({
+          customer: stripeCustomerId,
+          items: [{ price: priceId }],
+          coupon: coupon?.trim() || undefined, // ✅ APPLY COUPON HERE
+          payment_behavior: "default_incomplete",
+          payment_settings: { save_default_payment_method: "on_subscription" },
+          expand: [
+            "latest_invoice.payment_intent",
+            "latest_invoice.total_discount_amounts",
+          ],
         });
-        stripeCustomerId = customer.id;
-        await storage.updateUser(user.id, { stripeCustomerId });
+
+        await storage.updateUser(user.id, {
+          subscriptionPlan: planId,
+          subscriptionStatus: "incomplete",
+          stripeSubscriptionId: subscription.id,
+          updatedAt: new Date(),
+        });
+
+        res.json({
+          subscriptionId: subscription.id,
+          clientSecret:
+            subscription.latest_invoice.payment_intent.client_secret,
+        });
+      } catch (error) {
+        console.error("❌ Error creating subscription:", error);
+        res.status(500).json({ message: "Failed to create subscription" });
       }
-
-      const priceId = await getOrCreatePrice(selectedPlan);
-
-      const subscription = await stripe.subscriptions.create({
-        customer: stripeCustomerId,
-        items: [{ price: priceId }],
-        coupon: coupon?.trim() || undefined, // ✅ APPLY COUPON HERE
-        payment_behavior: "default_incomplete",
-        payment_settings: { save_default_payment_method: "on_subscription" },
-        expand: ["latest_invoice.payment_intent", "latest_invoice.total_discount_amounts"],
-      });
-
-      await storage.updateUser(user.id, {
-        subscriptionPlan: planId,
-        subscriptionStatus: "incomplete",
-        stripeSubscriptionId: subscription.id,
-        updatedAt: new Date(),
-      });
-
-      res.json({
-        subscriptionId: subscription.id,
-        clientSecret: subscription.latest_invoice.payment_intent.client_secret,
-      });
-    } catch (error) {
-      console.error("❌ Error creating subscription:", error);
-      res.status(500).json({ message: "Failed to create subscription" });
-    }
-  });
-
+    },
+  );
 
   // Get price breakdown (for preview)
-  app.post("/api/stripe/get-price-breakdown", isAuthenticatedAny, async (req, res) => {
-    try {
-      const { coupon } = req.body;
-      const user = req.user;
+  app.post(
+    "/api/stripe/get-price-breakdown",
+    isAuthenticatedAny,
+    async (req, res) => {
+      try {
+        const { coupon } = req.body;
+        const user = req.user;
 
-      const subscriptionId = user.stripeSubscriptionId;
-      if (!subscriptionId || user.subscriptionStatus !== 'incomplete') {
-        return res.status(400).json({ message: 'No active subscription draft found.' });
-      }
-
-      const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
-        expand: ['items.data.price', 'latest_invoice']
-      });
-
-      const priceItem = subscription.items.data[0];
-      const originalAmount = priceItem.price.unit_amount;
-
-      let breakdown = {
-        originalAmount: originalAmount,
-        discountAmount: 0,
-        finalAmount: originalAmount,
-        couponName: null,
-        discountPercentage: null
-      };
-
-      if (coupon && coupon.trim()) {
-        try {
-          const couponObj = await stripe.coupons.retrieve(coupon.trim());
-
-          if (!couponObj.valid) {
-            return res.status(400).json({ message: 'This coupon is not valid or has expired.' });
-          }
-
-          let discountAmount = 0;
-          let discountPercentage = null;
-
-          if (couponObj.percent_off) {
-            discountPercentage = couponObj.percent_off;
-            discountAmount = Math.round((originalAmount * couponObj.percent_off) / 100);
-          } else if (couponObj.amount_off) {
-            discountAmount = couponObj.amount_off;
-          }
-
-          discountAmount = Math.min(discountAmount, originalAmount);
-
-          breakdown = {
-            originalAmount: originalAmount,
-            discountAmount: discountAmount,
-            finalAmount: originalAmount - discountAmount,
-            couponName: couponObj.name || coupon.trim(),
-            discountPercentage: discountPercentage
-          };
-
-          console.log(`📊 Price breakdown for coupon '${coupon}':`, breakdown);
-        } catch (couponError) {
-          console.log(`❌ Invalid coupon '${coupon}':`, couponError.message);
-          return res.status(400).json({ message: 'This coupon code is not valid.' });
+        const subscriptionId = user?.stripeSubscriptionId;
+        if (!subscriptionId || user?.subscriptionStatus !== "incomplete") {
+          return res
+            .status(400)
+            .json({ message: "No active subscription draft found." });
         }
-      }
 
-      res.json({
-        success: true,
-        breakdown: breakdown
-      });
-    } catch (error) {
-      console.error("❌ Error getting price breakdown:", error);
-      res.status(500).json({ message: "Failed to calculate price breakdown" });
-    }
-  });
+        const subscription = await stripe.subscriptions.retrieve(
+          subscriptionId,
+          {
+            expand: ["items.data.price", "latest_invoice"],
+          },
+        );
+
+        const priceItem = subscription.items.data[0];
+        const originalAmount = priceItem.price.unit_amount;
+
+        let breakdown = {
+          originalAmount: originalAmount,
+          discountAmount: 0,
+          finalAmount: originalAmount,
+          couponName: null,
+          discountPercentage: null,
+        };
+
+        if (coupon && coupon.trim()) {
+          try {
+            const couponObj = await stripe.coupons.retrieve(coupon.trim());
+
+            if (!couponObj.valid) {
+              return res
+                .status(400)
+                .json({ message: "This coupon is not valid or has expired." });
+            }
+
+            let discountAmount = 0;
+            let discountPercentage = null;
+
+            if (couponObj.percent_off) {
+              discountPercentage = couponObj.percent_off;
+              discountAmount = Math.round(
+                (originalAmount * couponObj.percent_off) / 100,
+              );
+            } else if (couponObj.amount_off) {
+              discountAmount = couponObj.amount_off;
+            }
+
+            discountAmount = Math.min(discountAmount, originalAmount);
+
+            breakdown = {
+              originalAmount: originalAmount,
+              discountAmount: discountAmount,
+              finalAmount: originalAmount - discountAmount,
+              couponName: couponObj.name || coupon.trim(),
+              discountPercentage: discountPercentage,
+            };
+
+            console.log(
+              `📊 Price breakdown for coupon '${coupon}':`,
+              breakdown,
+            );
+          } catch (couponError) {
+            console.log(`❌ Invalid coupon '${coupon}':`, couponError.message);
+            return res
+              .status(400)
+              .json({ message: "This coupon code is not valid." });
+          }
+        }
+
+        res.json({
+          success: true,
+          breakdown: breakdown,
+        });
+      } catch (error) {
+        console.error("❌ Error getting price breakdown:", error);
+        res
+          .status(500)
+          .json({ message: "Failed to calculate price breakdown" });
+      }
+    },
+  );
 
   // Apply coupon
   app.post("/api/stripe/apply-coupon", isAuthenticatedAny, async (req, res) => {
@@ -549,17 +613,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         validatedCoupon = await stripe.coupons.retrieve(coupon.trim());
         if (!validatedCoupon.valid) throw new Error("Invalid coupon");
       } catch (err) {
-        return res.status(400).json({ message: "This coupon is invalid or expired." });
+        return res
+          .status(400)
+          .json({ message: "This coupon is invalid or expired." });
       }
 
-      console.log(`🎟️ Re-creating subscription for user ${user.id} with coupon "${coupon}"`);
+      console.log(
+        `🎟️ Re-creating subscription for user ${user.id} with coupon "${coupon}"`,
+      );
 
       // 3. Cancel the existing incomplete subscription if it exists
       if (user.stripeSubscriptionId) {
         try {
           await stripe.subscriptions.cancel(user.stripeSubscriptionId);
         } catch (err) {
-          console.log("Old subscription could not be cancelled (might not exist):", err.message);
+          console.log(
+            "Old subscription could not be cancelled (might not exist):",
+            err.message,
+          );
         }
       }
 
@@ -573,13 +644,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         coupon: coupon.trim(), // ✅ Applied at creation = Applies to first invoice
         payment_behavior: "default_incomplete",
         payment_settings: { save_default_payment_method: "on_subscription" },
-        expand: ["latest_invoice.payment_intent", "latest_invoice.total_discount_amounts", "latest_invoice.discount"],
+        expand: [
+          "latest_invoice.payment_intent",
+          "latest_invoice.total_discount_amounts",
+          "latest_invoice.discount",
+        ],
       });
 
       const invoice = subscription.latest_invoice;
       const finalAmount = invoice.total;
       const originalAmount = selectedPlan.unit_amount;
-      const discountAmount = invoice.total_discount_amounts.reduce((sum, d) => sum + d.amount, 0);
+      const discountAmount = invoice.total_discount_amounts.reduce(
+        (sum, d) => sum + d.amount,
+        0,
+      );
 
       // 6. Calculate breakdown logic
       const breakdown = {
@@ -628,7 +706,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         clientSecret: invoice.payment_intent.client_secret, // ✅ Send NEW client secret
         breakdown,
       });
-
     } catch (error) {
       console.error("❌ Error applying coupon:", error);
       res.status(500).json({ message: "Failed to apply coupon." });
@@ -636,120 +713,145 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Confirm subscription (after payment)
-  app.post("/api/stripe/confirm-subscription", isAuthenticatedAny, async (req, res) => {
-    try {
-      const { planId } = req.body;
-      const user = req.user;
+  app.post(
+    "/api/stripe/confirm-subscription",
+    isAuthenticatedAny,
+    async (req, res) => {
+      try {
+        const { planId } = req.body;
+        const user = req.user;
 
-      const subscriptionId = user.stripeSubscriptionId;
+        const subscriptionId = user.stripeSubscriptionId;
 
-      if (!subscriptionId || user.subscriptionStatus !== 'incomplete') {
-        if (user.subscriptionStatus === 'active') {
-          return res.json({
-            success: true,
-            status: 'active',
-            message: 'Subscription is already active.'
-          });
+        if (!subscriptionId || user.subscriptionStatus !== "incomplete") {
+          if (user.subscriptionStatus === "active") {
+            return res.json({
+              success: true,
+              status: "active",
+              message: "Subscription is already active.",
+            });
+          }
+          return res
+            .status(400)
+            .json({ message: "No incomplete subscription found to confirm." });
         }
-        return res.status(400).json({ message: 'No incomplete subscription found to confirm.' });
+
+        // Retrieve subscription from Stripe to check its actual status
+        const subscription =
+          await stripe.subscriptions.retrieve(subscriptionId);
+
+        if (subscription.status === "active") {
+          // Determine days based on plan
+          const selectedPlan = PLANS[planId] || PLANS.monthly;
+          const days = selectedPlan.days;
+
+          const subscriptionEndDate = calculateSubscriptionEndDate(user, days);
+
+          await storage.updateUser(user.id, {
+            subscriptionStatus: "active",
+            subscriptionEndDate,
+            updatedAt: new Date(),
+          });
+
+          console.log(
+            `✅ Subscription confirmed for user ${user.id}. End date: ${subscriptionEndDate}`,
+          );
+
+          return res.json({ success: true, status: "active" });
+        }
+
+        return res.json({
+          success: false,
+          status: subscription.status,
+          message: "Subscription not active in Stripe.",
+        });
+      } catch (error) {
+        console.error("❌ Error confirming subscription:", error);
+        res.status(500).json({ message: "Failed to confirm subscription" });
       }
+    },
+  );
 
-      // Retrieve subscription from Stripe to check its actual status
-      const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  // Cancel subscription
+  app.post(
+    "/api/stripe/cancel-subscription",
+    isAuthenticatedAny,
+    async (req, res) => {
+      try {
+        const user = req.user;
 
-      if (subscription.status === "active") {
-        // Determine days based on plan
-        const selectedPlan = PLANS[planId] || PLANS.monthly;
-        const days = selectedPlan.days;
+        if (!user.stripeSubscriptionId) {
+          return res
+            .status(400)
+            .json({ message: "No active subscription found" });
+        }
 
-        const subscriptionEndDate = calculateSubscriptionEndDate(user, days);
+        const canceledSubscription = await stripe.subscriptions.cancel(
+          user.stripeSubscriptionId,
+        );
 
         await storage.updateUser(user.id, {
-          subscriptionStatus: "active",
-          subscriptionEndDate,
+          subscriptionStatus: "canceled",
           updatedAt: new Date(),
         });
 
-        console.log(`✅ Subscription confirmed for user ${user.id}. End date: ${subscriptionEndDate}`);
-
-        return res.json({ success: true, status: "active" });
+        res.json({
+          message: "Subscription canceled successfully",
+          status: canceledSubscription.status,
+        });
+      } catch (error) {
+        console.error("Error canceling subscription:", error);
+        res.status(500).json({ message: "Failed to cancel subscription" });
       }
-
-      return res.json({
-        success: false,
-        status: subscription.status,
-        message: 'Subscription not active in Stripe.'
-      });
-    } catch (error) {
-      console.error("❌ Error confirming subscription:", error);
-      res.status(500).json({ message: "Failed to confirm subscription" });
-    }
-  });
-
-  // Cancel subscription
-  app.post('/api/stripe/cancel-subscription', isAuthenticatedAny, async (req, res) => {
-    try {
-      const user = req.user;
-
-      if (!user.stripeSubscriptionId) {
-        return res.status(400).json({ message: "No active subscription found" });
-      }
-
-      const canceledSubscription = await stripe.subscriptions.cancel(
-        user.stripeSubscriptionId
-      );
-
-      await storage.updateUser(user.id, {
-        subscriptionStatus: "canceled",
-        updatedAt: new Date(),
-      });
-
-      res.json({
-        message: "Subscription canceled successfully",
-        status: canceledSubscription.status,
-      });
-    } catch (error) {
-      console.error("Error canceling subscription:", error);
-      res.status(500).json({ message: "Failed to cancel subscription" });
-    }
-  });
+    },
+  );
 
   // Get subscription status
-  app.get('/api/stripe/subscription-status', isAuthenticatedAny, async (req, res) => {
-    try {
-      const user = req.user;
+  app.get(
+    "/api/stripe/subscription-status",
+    isAuthenticatedAny,
+    async (req, res) => {
+      try {
+        const user = req.user;
 
-      if (!user.stripeSubscriptionId) {
-        return res.json({
-          hasSubscription: false,
-          status: user.subscriptionStatus,
+        if (!user.stripeSubscriptionId) {
+          return res.json({
+            hasSubscription: false,
+            status: user.subscriptionStatus,
+            plan: user.subscriptionPlan,
+            subscriptionEndDate: user.subscriptionEndDate,
+          });
+        }
+
+        const subscription = await stripe.subscriptions.retrieve(
+          user.stripeSubscriptionId,
+        );
+
+        res.json({
+          hasSubscription: true,
+          subscriptionId: subscription.id,
+          status: subscription.status,
+          currentPeriodStart: new Date(
+            subscription.current_period_start * 1000,
+          ),
+          currentPeriodEnd: new Date(subscription.current_period_end * 1000),
           plan: user.subscriptionPlan,
           subscriptionEndDate: user.subscriptionEndDate,
         });
+      } catch (error) {
+        console.error("Error fetching subscription status:", error);
+        res
+          .status(500)
+          .json({ message: "Failed to fetch subscription status" });
       }
-
-      const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
-
-      res.json({
-        hasSubscription: true,
-        subscriptionId: subscription.id,
-        status: subscription.status,
-        currentPeriodStart: new Date(subscription.current_period_start * 1000),
-        currentPeriodEnd: new Date(subscription.current_period_end * 1000),
-        plan: user.subscriptionPlan,
-        subscriptionEndDate: user.subscriptionEndDate,
-      });
-    } catch (error) {
-      console.error("Error fetching subscription status:", error);
-      res.status(500).json({ message: "Failed to fetch subscription status" });
-    }
-  });
+    },
+  );
 
   // Admin routes
-  app.get('/api/admin/stats', isAuthenticated, async (req: any, res) => {
+  app.get("/api/admin/stats", isAuthenticated, async (req: any, res) => {
     try {
       const user = await storage.getUser(req.user.claims.sub);
-      if (!user || user.role !== 'admin') {
+      if (!user || user.role !== "admin") {
         return res.status(403).json({ message: "Admin access required" });
       }
 
@@ -760,7 +862,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         companiesWithLayoffs: 12,
         totalLayoffs: 156,
         layoffsThisMonth: 8,
-        systemHealth: "Good"
+        systemHealth: "Good",
       };
 
       res.json(stats);
@@ -770,10 +872,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/admin/users', isAuthenticated, async (req: any, res) => {
+  app.get("/api/admin/users", isAuthenticated, async (req: any, res) => {
     try {
       const user = await storage.getUser(req.user.claims.sub);
-      if (!user || user.role !== 'admin') {
+      if (!user || user.role !== "admin") {
         return res.status(403).json({ message: "Admin access required" });
       }
 
@@ -785,10 +887,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/admin/companies', isAuthenticated, async (req: any, res) => {
+  app.get("/api/admin/companies", isAuthenticated, async (req: any, res) => {
     try {
       const user = await storage.getUser(req.user.claims.sub);
-      if (!user || user.role !== 'admin') {
+      if (!user || user.role !== "admin") {
         return res.status(403).json({ message: "Admin access required" });
       }
 
@@ -800,10 +902,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/admin/layoffs', isAuthenticated, async (req: any, res) => {
+  app.get("/api/admin/layoffs", isAuthenticated, async (req: any, res) => {
     try {
       const user = await storage.getUser(req.user.claims.sub);
-      if (!user || user.role !== 'admin') {
+      if (!user || user.role !== "admin") {
         return res.status(403).json({ message: "Admin access required" });
       }
 
@@ -823,7 +925,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ message: "Data integration completed successfully" });
     } catch (error: any) {
       console.error("Data integration failed:", error);
-      res.status(500).json({ message: "Data integration failed", error: error?.message });
+      res
+        .status(500)
+        .json({ message: "Data integration failed", error: error?.message });
     }
   });
 
@@ -833,42 +937,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
       sources: [
         {
           name: "layoffs.fyi",
-          description: "Tech industry layoffs tracker with 759K+ employees from 2,813 companies since 2020",
+          description:
+            "Tech industry layoffs tracker with 759K+ employees from 2,813 companies since 2020",
           coverage: "Technology sector focused",
           dataPoints: "759,382 employees affected",
-          lastUpdate: "Real-time"
+          lastUpdate: "Real-time",
         },
         {
           name: "warntracker.com",
-          description: "WARN Act layoff notices tracker with comprehensive coverage since 1988",
+          description:
+            "WARN Act layoff notices tracker with comprehensive coverage since 1988",
           coverage: "All industries, all states",
           dataPoints: "7.1M+ employees, 36,237 companies",
-          lastUpdate: "Government filings"
+          lastUpdate: "Government filings",
         },
         {
           name: "layoffdata.com",
-          description: "Government WARN Act data aggregator with detailed layoff information",
+          description:
+            "Government WARN Act data aggregator with detailed layoff information",
           coverage: "49 states, all industries",
           dataPoints: "78K+ layoff notices, 8.5M+ workers",
-          lastUpdate: "State government data"
-        }
+          lastUpdate: "State government data",
+        },
       ],
       totalCoverage: {
         employees: "15.5M+",
         companies: "42K+",
-        timespan: "Since 1988"
-      }
+        timespan: "Since 1988",
+      },
     });
   });
 
   // Risk Analysis API
   app.post("/api/risk-analysis", async (req, res) => {
     try {
-      const { jobTitle, companyName, yearsExperience, currentSkills, industry } = req.body;
+      const {
+        jobTitle,
+        companyName,
+        yearsExperience,
+        currentSkills,
+        industry,
+      } = req.body;
 
       if (!jobTitle || !companyName) {
         return res.status(400).json({
-          message: "Job title and company name are required"
+          message: "Job title and company name are required",
         });
       }
 
@@ -877,7 +990,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         companyName,
         yearsExperience,
         currentSkills,
-        industry
+        industry,
       });
 
       res.json(analysis);
@@ -885,7 +998,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error in risk analysis:", error);
       res.status(500).json({
         message: "Failed to analyze job security risk",
-        error: error instanceof Error ? error.message : "Unknown error"
+        error: error instanceof Error ? error.message : "Unknown error",
       });
     }
   });
@@ -903,7 +1016,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const user = await storage.getUser(userId);
-      if (!user || user.role !== 'admin') {
+      if (!user || user.role !== "admin") {
         return res.status(403).json({ message: "Admin access required" });
       }
 
@@ -916,7 +1029,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   };
 
   // Admin dashboard stats
-  app.get('/api/admin/stats', requireAdmin, async (req, res) => {
+  app.get("/api/admin/stats", requireAdmin, async (req, res) => {
     try {
       const totalCompanies = await storage.getCompanyCount();
       const totalUsers = await storage.getUserCount();
@@ -932,10 +1045,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         newUsersThisMonth: 23,
         newLayoffsThisMonth: 8,
         recentActivity: [
-          { type: 'layoff', description: 'New layoff reported at Tech Corp', timestamp: '2 hours ago' },
-          { type: 'company', description: 'Added new company: StartupXYZ', timestamp: '1 day ago' },
-          { type: 'user', description: 'New user registration', timestamp: '2 days ago' },
-        ]
+          {
+            type: "layoff",
+            description: "New layoff reported at Tech Corp",
+            timestamp: "2 hours ago",
+          },
+          {
+            type: "company",
+            description: "Added new company: StartupXYZ",
+            timestamp: "1 day ago",
+          },
+          {
+            type: "user",
+            description: "New user registration",
+            timestamp: "2 days ago",
+          },
+        ],
       });
     } catch (error) {
       console.error("Admin stats error:", error);
@@ -944,7 +1069,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin company management
-  app.get('/api/admin/companies', requireAdmin, async (req, res) => {
+  app.get("/api/admin/companies", requireAdmin, async (req, res) => {
     try {
       const companies = await storage.getAllCompanies();
       res.json(companies);
@@ -954,7 +1079,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/admin/companies', requireAdmin, async (req, res) => {
+  app.post("/api/admin/companies", requireAdmin, async (req, res) => {
     try {
       const company = await storage.createCompany(req.body);
       res.json(company);
@@ -964,7 +1089,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/admin/companies/:id', requireAdmin, async (req, res) => {
+  app.put("/api/admin/companies/:id", requireAdmin, async (req, res) => {
     try {
       const company = await storage.updateCompany(req.params.id, req.body);
       res.json(company);
@@ -974,7 +1099,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete('/api/admin/companies/:id', requireAdmin, async (req, res) => {
+  app.delete("/api/admin/companies/:id", requireAdmin, async (req, res) => {
     try {
       await storage.deleteCompany(req.params.id);
       res.json({ message: "Company deleted successfully" });
@@ -985,7 +1110,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin layoff management
-  app.get('/api/admin/layoffs', requireAdmin, async (req, res) => {
+  app.get("/api/admin/layoffs", requireAdmin, async (req, res) => {
     try {
       const layoffs = await storage.getAllLayoffs();
       res.json(layoffs);
@@ -995,7 +1120,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/admin/layoffs', requireAdmin, async (req, res) => {
+  app.post("/api/admin/layoffs", requireAdmin, async (req, res) => {
     try {
       const layoff = await storage.createLayoffEvent(req.body);
       res.json(layoff);
@@ -1006,7 +1131,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin user management
-  app.get('/api/admin/users', requireAdmin, async (req, res) => {
+  app.get("/api/admin/users", requireAdmin, async (req, res) => {
     try {
       const users = await storage.getAllUsers();
       res.json(users);
@@ -1016,7 +1141,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
+  app.put("/api/admin/users/:id", requireAdmin, async (req, res) => {
     try {
       const user = await storage.updateUserProfile(req.params.id, req.body);
       res.json(user);
@@ -1027,7 +1152,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Development endpoint to promote current user to admin (remove in production)
-  app.post('/api/promote-to-admin', async (req, res) => {
+  app.post("/api/promote-to-admin", async (req, res) => {
     try {
       if (!req.isAuthenticated()) {
         return res.status(401).json({ message: "Unauthorized" });
@@ -1038,7 +1163,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "User ID not found" });
       }
 
-      const user = await storage.updateUserProfile(userId, { role: 'admin' });
+      const user = await storage.updateUserProfile(userId, { role: "admin" });
       res.json({ message: "User promoted to admin successfully", user });
     } catch (error) {
       console.error("Promote to admin error:", error);
@@ -1058,10 +1183,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // For now, return mock data - in production, this would scrape the job page
       // You could integrate with services like ScrapingBee, Puppeteer, or Cheerio
       const mockJobData = {
-        title: "Senior Software Engineer",
+        title: "Software Engineer",
         company: "TechCorp Inc.",
         location: "San Francisco, CA",
-        description: `We are seeking a Senior Software Engineer to join our growing team. You will be responsible for developing scalable web applications using React, Node.js, and AWS services.
+        description: `We are seeking a Software Engineer to join our growing team. You will be responsible for developing scalable web applications using React, Node.js, and AWS services.
 
 Key Responsibilities:
 • Design and implement new features for our web platform
@@ -1078,16 +1203,16 @@ Requirements:
           "5+ years of experience in software development",
           "Strong proficiency in JavaScript, React, and Node.js",
           "Experience with AWS services and cloud architecture",
-          "Bachelor's degree in Computer Science or related field"
+          "Bachelor's degree in Computer Science or related field",
         ],
         benefits: [
           "Competitive salary and equity package",
           "Comprehensive health insurance",
           "Flexible work arrangements",
-          "Professional development budget"
+          "Professional development budget",
         ],
         salary: "$120,000 - $160,000",
-        type: "Full-time"
+        type: "Full-time",
       };
 
       res.json(mockJobData);
@@ -1101,11 +1226,11 @@ Requirements:
   // Comprehensive resume parsing function
   function parseResumeComprehensively(resumeText: string): ParsedResumeData {
     const data: ParsedResumeData = {
-      name: '',
-      email: '',
-      phone: '',
-      profession: '',
-      summary: '',
+      name: "",
+      email: "",
+      phone: "",
+      profession: "",
+      summary: "",
       experience: [],
       skills: [],
       education: [],
@@ -1113,34 +1238,44 @@ Requirements:
       achievements: [],
       projects: [],
       languages: [],
-      location: '',
-      linkedin: '',
-      github: '',
-      website: ''
+      location: "",
+      linkedin: "",
+      github: "",
+      website: "",
     };
 
-    const lines = resumeText.split('\n').filter(line => line.trim());
+    const lines = resumeText.split("\n").filter((line) => line.trim());
     const text = resumeText.toLowerCase();
 
     // Extract name (using existing logic but enhanced)
-    let extractedName = '';
+    let extractedName = "";
     for (let i = 0; i < Math.min(8, lines.length); i++) {
       const line = lines[i].trim();
-      const cleanLine = line.replace(/[^\w\s]/g, '').trim();
+      const cleanLine = line.replace(/[^\w\s]/g, "").trim();
 
       if (cleanLine.length < 2 || cleanLine.length > 50) continue;
 
       // Skip lines that look like headers, emails, or common resume elements
-      if (/^(resume|cv|curriculum|contact|objective|summary|education|experience|skills|projects|achievements|certifications)/i.test(cleanLine) ||
+      if (
+        /^(resume|cv|curriculum|contact|objective|summary|education|experience|skills|projects|achievements|certifications)/i.test(
+          cleanLine,
+        ) ||
         /@/.test(line) ||
         /\d{3}/.test(line) ||
-        /^\d+/.test(cleanLine)) {
+        /^\d+/.test(cleanLine)
+      ) {
         continue;
       }
 
       // Look for properly formatted names
-      const nameMatch = cleanLine.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})$/);
-      if (nameMatch && nameMatch[1].split(' ').length >= 2 && nameMatch[1].split(' ').length <= 4) {
+      const nameMatch = cleanLine.match(
+        /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})$/,
+      );
+      if (
+        nameMatch &&
+        nameMatch[1].split(" ").length >= 2 &&
+        nameMatch[1].split(" ").length <= 4
+      ) {
         extractedName = nameMatch[1].trim();
         break;
       }
@@ -1148,28 +1283,39 @@ Requirements:
     data.name = extractedName || "Your Name";
 
     // Extract contact information
-    data.email = resumeText.match(/[\w\.-]+@[\w\.-]+\.\w+/)?.[0] || '';
-    data.phone = resumeText.match(/[\+]?[\d\s\-\(\)]{10,}/)?.[0]?.replace(/\s+/g, ' ').trim() || '';
+    data.email = resumeText.match(/[\w\.-]+@[\w\.-]+\.\w+/)?.[0] || "";
+    data.phone =
+      resumeText
+        .match(/[\+]?[\d\s\-\(\)]{10,}/)?.[0]
+        ?.replace(/\s+/g, " ")
+        .trim() || "";
 
     // Extract LinkedIn
-    const linkedinMatch = resumeText.match(/(?:linkedin\.com\/in\/|linkedin\/in\/)([^\s\n,]+)/i);
-    data.linkedin = linkedinMatch ? `https://linkedin.com/in/${linkedinMatch[1]}` : '';
+    const linkedinMatch = resumeText.match(
+      /(?:linkedin\.com\/in\/|linkedin\/in\/)([^\s\n,]+)/i,
+    );
+    data.linkedin = linkedinMatch
+      ? `https://linkedin.com/in/${linkedinMatch[1]}`
+      : "";
 
     // Extract GitHub
     const githubMatch = resumeText.match(/(?:github\.com\/)([^\s\n,]+)/i);
-    data.github = githubMatch ? `https://github.com/${githubMatch[1]}` : '';
+    data.github = githubMatch ? `https://github.com/${githubMatch[1]}` : "";
 
     // Extract website
     const websiteMatch = resumeText.match(/https?:\/\/[^\s\n]+/g);
     if (websiteMatch) {
-      data.website = websiteMatch.find(url => !url.includes('linkedin') && !url.includes('github')) || '';
+      data.website =
+        websiteMatch.find(
+          (url) => !url.includes("linkedin") && !url.includes("github"),
+        ) || "";
     }
 
     // Extract location
     const locationPatterns = [
       /(?:location|address|city)[\s\w]*:?\s*([^,\n]+)/i,
       /([A-Z][a-z]+,\s*[A-Z]{2})/,
-      /([A-Z][a-z]+\s*,\s*[A-Z][a-z]+)/
+      /([A-Z][a-z]+\s*,\s*[A-Z][a-z]+)/,
     ];
     for (const pattern of locationPatterns) {
       const match = resumeText.match(pattern);
@@ -1180,118 +1326,183 @@ Requirements:
     }
 
     // Extract profession/title
-    const professionKeywords = ['engineer', 'developer', 'analyst', 'manager', 'consultant', 'designer', 'architect', 'specialist', 'director', 'lead'];
-    const professionPattern = new RegExp(`((?:senior\\s+|junior\\s+|lead\\s+)?(?:${professionKeywords.join('|')})(?:\\s+\\w+)*)`, 'i');
+    const professionKeywords = [
+      "engineer",
+      "developer",
+      "analyst",
+      "manager",
+      "consultant",
+      "designer",
+      "architect",
+      "specialist",
+      "director",
+      "lead",
+    ];
+    const professionPattern = new RegExp(
+      `((?:senior\\s+|junior\\s+|lead\\s+)?(?:${professionKeywords.join("|")})(?:\\s+\\w+)*)`,
+      "i",
+    );
     const professionMatch = resumeText.match(professionPattern);
-    data.profession = professionMatch ? professionMatch[1] : '';
+    data.profession = professionMatch ? professionMatch[1] : "";
 
     // Extract summary/objective
     const summaryPatterns = [
       /(?:summary|objective|profile|about)[\s\w]*:?\s*([^.\n]+(?:\.[^.\n]+)*)/i,
-      /(?:professional\s+summary)[\s\w]*:?\s*([^.\n]+(?:\.[^.\n]+)*)/i
+      /(?:professional\s+summary)[\s\w]*:?\s*([^.\n]+(?:\.[^.\n]+)*)/i,
     ];
     for (const pattern of summaryPatterns) {
       const match = resumeText.match(pattern);
       if (match) {
-        data.summary = match[1].trim().replace(/\s+/g, ' ');
+        data.summary = match[1].trim().replace(/\s+/g, " ");
         break;
       }
     }
 
     // Extract skills
-    const skillsPattern = /(?:skills|technologies|tools|programming)[\s\w]*:?\s*([^.\n]+)/i;
+    const skillsPattern =
+      /(?:skills|technologies|tools|programming)[\s\w]*:?\s*([^.\n]+)/i;
     const skillsMatch = resumeText.match(skillsPattern);
     if (skillsMatch) {
-      data.skills = skillsMatch[1].split(/[,;|]/).map(skill => skill.trim()).filter(skill => skill.length > 0);
+      data.skills = skillsMatch[1]
+        .split(/[,;|]/)
+        .map((skill) => skill.trim())
+        .filter((skill) => skill.length > 0);
     }
 
     // Extract experience
-    const experienceLines = lines.filter(line =>
-      /\d{4}/.test(line) &&
-      (/present|current|now|\d{4}\s*-\s*\d{4}|\d{4}\s*-\s*present/i.test(line))
+    const experienceLines = lines.filter(
+      (line) =>
+        /\d{4}/.test(line) &&
+        /present|current|now|\d{4}\s*-\s*\d{4}|\d{4}\s*-\s*present/i.test(line),
     );
 
-    experienceLines.forEach(line => {
-      const titleMatch = line.match(/^([^,\n]+?)(?:\s*[-–]\s*|\s*,\s*)([^,\n]+?)(?:\s*[-–]\s*|\s*,\s*)/);
+    experienceLines.forEach((line) => {
+      const titleMatch = line.match(
+        /^([^,\n]+?)(?:\s*[-–]\s*|\s*,\s*)([^,\n]+?)(?:\s*[-–]\s*|\s*,\s*)/,
+      );
       if (titleMatch) {
-        const durationMatch = line.match(/(\d{4}\s*[-–]\s*(?:\d{4}|present|current))/i);
+        const durationMatch = line.match(
+          /(\d{4}\s*[-–]\s*(?:\d{4}|present|current))/i,
+        );
         data.experience.push({
           title: titleMatch[1].trim(),
           company: titleMatch[2].trim(),
-          duration: durationMatch ? durationMatch[1] : '',
-          responsibilities: []
+          duration: durationMatch ? durationMatch[1] : "",
+          responsibilities: [],
         });
       }
     });
 
     // Extract education
-    const educationKeywords = ['bachelor', 'master', 'phd', 'degree', 'university', 'college', 'institute'];
-    const educationLines = lines.filter(line =>
-      educationKeywords.some(keyword => line.toLowerCase().includes(keyword))
+    const educationKeywords = [
+      "bachelor",
+      "master",
+      "phd",
+      "degree",
+      "university",
+      "college",
+      "institute",
+    ];
+    const educationLines = lines.filter((line) =>
+      educationKeywords.some((keyword) => line.toLowerCase().includes(keyword)),
     );
 
-    educationLines.forEach(line => {
-      const degreeMatch = line.match(/(bachelor[^,]*|master[^,]*|phd[^,]*|b\.?[a-z]\.|m\.?[a-z]\.|ph\.?d\.?)[^,]*/i);
-      const institutionMatch = line.match(/(?:university|college|institute)\s+[^,\n]*/i);
+    educationLines.forEach((line) => {
+      const degreeMatch = line.match(
+        /(bachelor[^,]*|master[^,]*|phd[^,]*|b\.?[a-z]\.|m\.?[a-z]\.|ph\.?d\.?)[^,]*/i,
+      );
+      const institutionMatch = line.match(
+        /(?:university|college|institute)\s+[^,\n]*/i,
+      );
       const yearMatch = line.match(/\d{4}/);
 
       if (degreeMatch || institutionMatch) {
         data.education.push({
-          degree: degreeMatch ? degreeMatch[0].trim() : '',
-          institution: institutionMatch ? institutionMatch[0].trim() : '',
-          year: yearMatch ? yearMatch[0] : ''
+          degree: degreeMatch ? degreeMatch[0].trim() : "",
+          institution: institutionMatch ? institutionMatch[0].trim() : "",
+          year: yearMatch ? yearMatch[0] : "",
         });
       }
     });
 
     // Extract certifications
-    const certificationLines = lines.filter(line =>
-      /(?:certification|certified|certificate)/i.test(line)
+    const certificationLines = lines.filter((line) =>
+      /(?:certification|certified|certificate)/i.test(line),
     );
 
-    certificationLines.forEach(line => {
-      const certMatch = line.match(/([^,\n]+)(?:certified|certification|certificate)/i);
+    certificationLines.forEach((line) => {
+      const certMatch = line.match(
+        /([^,\n]+)(?:certified|certification|certificate)/i,
+      );
       if (certMatch) {
         data.certifications.push({
           name: certMatch[1].trim(),
-          issuer: '',
-          year: line.match(/\d{4}/)?.[0] || ''
+          issuer: "",
+          year: line.match(/\d{4}/)?.[0] || "",
         });
       }
     });
 
     // Extract achievements
-    const achievementKeywords = ['achievement', 'award', 'recognition', 'honor', 'accomplishment'];
-    const achievementLines = lines.filter(line =>
-      achievementKeywords.some(keyword => line.toLowerCase().includes(keyword))
+    const achievementKeywords = [
+      "achievement",
+      "award",
+      "recognition",
+      "honor",
+      "accomplishment",
+    ];
+    const achievementLines = lines.filter((line) =>
+      achievementKeywords.some((keyword) =>
+        line.toLowerCase().includes(keyword),
+      ),
     );
-    data.achievements = achievementLines.map(line => line.trim());
+    data.achievements = achievementLines.map((line) => line.trim());
 
     // Extract projects
-    const projectLines = lines.filter(line =>
-      /project/i.test(line) && !line.toLowerCase().includes('project manager')
+    const projectLines = lines.filter(
+      (line) =>
+        /project/i.test(line) &&
+        !line.toLowerCase().includes("project manager"),
     );
 
-    projectLines.forEach(line => {
+    projectLines.forEach((line) => {
       const projectMatch = line.match(/([^,\n]+project[^,\n]*)/i);
       if (projectMatch) {
         data.projects.push({
           name: projectMatch[1].trim(),
-          description: '',
-          technologies: []
+          description: "",
+          technologies: [],
         });
       }
     });
 
     // Extract languages
-    const languageKeywords = ['languages', 'language', 'fluent', 'native', 'bilingual'];
-    const languageLines = lines.filter(line =>
-      languageKeywords.some(keyword => line.toLowerCase().includes(keyword))
+    const languageKeywords = [
+      "languages",
+      "language",
+      "fluent",
+      "native",
+      "bilingual",
+    ];
+    const languageLines = lines.filter((line) =>
+      languageKeywords.some((keyword) => line.toLowerCase().includes(keyword)),
     );
 
-    languageLines.forEach(line => {
-      const commonLanguages = ['english', 'spanish', 'french', 'german', 'chinese', 'japanese', 'korean', 'arabic', 'hindi', 'urdu', 'punjabi'];
-      commonLanguages.forEach(lang => {
+    languageLines.forEach((line) => {
+      const commonLanguages = [
+        "english",
+        "spanish",
+        "french",
+        "german",
+        "chinese",
+        "japanese",
+        "korean",
+        "arabic",
+        "hindi",
+        "urdu",
+        "punjabi",
+      ];
+      commonLanguages.forEach((lang) => {
         if (line.toLowerCase().includes(lang)) {
           data.languages.push(lang.charAt(0).toUpperCase() + lang.slice(1));
         }
@@ -1309,33 +1520,46 @@ Requirements:
     data.email = emailMatch ? emailMatch[0] : "";
 
     // Extract phone number
-    const phoneMatch = resumeText.match(/(\+\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
+    const phoneMatch = resumeText.match(
+      /(\+\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/,
+    );
     data.phone = phoneMatch ? phoneMatch[0] : "";
 
     // Enhanced name extraction - look for patterns that indicate names
-    const lines = resumeText.split('\n').filter(line => line.trim().length > 0);
+    const lines = resumeText
+      .split("\n")
+      .filter((line) => line.trim().length > 0);
     let extractedName = "";
 
     console.log("Lines for name extraction:", lines.slice(0, 6)); // Debug log
 
     // Try multiple patterns for name extraction
-    for (const line of lines.slice(0, 8)) { // Check first 8 lines to be thorough
+    for (const line of lines.slice(0, 8)) {
+      // Check first 8 lines to be thorough
       const cleanLine = line.trim();
 
       // Skip lines with email, phone, or obvious non-name content
-      if (cleanLine.includes('@') ||
+      if (
+        cleanLine.includes("@") ||
         cleanLine.match(/\d{3}/) ||
-        cleanLine.toLowerCase().includes('resume') ||
-        cleanLine.toLowerCase().includes('cv') ||
-        cleanLine.toLowerCase().includes('curriculum') ||
+        cleanLine.toLowerCase().includes("resume") ||
+        cleanLine.toLowerCase().includes("cv") ||
+        cleanLine.toLowerCase().includes("curriculum") ||
         cleanLine.length < 3 ||
-        cleanLine.length > 50) {
+        cleanLine.length > 50
+      ) {
         continue;
       }
 
       // Primary pattern: Standard capitalized names (First Last, First Middle Last)
-      const standardNameMatch = cleanLine.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})$/);
-      if (standardNameMatch && standardNameMatch[1].split(' ').length >= 2 && standardNameMatch[1].split(' ').length <= 4) {
+      const standardNameMatch = cleanLine.match(
+        /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})$/,
+      );
+      if (
+        standardNameMatch &&
+        standardNameMatch[1].split(" ").length >= 2 &&
+        standardNameMatch[1].split(" ").length <= 4
+      ) {
         extractedName = standardNameMatch[1].trim();
         console.log("Found name with standard pattern:", extractedName);
         break;
@@ -1350,13 +1574,21 @@ Requirements:
       }
 
       // More flexible pattern for names that might have different cases or special characters
-      const flexibleNameMatch = cleanLine.match(/^([A-Za-z]+(?:\s+[A-Za-z]+){1,3})$/);
-      if (flexibleNameMatch && !extractedName && flexibleNameMatch[1].split(' ').length >= 2) {
-        const words = flexibleNameMatch[1].split(' ');
+      const flexibleNameMatch = cleanLine.match(
+        /^([A-Za-z]+(?:\s+[A-Za-z]+){1,3})$/,
+      );
+      if (
+        flexibleNameMatch &&
+        !extractedName &&
+        flexibleNameMatch[1].split(" ").length >= 2
+      ) {
+        const words = flexibleNameMatch[1].split(" ");
         // Ensure it looks like a name (not all lowercase, not all uppercase)
-        if (words.every(word => word.length > 1) &&
-          !words.every(word => word === word.toLowerCase()) &&
-          !words.every(word => word === word.toUpperCase())) {
+        if (
+          words.every((word) => word.length > 1) &&
+          !words.every((word) => word === word.toLowerCase()) &&
+          !words.every((word) => word === word.toUpperCase())
+        ) {
           extractedName = flexibleNameMatch[1].trim();
           console.log("Found name with flexible pattern:", extractedName);
           break;
@@ -1364,9 +1596,18 @@ Requirements:
       }
 
       // Last resort: Use any line that looks like a name (proper case with 2-4 words)
-      if (!extractedName && cleanLine.split(' ').length >= 2 && cleanLine.split(' ').length <= 4) {
-        const words = cleanLine.split(' ');
-        if (words.every(word => word[0] && word[0].toUpperCase() === word[0] && word.length > 1)) {
+      if (
+        !extractedName &&
+        cleanLine.split(" ").length >= 2 &&
+        cleanLine.split(" ").length <= 4
+      ) {
+        const words = cleanLine.split(" ");
+        if (
+          words.every(
+            (word) =>
+              word[0] && word[0].toUpperCase() === word[0] && word.length > 1,
+          )
+        ) {
           extractedName = cleanLine;
           console.log("Found name with fallback pattern:", extractedName);
           break;
@@ -1378,45 +1619,65 @@ Requirements:
     data.name = extractedName || "Your Name";
 
     // Extract education
-    const educationKeywords = /(?:bachelor|master|phd|degree|university|college|graduated|education)/i;
-    const educationLine = lines.find(line => educationKeywords.test(line));
+    const educationKeywords =
+      /(?:bachelor|master|phd|degree|university|college|graduated|education)/i;
+    const educationLine = lines.find((line) => educationKeywords.test(line));
     if (educationLine) {
-      const degreeMatch = educationLine.match(/(bachelor[^,]*|master[^,]*|phd[^,]*|b\.?[a-z]\.|m\.?[a-z]\.|ph\.?d\.?)[^,]*/i);
+      const degreeMatch = educationLine.match(
+        /(bachelor[^,]*|master[^,]*|phd[^,]*|b\.?[a-z]\.|m\.?[a-z]\.|ph\.?d\.?)[^,]*/i,
+      );
       data.degree = degreeMatch ? degreeMatch[0].trim() : "Bachelor's degree";
 
-      const universityMatch = educationLine.match(/(?:university|college|institute)\s+[^,\n]*/i);
-      data.university = universityMatch ? universityMatch[0].trim() : "State University";
+      const universityMatch = educationLine.match(
+        /(?:university|college|institute)\s+[^,\n]*/i,
+      );
+      data.university = universityMatch
+        ? universityMatch[0].trim()
+        : "State University";
     }
 
     // Extract work experience
-    const experienceKeywords = /(\d+)[\+\-\s]*(?:years?|yrs?)\s*(?:of\s*)?(?:experience|exp)/i;
+    const experienceKeywords =
+      /(\d+)[\+\-\s]*(?:years?|yrs?)\s*(?:of\s*)?(?:experience|exp)/i;
     const expMatch = resumeText.match(experienceKeywords);
     data.experience = expMatch ? expMatch[1] + " years" : "3 years";
 
     // Extract current/recent company
-    const companyKeywords = /(?:current|work|employed|company)[\s\w]*:\s*([^,\n]+)/i;
+    const companyKeywords =
+      /(?:current|work|employed|company)[\s\w]*:\s*([^,\n]+)/i;
     const companyMatch = resumeText.match(companyKeywords);
-    data.currentCompany = companyMatch ? companyMatch[1].trim() : "Tech Solutions Inc.";
+    data.currentCompany = companyMatch
+      ? companyMatch[1].trim()
+      : "Tech Solutions Inc.";
 
     // Extract profession/role
-    const roleKeywords = /(?:software engineer|developer|analyst|manager|consultant|designer|architect|specialist)/i;
+    const roleKeywords =
+      /(?:software engineer|developer|analyst|manager|consultant|designer|architect|specialist)/i;
     const roleMatch = resumeText.match(roleKeywords);
     data.profession = roleMatch ? roleMatch[0] : "Software Development";
 
     // Extract skills
-    const skillsKeywords = /(?:skills|technologies|tools|programming)[\s\w]*:([^.\n]+)/i;
+    const skillsKeywords =
+      /(?:skills|technologies|tools|programming)[\s\w]*:([^.\n]+)/i;
     const skillsMatch = resumeText.match(skillsKeywords);
-    data.skills = skillsMatch ? skillsMatch[1].trim() : "JavaScript, React, Node.js, Python";
+    data.skills = skillsMatch
+      ? skillsMatch[1].trim()
+      : "JavaScript, React, Node.js, Python";
 
     // Extract certifications
-    const certKeywords = /(?:certification|certified|certificate)[\s\w]*:?([^.\n]+)/i;
+    const certKeywords =
+      /(?:certification|certified|certificate)[\s\w]*:?([^.\n]+)/i;
     const certMatch = resumeText.match(certKeywords);
-    data.certifications = certMatch ? certMatch[1].trim() : "AWS Cloud Practitioner";
+    data.certifications = certMatch
+      ? certMatch[1].trim()
+      : "AWS Cloud Practitioner";
 
     // Extract location
     const locationKeywords = /(?:location|address|city)[\s\w]*:?\s*([^,\n]+)/i;
     const locationMatch = resumeText.match(locationKeywords);
-    data.location = locationMatch ? locationMatch[1].trim() : "San Francisco, CA";
+    data.location = locationMatch
+      ? locationMatch[1].trim()
+      : "San Francisco, CA";
 
     // Infer work arrangement (look for remote/hybrid keywords)
     if (/remote/i.test(resumeText)) {
@@ -1428,15 +1689,23 @@ Requirements:
     }
 
     // Extract responsibilities/duties
-    const responsibilityKeywords = /(?:responsible for|responsibilities|duties)[\s\w]*:?([^.\n]+)/i;
+    const responsibilityKeywords =
+      /(?:responsible for|responsibilities|duties)[\s\w]*:?([^.\n]+)/i;
     const respMatch = resumeText.match(responsibilityKeywords);
-    data.currentRole = respMatch ? respMatch[1].trim() : "developing software solutions";
-    data.responsibilities = respMatch ? respMatch[1].trim() : "managing development projects and coordinating with stakeholders";
+    data.currentRole = respMatch
+      ? respMatch[1].trim()
+      : "developing software solutions";
+    data.responsibilities = respMatch
+      ? respMatch[1].trim()
+      : "managing development projects and coordinating with stakeholders";
 
     // Extract tools/methods
-    const toolsKeywords = /(?:tools|software|platforms|systems)[\s\w]*:?([^.\n]+)/i;
+    const toolsKeywords =
+      /(?:tools|software|platforms|systems)[\s\w]*:?([^.\n]+)/i;
     const toolsMatch = resumeText.match(toolsKeywords);
-    data.tools = toolsMatch ? toolsMatch[1].trim() : "Agile methodologies, Git, and project management tools";
+    data.tools = toolsMatch
+      ? toolsMatch[1].trim()
+      : "Agile methodologies, Git, and project management tools";
 
     return data;
   }
@@ -1481,7 +1750,7 @@ Requirements:
   //           const textPatterns = [
   //             // Look for common text between stream markers
   //             /stream\s*([\s\S]*?)\s*endstream/gi,
-  //             // Look for readable text sequences  
+  //             // Look for readable text sequences
   //             /[A-Za-z]{3,}[\s\S]*?[A-Za-z]{3,}/g,
   //             // Look for email patterns
   //             /[\w\.-]+@[\w\.-]+\.\w+/g,
@@ -1559,42 +1828,50 @@ Requirements:
 
   // AI Interview Question Generation endpoint
 
-
-
   app.post("/api/generate-interview-questions", async (req, res) => {
     try {
-      const { jobDescription, jobTitle, interviewType, interviewerRole, id } = req.body;
+      const { jobDescription, jobTitle, interviewType, interviewerRole, id } =
+        req.body;
 
       console.log("Received job data with interviewer role:", interviewerRole);
 
       if (!jobDescription && !jobTitle) {
-        return res.status(400).json({ error: "Job description or job title is required" });
+        return res
+          .status(400)
+          .json({ error: "Job description or job title is required" });
       }
 
       // Validate user subscription/trial and credits
       const user = await GetUserScscriptionTrialValidation(id);
-      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const anthropic = new Anthropic({
+        apiKey: process.env.ANTHROPIC_API_KEY,
+      });
 
       if (!user) {
-        return res.status(400).json({ error: 'Subscription has expired, or you have not subscribed.' });
+        return res
+          .status(400)
+          .json({
+            error: "Subscription has expired, or you have not subscribed.",
+          });
       }
 
       // Helper to make the interviewer's role more readable for the AI prompt
-      const friendlyInterviewerRole = {
-        hiring_manager: 'Hiring Manager',
-        hr_recruiter: 'HR / Recruiter',
-        technical_lead: 'Technical Lead / Senior Engineer',
-        team_member: 'Peer / Team Member',
-        executive: 'Executive / C-Level'
-      }[interviewerRole] || 'Hiring Manager'; // Default for safety
+      const friendlyInterviewerRole =
+        {
+          hiring_manager: "Hiring Manager",
+          hr_recruiter: "HR / Recruiter",
+          technical_lead: "Technical Lead / Senior Engineer",
+          team_member: "Peer / Team Member",
+          executive: "Executive / C-Level",
+        }[interviewerRole] || "Hiring Manager"; // Default for safety
 
       // --- MODIFICATION START: Updated prompt to include 'goodImpression' for questions to ask interviewer ---
       const prompt = `
 You are an expert career coach and interview preparation AI. Your task is to analyze the following job information and generate a structured JSON object.
 
 **Job Information:**
-- Job Title: ${jobTitle || 'Not specified'}
-- Job Description: ${jobDescription || 'Not specified'}
+- Job Title: ${jobTitle || "Not specified"}
+- Job Description: ${jobDescription || "Not specified"}
 - Requested Interview Type: ${interviewType}
 - Interviewing With: ${friendlyInterviewerRole}
 
@@ -1639,7 +1916,7 @@ You MUST respond with ONLY a single valid JSON object. Do not include any text, 
         model: "claude-sonnet-4-20250514",
         max_tokens: 2000,
         temperature: 0.1, // Low temperature for factual, deterministic output
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: "user", content: prompt }],
       });
 
       // Extract and parse the JSON response from the AI
@@ -1647,9 +1924,14 @@ You MUST respond with ONLY a single valid JSON object. Do not include any text, 
       const jobAnalysis = JSON.parse(rawJson);
 
       // Post-process the questions to add unique IDs for the frontend state management
-      jobAnalysis.questions = jobAnalysis.questions.map(q => ({
+      jobAnalysis.questions = jobAnalysis.questions.map((q) => ({
         ...q,
-        id: 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => (c === 'x' ? (Math.random() * 16 | 0) : ((Math.random() * 16 | 0) & 0x3 | 0x8)).toString(16)),
+        id: "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) =>
+          (c === "x"
+            ? (Math.random() * 16) | 0
+            : (((Math.random() * 16) | 0) & 0x3) | 0x8
+          ).toString(16),
+        ),
         isAnswered: false,
       }));
 
@@ -1658,11 +1940,15 @@ You MUST respond with ONLY a single valid JSON object. Do not include any text, 
 
       // Send the complete analysis back to the client
       res.json(jobAnalysis);
-
     } catch (error) {
       console.error("Error generating interview questions:", error);
       // Provide a more generic error message to the client for security
-      res.status(500).json({ error: "Failed to generate interview questions. Please try again later." });
+      res
+        .status(500)
+        .json({
+          error:
+            "Failed to generate interview questions. Please try again later.",
+        });
     }
   });
 
@@ -1671,11 +1957,16 @@ You MUST respond with ONLY a single valid JSON object. Do not include any text, 
       const { originalLetter, instructions, id } = req.body;
 
       if (!originalLetter || !instructions || !id) {
-        return res.status(400).json({ error: "Original letter, instructions, and user ID are required." });
+        return res
+          .status(400)
+          .json({
+            error: "Original letter, instructions, and user ID are required.",
+          });
       }
 
-
-      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const anthropic = new Anthropic({
+        apiKey: process.env.ANTHROPIC_API_KEY,
+      });
 
       // 2. Construct a precise prompt for the AI
       const prompt = `
@@ -1700,7 +1991,7 @@ Now, provide the complete, improved cover letter below.
         model: "claude-sonnet-4-20250514", // Or another suitable model
         max_tokens: 2048,
         temperature: 0.2, // Low temperature to follow instructions closely
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: "user", content: prompt }],
       });
 
       // 4. Extract the improved letter text
@@ -1710,13 +2001,15 @@ Now, provide the complete, improved cover letter below.
 
       // 6. Send the improved letter back to the client
       res.json({ improvedLetter });
-
     } catch (error) {
       console.error("Error improving cover letter:", error);
-      res.status(500).json({ error: "Failed to improve the cover letter. Please try again later." });
+      res
+        .status(500)
+        .json({
+          error: "Failed to improve the cover letter. Please try again later.",
+        });
     }
   });
-
 
   // --- API Endpoint to Score Interview Answers (No Changes) ---
   app.post("/api/score-interview-answers", async (req, res) => {
@@ -1726,15 +2019,20 @@ Now, provide the complete, improved cover letter below.
 
       // Validate input
       if (!questions || !userAnswers || !jobTitle) {
-        return res.status(400).json({ error: "Missing required fields: questions, userAnswers, and jobTitle." });
+        return res
+          .status(400)
+          .json({
+            error:
+              "Missing required fields: questions, userAnswers, and jobTitle.",
+          });
       }
 
       // 2. Prepare the data for the AI model to process
-      const questionsToScore = questions.map(q => ({
+      const questionsToScore = questions.map((q) => ({
         id: q.id,
         question: q.question,
         modelAnswerGuidance: q.modelAnswer,
-        userAnswer: userAnswers[q.id] || "No answer provided."
+        userAnswer: userAnswers[q.id] || "No answer provided.",
       }));
 
       // 3. Construct a clear, detailed prompt for the AI
@@ -1772,7 +2070,7 @@ Now, provide the complete, improved cover letter below.
         model: "claude-sonnet-4-20250514",
         max_tokens: 2000,
         temperature: 0.1, // Low temperature for factual, deterministic output
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: "user", content: prompt }],
       });
 
       // 5. Parse the JSON response from the AI
@@ -1786,7 +2084,7 @@ Now, provide the complete, improved cover letter below.
       }, {});
 
       // 7. Map the AI's results back to the original questions array
-      const updatedQuestions = questions.map(q => ({
+      const updatedQuestions = questions.map((q) => ({
         ...q,
         score: resultsMap[q.id]?.score,
         feedback: resultsMap[q.id]?.feedback,
@@ -1795,11 +2093,15 @@ Now, provide the complete, improved cover letter below.
 
       // 8. Send the final, enriched data back to the frontend
       res.status(200).json({ questions: updatedQuestions });
-
     } catch (error) {
       // 9. Handle any errors gracefully
       console.error("Error scoring interview answers:", error);
-      res.status(500).json({ error: "Failed to score interview answers. Please check the server logs." });
+      res
+        .status(500)
+        .json({
+          error:
+            "Failed to score interview answers. Please check the server logs.",
+        });
     }
   });
 
@@ -1822,22 +2124,31 @@ Now, provide the complete, improved cover letter below.
         attempts++;
         const response = await axios.get<any[]>(url, { params });
 
-        if (response.status === 200 && response.data && response.data.length > 0) {
+        if (
+          response.status === 200 &&
+          response.data &&
+          response.data.length > 0
+        ) {
           return response.data;
         } else if (response.status === 200) {
-          throw new Error("ScrapingDog API returned an empty result for the profile.");
+          throw new Error(
+            "ScrapingDog API returned an empty result for the profile.",
+          );
         } else {
-          throw new Error("Request failed with status code: " + response.status);
+          throw new Error(
+            "Request failed with status code: " + response.status,
+          );
         }
       } catch (error: any) {
         console.error(
           `Error fetching LinkedIn profile from ScrapingDog (attempt ${attempts}):`,
-          error.response?.data || error.message
+          error.response?.data || error.message,
         );
 
         if (attempts >= maxAttempts) {
           throw new Error(
-            error.response?.data?.message || "Failed to fetch data from the scraping service."
+            error.response?.data?.message ||
+              "Failed to fetch data from the scraping service.",
           );
         }
 
@@ -1853,18 +2164,26 @@ Now, provide the complete, improved cover letter below.
     const { profileUrl, id } = req.body;
 
     // 1. Basic URL validation
-    if (!profileUrl || !profileUrl.includes('linkedin.com/in/')) {
-      return res.status(400).json({ error: "A valid LinkedIn profile URL is required (e.g., https://www.linkedin.com/in/...)" });
+    if (!profileUrl || !profileUrl.includes("linkedin.com/in/")) {
+      return res
+        .status(400)
+        .json({
+          error:
+            "A valid LinkedIn profile URL is required (e.g., https://www.linkedin.com/in/...)",
+        });
     }
 
     console.log("LinkedIn profile import request for:", profileUrl);
 
     try {
-
       const user = await GetUserScscriptionTrialValidation(id);
 
       if (!user) {
-        return res.status(400).json({ error: 'Subscription has expired, or you have not subscribed' });
+        return res
+          .status(400)
+          .json({
+            error: "Subscription has expired, or you have not subscribed",
+          });
       }
 
       // 2. Call the ScrapingDog API function
@@ -1874,7 +2193,9 @@ Now, provide the complete, improved cover letter below.
       const profileData = linkedInDataArray[0];
 
       if (!profileData) {
-        return res.status(404).json({ error: "Profile data could not be found or extracted." });
+        return res
+          .status(404)
+          .json({ error: "Profile data could not be found or extracted." });
       }
 
       // 3. Map the API response to your frontend's expected 'resumeData' structure
@@ -1887,16 +2208,18 @@ Now, provide the complete, improved cover letter below.
         linkedin: profileUrl, // Use the original URL provided
 
         // --- Experience Section ---
-        experience: (profileData.experience || []).map(exp => ({
+        experience: (profileData.experience || []).map((exp) => ({
           title: exp.position || "Job Title (Please Edit)",
           company: exp.company_name || "Company Name (Please Edit)",
           duration: exp.duration || "",
-          description: exp.summary || 'Describe your key responsibilities and achievements in this role.',
+          description:
+            exp.summary ||
+            "Describe your key responsibilities and achievements in this role.",
           responsibilities: [], // API doesn't provide this, so we default to an empty array
         })),
 
         // --- Education Section ---
-        education: (profileData.education || []).map(edu => ({
+        education: (profileData.education || []).map((edu) => ({
           degree: edu.college_degree || "Degree Name (Please Edit)",
           // The frontend form uses 'school', so we map 'college_name' to it.
           school: edu.college_name || "University Name (Please Edit)",
@@ -1906,167 +2229,220 @@ Now, provide the complete, improved cover letter below.
 
         // --- Placeholders for fields not in the public API response ---
         // Your frontend's `initialResumeData` will fill these in, but being explicit is good.
-        skills: ['Skill 1 (Please Edit)', 'Skill 2', 'Skill 3'], // API doesn't provide a clean skills list
-        languages: ['English'],
-        email: '',
-        phone: '',
-        github: '',
-        website: '',
+        skills: ["Skill 1 (Please Edit)", "Skill 2", "Skill 3"], // API doesn't provide a clean skills list
+        languages: ["English"],
+        email: "",
+        phone: "",
+        github: "",
+        website: "",
         certifications: [],
         achievements: [],
-        projects: []
+        projects: [],
       };
 
       console.log("Successfully mapped LinkedIn data from ScrapingDog.");
 
-      await DetuctCredits(user)
+      await DetuctCredits(user);
 
       // 4. Send the successfully mapped data to the frontend
       return res.json({
         success: true,
         resumeData, // This is the crucial part
-        source: 'linkedin-import-scrapingdog',
-        note: 'Data successfully scraped from LinkedIn. Please review and complete the missing details.'
+        source: "linkedin-import-scrapingdog",
+        note: "Data successfully scraped from LinkedIn. Please review and complete the missing details.",
       });
-
     } catch (error: any) {
-      console.error("Critical error in /api/import-linkedin-resume:", error.message);
+      console.error(
+        "Critical error in /api/import-linkedin-resume:",
+        error.message,
+      );
       // Send a user-friendly error message to the frontend
-      return res.status(500).json({ error: `Failed to import profile: ${error.message}` });
+      return res
+        .status(500)
+        .json({ error: `Failed to import profile: ${error.message}` });
     }
   });
-
 
   // LinkedIn Profile Crawling endpoint
   app.post("/api/crawl-linkedin-profile", async (req, res) => {
     try {
       const { profileUrl } = req.body;
 
-      if (!profileUrl || !profileUrl.includes('linkedin.com')) {
-        return res.status(400).json({ error: "Valid LinkedIn profile URL is required" });
+      if (!profileUrl || !profileUrl.includes("linkedin.com")) {
+        return res
+          .status(400)
+          .json({ error: "Valid LinkedIn profile URL is required" });
       }
 
       // Try simple HTTP request first as fallback
       try {
         const response = await axios.get(profileUrl, {
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
-            'Connection': 'keep-alive',
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            Accept:
+              "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate",
+            Connection: "keep-alive",
           },
-          timeout: 10000
+          timeout: 10000,
         });
 
         const $ = cheerio.load(response.data);
 
         // Extract basic profile data from HTML
-        const name = $('h1').first().text().trim() ||
-          $('title').text().replace(' | LinkedIn', '').trim() ||
-          'Profile Name';
+        const name =
+          $("h1").first().text().trim() ||
+          $("title").text().replace(" | LinkedIn", "").trim() ||
+          "Profile Name";
 
-        const headline = $('.text-body-medium').first().text().trim() ||
-          $('meta[name="description"]').attr('content')?.split('|')[0]?.trim() ||
-          'Professional';
+        const headline =
+          $(".text-body-medium").first().text().trim() ||
+          $('meta[name="description"]')
+            .attr("content")
+            ?.split("|")[0]
+            ?.trim() ||
+          "Professional";
 
-        const about = $('.pv-about__text').text().trim() ||
-          $('meta[name="description"]').attr('content')?.trim() ||
-          'Professional background and experience';
+        const about =
+          $(".pv-about__text").text().trim() ||
+          $('meta[name="description"]').attr("content")?.trim() ||
+          "Professional background and experience";
 
         // Generate sample data for demonstration
         const profileData = {
           name,
           headline,
           about,
-          location: 'Location not specified',
-          profileImageUrl: '',
-          connectionCount: '500+ connections',
-          skills: ['Leadership', 'Management', 'Strategy', 'Team Building', 'Communication'],
+          location: "Location not specified",
+          profileImageUrl: "",
+          connectionCount: "500+ connections",
+          skills: [
+            "Leadership",
+            "Management",
+            "Strategy",
+            "Team Building",
+            "Communication",
+          ],
           experience: [
             {
-              title: 'Senior Professional',
-              company: 'Technology Company',
-              duration: '2020 - Present',
-              description: 'Leading strategic initiatives and team development'
-            }
+              title: "Senior Professional",
+              company: "Technology Company",
+              duration: "2020 - Present",
+              description: "Leading strategic initiatives and team development",
+            },
           ],
-          keywords: ['professional', 'leader', 'technology', 'strategy', 'management']
+          keywords: [
+            "professional",
+            "leader",
+            "technology",
+            "strategy",
+            "management",
+          ],
         };
 
         return res.json({
           success: true,
           profileData,
           extractedAt: new Date().toISOString(),
-          method: 'http-fallback'
+          method: "http-fallback",
         });
-
       } catch (httpError) {
-        console.log('HTTP method failed, trying Puppeteer...', httpError.message);
+        console.log(
+          "HTTP method failed, trying Puppeteer...",
+          httpError.message,
+        );
       }
 
       // Launch puppeteer browser with enhanced configuration for Replit
       let browser;
       try {
         browser = await puppeteer.launch({
-          headless: 'new',
-          executablePath: '/nix/store/zi4f80l169xlmivz8vja8wlphq74qqk0-chromium-125.0.6422.141/bin/chromium',
+          headless: "new",
+          executablePath:
+            "/nix/store/zi4f80l169xlmivz8vja8wlphq74qqk0-chromium-125.0.6422.141/bin/chromium",
           args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--single-process',
-            '--disable-gpu',
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding',
-            '--disable-features=TranslateUI',
-            '--disable-web-security',
-            '--disable-features=VizDisplayCompositor'
-          ]
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-accelerated-2d-canvas",
+            "--no-first-run",
+            "--no-zygote",
+            "--single-process",
+            "--disable-gpu",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-features=TranslateUI",
+            "--disable-web-security",
+            "--disable-features=VizDisplayCompositor",
+          ],
         });
       } catch (launchError) {
-        console.error('Puppeteer launch failed:', launchError);
+        console.error("Puppeteer launch failed:", launchError);
 
         // Extract profile name from URL as fallback
-        const urlParts = profileUrl.split('/');
-        const profileSlug = urlParts[urlParts.indexOf('in') + 1] || 'professional';
-        const profileName = profileSlug.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        const urlParts = profileUrl.split("/");
+        const profileSlug =
+          urlParts[urlParts.indexOf("in") + 1] || "professional";
+        const profileName = profileSlug
+          .replace(/-/g, " ")
+          .replace(/\b\w/g, (l) => l.toUpperCase());
 
         const fallbackProfileData = {
-          name: profileName && profileName !== 'Professional' ? profileName : 'Professional Profile',
-          headline: 'Senior Technology Leader | Innovation Expert | Team Builder',
-          about: 'Results-driven professional with 8+ years of experience leading cross-functional teams and driving strategic initiatives. Proven track record of delivering innovative solutions, building high-performing teams, and achieving business objectives. Passionate about technology, leadership, and creating meaningful impact in fast-growing organizations.',
-          location: 'San Francisco Bay Area',
-          profileImageUrl: '',
-          connectionCount: '500+ connections',
-          skills: ['Leadership', 'Strategic Planning', 'Team Management', 'Innovation', 'Product Development', 'Agile Methodologies'],
+          name:
+            profileName && profileName !== "Professional"
+              ? profileName
+              : "Professional Profile",
+          headline:
+            "Senior Technology Leader | Innovation Expert | Team Builder",
+          about:
+            "Results-driven professional with 8+ years of experience leading cross-functional teams and driving strategic initiatives. Proven track record of delivering innovative solutions, building high-performing teams, and achieving business objectives. Passionate about technology, leadership, and creating meaningful impact in fast-growing organizations.",
+          location: "San Francisco Bay Area",
+          profileImageUrl: "",
+          connectionCount: "500+ connections",
+          skills: [
+            "Leadership",
+            "Strategic Planning",
+            "Team Management",
+            "Innovation",
+            "Product Development",
+            "Agile Methodologies",
+          ],
           experience: [
             {
-              title: 'Senior Technology Manager',
-              company: 'Tech Innovation Corp',
-              duration: '2021 - Present',
-              description: 'Leading engineering teams to deliver cutting-edge solutions and drive business growth'
+              title: "Senior Technology Manager",
+              company: "Tech Innovation Corp",
+              duration: "2021 - Present",
+              description:
+                "Leading engineering teams to deliver cutting-edge solutions and drive business growth",
             },
             {
-              title: 'Product Manager',
-              company: 'Digital Solutions Inc',
-              duration: '2018 - 2021',
-              description: 'Managed product roadmap and collaborated with stakeholders to launch successful products'
-            }
+              title: "Product Manager",
+              company: "Digital Solutions Inc",
+              duration: "2018 - 2021",
+              description:
+                "Managed product roadmap and collaborated with stakeholders to launch successful products",
+            },
           ],
-          keywords: ['leadership', 'technology', 'innovation', 'management', 'strategy', 'agile', 'product']
+          keywords: [
+            "leadership",
+            "technology",
+            "innovation",
+            "management",
+            "strategy",
+            "agile",
+            "product",
+          ],
         };
 
         return res.json({
           success: true,
           profileData: fallbackProfileData,
           extractedAt: new Date().toISOString(),
-          method: 'fallback',
-          note: 'Basic profile data extracted - full crawling unavailable in current environment'
+          method: "fallback",
+          note: "Basic profile data extracted - full crawling unavailable in current environment",
         });
       }
 
@@ -2074,59 +2450,85 @@ Now, provide the complete, improved cover letter below.
         const page = await browser.newPage();
 
         // Set user agent to appear as a regular browser
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+        await page.setUserAgent(
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        );
 
         // Navigate to the LinkedIn profile
         await page.goto(profileUrl, {
-          waitUntil: 'networkidle2',
-          timeout: 30000
+          waitUntil: "networkidle2",
+          timeout: 30000,
         });
 
         // Wait for profile content to load
-        await page.waitForSelector('h1', { timeout: 10000 });
+        await page.waitForSelector("h1", { timeout: 10000 });
 
         // Extract profile data
         const profileData = await page.evaluate(() => {
-          const name = document.querySelector('h1')?.textContent?.trim() || '';
-          const headline = document.querySelector('.text-body-medium')?.textContent?.trim() || '';
-          const location = document.querySelector('.text-body-small.inline.t-black--light.break-words')?.textContent?.trim() || '';
+          const name = document.querySelector("h1")?.textContent?.trim() || "";
+          const headline =
+            document.querySelector(".text-body-medium")?.textContent?.trim() ||
+            "";
+          const location =
+            document
+              .querySelector(
+                ".text-body-small.inline.t-black--light.break-words",
+              )
+              ?.textContent?.trim() || "";
 
           // Extract about section
-          const aboutElement = document.querySelector('[data-section="summary"] .pv-about__text');
-          const about = aboutElement?.textContent?.trim() || '';
+          const aboutElement = document.querySelector(
+            '[data-section="summary"] .pv-about__text',
+          );
+          const about = aboutElement?.textContent?.trim() || "";
 
           // Extract profile image
-          const profileImg = document.querySelector('.pv-top-card-profile-picture__image img');
-          const profileImageUrl = profileImg?.getAttribute('src') || '';
+          const profileImg = document.querySelector(
+            ".pv-top-card-profile-picture__image img",
+          );
+          const profileImageUrl = profileImg?.getAttribute("src") || "";
 
           // Extract connection count
-          const connectionElement = document.querySelector('.t-black--light.t-normal');
-          const connectionCount = connectionElement?.textContent?.trim() || '';
+          const connectionElement = document.querySelector(
+            ".t-black--light.t-normal",
+          );
+          const connectionCount = connectionElement?.textContent?.trim() || "";
 
           // Extract skills (attempt to find skills section)
-          const skillElements = document.querySelectorAll('[data-section="skills"] .pv-skill-category-entity__name-text');
+          const skillElements = document.querySelectorAll(
+            '[data-section="skills"] .pv-skill-category-entity__name-text',
+          );
           const skills: string[] = [];
-          skillElements.forEach(el => {
+          skillElements.forEach((el) => {
             const skill = el.textContent?.trim();
             if (skill) skills.push(skill);
           });
 
           // Extract experience
-          const experienceElements = document.querySelectorAll('[data-section="experience"] .pv-entity__summary-info');
-          const experience: Array<{ title: string, company: string, duration: string, description: string }> = [];
+          const experienceElements = document.querySelectorAll(
+            '[data-section="experience"] .pv-entity__summary-info',
+          );
+          const experience: Array<{
+            title: string;
+            company: string;
+            duration: string;
+            description: string;
+          }> = [];
 
-          experienceElements.forEach(el => {
-            const titleEl = el.querySelector('h3');
-            const companyEl = el.querySelector('.pv-entity__secondary-title');
-            const durationEl = el.querySelector('.pv-entity__date-range span:last-child');
-            const descriptionEl = el.querySelector('.pv-entity__description');
+          experienceElements.forEach((el) => {
+            const titleEl = el.querySelector("h3");
+            const companyEl = el.querySelector(".pv-entity__secondary-title");
+            const durationEl = el.querySelector(
+              ".pv-entity__date-range span:last-child",
+            );
+            const descriptionEl = el.querySelector(".pv-entity__description");
 
             if (titleEl && companyEl) {
               experience.push({
-                title: titleEl.textContent?.trim() || '',
-                company: companyEl.textContent?.trim() || '',
-                duration: durationEl?.textContent?.trim() || '',
-                description: descriptionEl?.textContent?.trim() || ''
+                title: titleEl.textContent?.trim() || "",
+                company: companyEl.textContent?.trim() || "",
+                duration: durationEl?.textContent?.trim() || "",
+                description: descriptionEl?.textContent?.trim() || "",
               });
             }
           });
@@ -2140,21 +2542,45 @@ Now, provide the complete, improved cover letter below.
             connectionCount,
             skills,
             experience,
-            keywords: [] // Will be populated from extracted text
+            keywords: [], // Will be populated from extracted text
           };
         });
 
         // Generate keywords from extracted text
-        const allText = `${profileData.name} ${profileData.headline} ${profileData.about}`.toLowerCase();
+        const allText =
+          `${profileData.name} ${profileData.headline} ${profileData.about}`.toLowerCase();
         const commonKeywords = [
-          'software', 'engineer', 'developer', 'manager', 'senior', 'lead', 'director',
-          'javascript', 'python', 'react', 'node', 'typescript', 'aws', 'docker',
-          'leadership', 'team', 'agile', 'scrum', 'project', 'product', 'marketing',
-          'sales', 'business', 'strategy', 'growth', 'analytics', 'data'
+          "software",
+          "engineer",
+          "developer",
+          "manager",
+          "senior",
+          "lead",
+          "director",
+          "javascript",
+          "python",
+          "react",
+          "node",
+          "typescript",
+          "aws",
+          "docker",
+          "leadership",
+          "team",
+          "agile",
+          "scrum",
+          "project",
+          "product",
+          "marketing",
+          "sales",
+          "business",
+          "strategy",
+          "growth",
+          "analytics",
+          "data",
         ];
 
-        profileData.keywords = commonKeywords.filter(keyword =>
-          allText.includes(keyword)
+        profileData.keywords = commonKeywords.filter((keyword) =>
+          allText.includes(keyword),
         );
 
         await browser.close();
@@ -2163,21 +2589,20 @@ Now, provide the complete, improved cover letter below.
           success: true,
           profileData,
           extractedAt: new Date().toISOString(),
-          method: 'puppeteer'
+          method: "puppeteer",
         });
-
       } catch (error) {
         if (browser) {
           await browser.close();
         }
         throw error;
       }
-
     } catch (error) {
       console.error("Error crawling LinkedIn profile:", error);
       res.status(500).json({
-        error: "Failed to crawl LinkedIn profile. The profile might be private, require login, or the URL is invalid.",
-        details: error instanceof Error ? error.message : 'Unknown error'
+        error:
+          "Failed to crawl LinkedIn profile. The profile might be private, require login, or the URL is invalid.",
+        details: error instanceof Error ? error.message : "Unknown error",
       });
     }
   });
@@ -2188,7 +2613,11 @@ Now, provide the complete, improved cover letter below.
       const { recruiterName, yourName, companyName } = req.body;
 
       if (!recruiterName || !yourName || !companyName) {
-        return res.status(400).json({ error: "Recruiter name, your name, and company name are required" });
+        return res
+          .status(400)
+          .json({
+            error: "Recruiter name, your name, and company name are required",
+          });
       }
 
       // Generate LinkedIn DM using the exact template format
@@ -2213,23 +2642,36 @@ ${yourName}`;
   app.post("/api/generate-cover-letter", async (req, res) => {
     try {
       // Added 'templateId' to select which template/method to use
-      const { jobDetails, personalData, parsedData, method, id, templateId } = req.body;
+      const { jobDetails, personalData, parsedData, method, id, templateId } =
+        req.body;
       const anthropic = new Anthropic({
         apiKey: process.env.ANTHROPIC_API_KEY,
       });
 
       // --- Input Validation (remains the same) ---
       if (!method) {
-        return res.status(400).json({ error: "Request is missing the 'method' field." });
+        return res
+          .status(400)
+          .json({ error: "Request is missing the 'method' field." });
       }
       if (!jobDetails || !jobDetails.position || !jobDetails.company) {
-        return res.status(400).json({ error: "Request is missing required 'jobDetails'." });
+        return res
+          .status(400)
+          .json({ error: "Request is missing required 'jobDetails'." });
       }
       if (method === "resume" && !parsedData) {
-        return res.status(400).json({ error: "Method is 'resume' but no 'parsedData' was provided." });
+        return res
+          .status(400)
+          .json({
+            error: "Method is 'resume' but no 'parsedData' was provided.",
+          });
       }
       if (method === "manual" && !personalData) {
-        return res.status(400).json({ error: "Method is 'manual' but no 'personalData' was provided." });
+        return res
+          .status(400)
+          .json({
+            error: "Method is 'manual' but no 'personalData' was provided.",
+          });
       }
 
       // --- User Validation (remains the same) ---
@@ -2239,7 +2681,11 @@ ${yourName}`;
         user = await GetUserScscriptionTrialValidation(id);
 
         if (!user) {
-          return res.status(400).json({ error: 'Subscription has expired, or you have not subscribed' });
+          return res
+            .status(400)
+            .json({
+              error: "Subscription has expired, or you have not subscribed",
+            });
         }
       }
 
@@ -2251,13 +2697,13 @@ ${yourName}`;
       // === NEW: TEMPLATE SELECTION LOGIC =================================
       // ===================================================================
 
-      if (templateId === 'clientTemplate') {
+      if (templateId === "clientTemplate") {
         // --- Logic for the New Client-Provided Template ---
 
         // Helper to format certifications if they exist
         const formatCertifications = (certs) => {
-          if (!certs || certs.trim() === '') {
-            return '';
+          if (!certs || certs.trim() === "") {
+            return "";
           }
           // Check if the main skill text already includes a certification
           const primaryCertText = `I am qualified for this position because I have experience in ${applicantInfo.skills}.`;
@@ -2265,10 +2711,10 @@ ${yourName}`;
           return `Additionally, I am certified in ${certs}.`;
         };
 
-        const today = new Date().toLocaleDateString('en-US', {
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
+        const today = new Date().toLocaleDateString("en-US", {
+          year: "numeric",
+          month: "long",
+          day: "numeric",
         });
 
         const coverLetter = `
@@ -2280,9 +2726,9 @@ ${today}
 
 To Whom It May Concern:
 
-My name is ${applicantInfo.name}. I obtained a ${applicantInfo.degree} from ${applicantInfo.university}. I have been in ${applicantInfo.profession} for ${applicantInfo.yearsExperience} years. I plan to diversify and expand my knowledge in ${applicantInfo.profession} by continuing my experience in the ${position} role to aid ${reason || 'your company’s mission and my professional growth'}. I am qualified for this position because I have experience in ${applicantInfo.skills}. ${formatCertifications(applicantInfo.certifications)} It is with extreme enthusiasm that I apply to the ${position} position with ${company}.
+My name is ${applicantInfo.name}. I obtained a ${applicantInfo.degree} from ${applicantInfo.university}. I have been in ${applicantInfo.profession} for ${applicantInfo.yearsExperience} years. I plan to diversify and expand my knowledge in ${applicantInfo.profession} by continuing my experience in the ${position} role to aid ${reason || "your company’s mission and my professional growth"}. I am qualified for this position because I have experience in ${applicantInfo.skills}. ${formatCertifications(applicantInfo.certifications)} It is with extreme enthusiasm that I apply to the ${position} position with ${company}.
 
-I currently work for ${applicantInfo.currentCompany || 'my most recent employer'}. In my position, my primary responsibility is ${applicantInfo.mainResponsibility || applicantInfo.topDuty}. By multitasking with these specific areas as well as my duties as a ${applicantInfo.profession}, I am able to organize and balance my work to ensure I am giving the proper care to each of my tasks as well as my stakeholders and partners. With respect to my responsibilities, I excel at ${applicantInfo.mainResponsibility || applicantInfo.topDuty}. Relationship building and staying organized are important within ${applicantInfo.profession}. By carefully vetting my work to ensure efficiency, I am consistently building trust amongst clients and team members. I maintain an organized workflow through meticulous planning and digital task management systems.
+I currently work for ${applicantInfo.currentCompany || "my most recent employer"}. In my position, my primary responsibility is ${applicantInfo.mainResponsibility || applicantInfo.topDuty}. By multitasking with these specific areas as well as my duties as a ${applicantInfo.profession}, I am able to organize and balance my work to ensure I am giving the proper care to each of my tasks as well as my stakeholders and partners. With respect to my responsibilities, I excel at ${applicantInfo.mainResponsibility || applicantInfo.topDuty}. Relationship building and staying organized are important within ${applicantInfo.profession}. By carefully vetting my work to ensure efficiency, I am consistently building trust amongst clients and team members. I maintain an organized workflow through meticulous planning and digital task management systems.
 
 Based upon my experience, I am an ideal candidate for your ${position} position within ${company}. Choosing me will be a great decision as I will bring expertise and a wealth of knowledge into your company. I can be reached at ${applicantInfo.phone} or ${applicantInfo.email}. Thank you for your consideration. I look forward to hearing from you.
 
@@ -2295,7 +2741,6 @@ ${applicantInfo.name}
         }
 
         res.json({ coverLetter, generatedBy: "template-client-v1" });
-
       } else {
         // --- Fallback to the Original AI Generation Logic ---
 
@@ -2311,16 +2756,16 @@ ${applicantInfo.name}
             - Profession / Field: ${applicantInfo.profession}
             - Years of Experience: ${applicantInfo.yearsExperience} years
             - Highest Degree: ${applicantInfo.degree} from ${applicantInfo.university}
-            - Current Company: ${applicantInfo.currentCompany || 'N/A'}
+            - Current Company: ${applicantInfo.currentCompany || "N/A"}
             - Key Skills: ${applicantInfo.skills}
-            - Key Certifications: ${applicantInfo.certifications || 'N/A'}
+            - Key Certifications: ${applicantInfo.certifications || "N/A"}
             - Top Responsibility/Duty: ${applicantInfo.mainResponsibility || applicantInfo.topDuty}
-            - Tools & Methods: ${applicantInfo.tools || 'N/A'}
+            - Tools & Methods: ${applicantInfo.tools || "N/A"}
 
             **Job Details:**
             - Position Applying For: ${position}
             - Company Name: ${company}
-            - Applicant's Stated Reason for Interest: ${reason || 'To contribute my skills and grow with the company.'}
+            - Applicant's Stated Reason for Interest: ${reason || "To contribute my skills and grow with the company."}
 
             **Instructions for Writing:**
             1.  **Header:** Start with the applicant's name and contact information (email, phone).
@@ -2342,7 +2787,7 @@ ${applicantInfo.name}
             model: "claude-sonnet-4-20250514",
             max_tokens: 2000,
             temperature: 0.1, // Low temperature for factual, deterministic output
-            messages: [{ role: 'user', content: prompt }],
+            messages: [{ role: "user", content: prompt }],
           });
           coverLetter = message.content[0].text;
           generatedBy = "ai";
@@ -2350,7 +2795,6 @@ ${applicantInfo.name}
           if (method === "manual") {
             await DetuctCredits(user);
           }
-
         } catch (aiError) {
           console.error("Anthropic API Error:", aiError);
           // Fallback to a simple template if the AI fails
@@ -2383,7 +2827,11 @@ ${applicantInfo.name}
       }
     } catch (error) {
       console.error("Error in /api/generate-cover-letter:", error);
-      res.status(500).json({ error: "Failed to generate cover letter due to a server error." });
+      res
+        .status(500)
+        .json({
+          error: "Failed to generate cover letter due to a server error.",
+        });
     }
   });
 
@@ -2394,10 +2842,13 @@ ${applicantInfo.name}
     // Immediately check if the API key is loaded from your .env file.
     // This prevents the entire server from crashing and sending an HTML error page.
     if (!process.env.ANTHROPIC_API_KEY) {
-      console.error("FATAL ERROR: ANTHROPIC_API_KEY is not set in the environment variables.");
+      console.error(
+        "FATAL ERROR: ANTHROPIC_API_KEY is not set in the environment variables.",
+      );
       // Send a proper JSON error response instead of crashing
       return res.status(500).json({
-        error: "Server configuration error: The AI service is not configured. Please contact the administrator."
+        error:
+          "Server configuration error: The AI service is not configured. Please contact the administrator.",
       });
     }
     // =================================================================
@@ -2406,7 +2857,9 @@ ${applicantInfo.name}
       const { profileData, targetJobTitle } = req.body;
 
       if (!profileData || !targetJobTitle) {
-        return res.status(400).json({ error: "Profile data and target job title are required." });
+        return res
+          .status(400)
+          .json({ error: "Profile data and target job title are required." });
       }
 
       const anthropic = new Anthropic({
@@ -2449,8 +2902,8 @@ ${applicantInfo.name}
           ]
         },
         "improvedContent": {
-          "headline": "Senior Software Engineer | Full-Stack JavaScript Specialist (React, Node.js) | Building Scalable Web Applications",
-          "summary": "As a results-driven Senior Software Engineer with over 8 years of experience, I specialize in architecting and developing robust, high-performance web applications using the MERN stack...",
+          "headline": "Software Engineer | Full-Stack JavaScript Specialist (React, Node.js) | Building Scalable Web Applications",
+          "summary": "As a results-driven Software Engineer with over 8 years of experience, I specialize in architecting and developing robust, high-performance web applications using the MERN stack...",
           "experienceImprovements": [
             {
               "title": "Software Engineer",
@@ -2475,26 +2928,40 @@ ${applicantInfo.name}
 
       // Robust validation of the AI's response
       if (!response?.content?.[0]?.text) {
-        console.error("Invalid or empty response from Anthropic API:", JSON.stringify(response, null, 2));
-        throw new Error("The AI failed to generate a response. This can happen due to safety filters or an internal API issue.");
+        console.error(
+          "Invalid or empty response from Anthropic API:",
+          JSON.stringify(response, null, 2),
+        );
+        throw new Error(
+          "The AI failed to generate a response. This can happen due to safety filters or an internal API issue.",
+        );
       }
 
       const rawJson = response.content[0].text;
       const optimizationResult = JSON.parse(rawJson);
 
       // Final check on the parsed JSON structure
-      if (!optimizationResult.analysisReport || !optimizationResult.improvedContent) {
-        throw new Error("The AI response was malformed and did not contain the required data structure.");
+      if (
+        !optimizationResult.analysisReport ||
+        !optimizationResult.improvedContent
+      ) {
+        throw new Error(
+          "The AI response was malformed and did not contain the required data structure.",
+        );
       }
 
       res.status(200).json(optimizationResult);
-
     } catch (error) {
       console.error("Error optimizing profile:", error);
-      res.status(500).json({ error: error.message || "An unexpected error occurred during profile optimization." });
+      res
+        .status(500)
+        .json({
+          error:
+            error.message ||
+            "An unexpected error occurred during profile optimization.",
+        });
     }
   });
-
 
   // Optional: Add a test endpoint to verify Claude API connection
   app.get("/api/test-claude", async (req, res) => {
@@ -2505,22 +2972,23 @@ ${applicantInfo.name}
         messages: [
           {
             role: "user",
-            content: "Hello! Please respond with a simple greeting to test the connection."
-          }
-        ]
+            content:
+              "Hello! Please respond with a simple greeting to test the connection.",
+          },
+        ],
       });
 
       res.json({
         success: true,
         message: "Claude API connection successful",
-        response: message.content[0].text
+        response: message.content[0].text,
       });
     } catch (error) {
       console.error("Claude API test failed:", error);
       res.status(500).json({
         success: false,
         error: "Claude API connection failed",
-        details: error.message
+        details: error.message,
       });
     }
   });
@@ -2533,8 +3001,10 @@ ${applicantInfo.name}
 
       console.log("AI resume generation request with prompt:", prompt);
 
-      if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 50) {
-        return res.status(400).json({ error: "Prompt must be at least 50 characters long" });
+      if (!prompt || typeof prompt !== "string" || prompt.trim().length < 50) {
+        return res
+          .status(400)
+          .json({ error: "Prompt must be at least 50 characters long" });
       }
 
       if (!process.env.ANTHROPIC_API_KEY) {
@@ -2610,7 +3080,7 @@ Return ONLY the JSON object, no additional text or formatting.`;
       const response = await anthropic.messages.create({
         model: "claude-sonnet-4-20250514",
         max_tokens: 2000,
-        messages: [{ role: 'user', content: aiPrompt }],
+        messages: [{ role: "user", content: aiPrompt }],
       });
 
       console.log("AI response received");
@@ -2624,10 +3094,10 @@ Return ONLY the JSON object, no additional text or formatting.`;
         let jsonString = responseText;
 
         // Remove markdown code blocks if present
-        if (responseText.includes('```json')) {
+        if (responseText.includes("```json")) {
           const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/);
           jsonString = jsonMatch ? jsonMatch[1].trim() : responseText;
-        } else if (responseText.includes('```')) {
+        } else if (responseText.includes("```")) {
           const jsonMatch = responseText.match(/```\s*([\s\S]*?)\s*```/);
           jsonString = jsonMatch ? jsonMatch[1].trim() : responseText;
         } else {
@@ -2641,20 +3111,23 @@ Return ONLY the JSON object, no additional text or formatting.`;
         console.log("Parsed AI resume data:", parsedData);
 
         // Validate that parsedData contains expected fields
-        if (!parsedData || typeof parsedData !== 'object' || !parsedData.name) {
+        if (!parsedData || typeof parsedData !== "object" || !parsedData.name) {
           console.error("Invalid parsed data structure:", parsedData);
-          return res.status(500).json({ error: "AI generated invalid data structure" });
+          return res
+            .status(500)
+            .json({ error: "AI generated invalid data structure" });
         }
-
       } catch (parseError) {
         console.error("Error parsing AI response:", parseError);
         console.error("Raw response text:", response.content[0].text);
         return res.status(500).json({ error: "Failed to parse AI response" });
       }
 
-      console.log("Sending response with parsedData:", JSON.stringify(parsedData, null, 2));
+      console.log(
+        "Sending response with parsedData:",
+        JSON.stringify(parsedData, null, 2),
+      );
       res.json({ parsedData });
-
     } catch (error) {
       console.error("Error generating AI resume:", error);
       res.status(500).json({ error: "Failed to generate AI resume" });
@@ -2664,7 +3137,6 @@ Return ONLY the JSON object, no additional text or formatting.`;
   app.post("/api/generate-resume-pdf", async (req, res) => {
     try {
       const { templateId, resumeData, id, isManual } = req.body;
-
 
       console.log("Received templateId:", templateId);
       console.log("Received resumeData:", resumeData);
@@ -2682,7 +3154,6 @@ Return ONLY the JSON object, no additional text or formatting.`;
       //   return res.status(400).json({ error: 'Subscription has expired, or you have not subscribed' });
       // }
 
-
       const html = generateResumeHTML(templateId, resumeData);
       // if (isManual) {
       //   await DetuctCredits(user)
@@ -2694,168 +3165,220 @@ Return ONLY the JSON object, no additional text or formatting.`;
     }
   });
 
-
   // Promotion Planner API endpoints
 
   // Get current user's promotion plan
-  app.get('/api/promotion-plans/current', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const userId = req.user.id;
-      const plan = await storage.getCurrentPromotionPlan(userId);
-      res.json(plan);
-    } catch (error) {
-      console.error("Error fetching promotion plan:", error);
-      res.status(500).json({ message: "Failed to fetch promotion plan" });
-    }
-  });
+  app.get(
+    "/api/promotion-plans/current",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.id;
+        const plan = await storage.getCurrentPromotionPlan(userId);
+        res.json(plan);
+      } catch (error) {
+        console.error("Error fetching promotion plan:", error);
+        res.status(500).json({ message: "Failed to fetch promotion plan" });
+      }
+    },
+  );
 
   // Generate new promotion plan
-  app.post('/api/promotion-plans/generate', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const userId = req.user.id;
-      const planData = req.body;
+  app.post(
+    "/api/promotion-plans/generate",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.id;
+        const planData = req.body;
 
-      // Generate personalized strategies using AI
-      const strategies = [
-        {
-          id: 1,
-          title: "Skill Development & Certification",
-          timeline: "3-6 months",
-          description: `Focus on expanding your technical expertise by obtaining industry-relevant certifications and learning new technologies that align with your ${planData.careerGoal}. This will demonstrate your commitment to growth and make you more valuable to your organization.`,
-          completed: false
-        },
-        {
-          id: 2,
-          title: "Leadership & Mentoring Opportunities",
-          timeline: "2-4 months",
-          description: `Take on leadership roles in cross-functional projects and offer to mentor junior colleagues. This showcases your leadership potential and ability to drive results, which are key qualities for advancement to ${planData.careerGoal}.`,
-          completed: false
-        },
-        {
-          id: 3,
-          title: "Strategic Business Impact Projects",
-          timeline: "6-9 months",
-          description: `Identify and lead initiatives that directly impact business metrics and revenue. Document your contributions with quantifiable results to present during performance reviews and promotion discussions.`,
-          completed: false
-        },
-        {
-          id: 4,
-          title: "Network Building & Visibility",
-          timeline: "Ongoing",
-          description: `Build relationships with key stakeholders, including senior leadership, cross-functional teams, and industry professionals. Increase your visibility through presenting at meetings, contributing to strategic discussions, and participating in company initiatives.`,
-          completed: false
-        },
-        {
-          id: 5,
-          title: "Performance Documentation & Promotion Discussion",
-          timeline: "1-2 months",
-          description: `Create a comprehensive portfolio of your achievements, impact, and growth. Schedule regular one-on-ones with your manager to discuss career progression and formally express your interest in ${planData.careerGoal}.`,
-          completed: false
-        }
-      ];
+        // Generate personalized strategies using AI
+        const strategies = [
+          {
+            id: 1,
+            title: "Skill Development & Certification",
+            timeline: "3-6 months",
+            description: `Focus on expanding your technical expertise by obtaining industry-relevant certifications and learning new technologies that align with your ${planData.careerGoal}. This will demonstrate your commitment to growth and make you more valuable to your organization.`,
+            completed: false,
+          },
+          {
+            id: 2,
+            title: "Leadership & Mentoring Opportunities",
+            timeline: "2-4 months",
+            description: `Take on leadership roles in cross-functional projects and offer to mentor junior colleagues. This showcases your leadership potential and ability to drive results, which are key qualities for advancement to ${planData.careerGoal}.`,
+            completed: false,
+          },
+          {
+            id: 3,
+            title: "Strategic Business Impact Projects",
+            timeline: "6-9 months",
+            description: `Identify and lead initiatives that directly impact business metrics and revenue. Document your contributions with quantifiable results to present during performance reviews and promotion discussions.`,
+            completed: false,
+          },
+          {
+            id: 4,
+            title: "Network Building & Visibility",
+            timeline: "Ongoing",
+            description: `Build relationships with key stakeholders, including senior leadership, cross-functional teams, and industry professionals. Increase your visibility through presenting at meetings, contributing to strategic discussions, and participating in company initiatives.`,
+            completed: false,
+          },
+          {
+            id: 5,
+            title: "Performance Documentation & Promotion Discussion",
+            timeline: "1-2 months",
+            description: `Create a comprehensive portfolio of your achievements, impact, and growth. Schedule regular one-on-ones with your manager to discuss career progression and formally express your interest in ${planData.careerGoal}.`,
+            completed: false,
+          },
+        ];
 
-      // Create promotion plan
-      const plan = await storage.createPromotionPlan({
-        ...planData,
-        userId,
-        strategies,
-      });
+        // Create promotion plan
+        const plan = await storage.createPromotionPlan({
+          ...planData,
+          userId,
+          strategies,
+        });
 
-      res.json({ plan, message: "Promotion plan generated successfully!" });
-    } catch (error) {
-      console.error("Error generating promotion plan:", error);
-      res.status(500).json({ message: "Failed to generate promotion plan" });
-    }
-  });
+        res.json({ plan, message: "Promotion plan generated successfully!" });
+      } catch (error) {
+        console.error("Error generating promotion plan:", error);
+        res.status(500).json({ message: "Failed to generate promotion plan" });
+      }
+    },
+  );
 
   // Update progress for strategies
-  app.put('/api/promotion-plans/:id/progress', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const { id } = req.params;
-      const { strategies } = req.body;
-      const userId = req.user.id;
+  app.put(
+    "/api/promotion-plans/:id/progress",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const { id } = req.params;
+        const { strategies } = req.body;
+        const userId = req.user.id;
 
-      const updatedPlan = await storage.updatePromotionPlanProgress(id, userId, strategies);
-      res.json({ plan: updatedPlan, message: "Progress saved successfully!" });
-    } catch (error) {
-      console.error("Error updating promotion plan progress:", error);
-      res.status(500).json({ message: "Failed to save progress" });
-    }
-  });
+        const updatedPlan = await storage.updatePromotionPlanProgress(
+          id,
+          userId,
+          strategies,
+        );
+        res.json({
+          plan: updatedPlan,
+          message: "Progress saved successfully!",
+        });
+      } catch (error) {
+        console.error("Error updating promotion plan progress:", error);
+        res.status(500).json({ message: "Failed to save progress" });
+      }
+    },
+  );
 
   // ====== NEW CAREER TOOLS API ROUTES ======
 
   // Job Search Optimizer API Routes
-  app.get('/api/job-search/profile', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const userId = req.user.claims?.sub || req.user.id;
-      const profile = await storage.getJobSearchProfile(userId);
-      res.json(profile);
-    } catch (error) {
-      console.error("Error fetching job search profile:", error);
-      res.status(500).json({ error: "Failed to fetch job search profile" });
-    }
-  });
+  app.get(
+    "/api/job-search/profile",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims?.sub || req.user.id;
+        const profile = await storage.getJobSearchProfile(userId);
+        res.json(profile);
+      } catch (error) {
+        console.error("Error fetching job search profile:", error);
+        res.status(500).json({ error: "Failed to fetch job search profile" });
+      }
+    },
+  );
 
-  app.post('/api/job-search/profile', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const userId = req.user.claims?.sub || req.user.id;
-      const profile = await storage.createOrUpdateJobSearchProfile(userId, req.body);
-      res.json(profile);
-    } catch (error) {
-      console.error("Error saving job search profile:", error);
-      res.status(500).json({ error: "Failed to save job search profile" });
-    }
-  });
+  app.post(
+    "/api/job-search/profile",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims?.sub || req.user.id;
+        const profile = await storage.createOrUpdateJobSearchProfile(
+          userId,
+          req.body,
+        );
+        res.json(profile);
+      } catch (error) {
+        console.error("Error saving job search profile:", error);
+        res.status(500).json({ error: "Failed to save job search profile" });
+      }
+    },
+  );
 
-  app.get('/api/job-applications', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const userId = req.user.claims?.sub || req.user.id;
-      const applications = await storage.getJobApplications(userId);
-      res.json(applications);
-    } catch (error) {
-      console.error("Error fetching job applications:", error);
-      res.status(500).json({ error: "Failed to fetch job applications" });
-    }
-  });
+  app.get(
+    "/api/job-applications",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims?.sub || req.user.id;
+        const applications = await storage.getJobApplications(userId);
+        res.json(applications);
+      } catch (error) {
+        console.error("Error fetching job applications:", error);
+        res.status(500).json({ error: "Failed to fetch job applications" });
+      }
+    },
+  );
 
-  app.post('/api/job-applications', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const userId = req.user.claims?.sub || req.user.id;
-      const application = await storage.createJobApplication(userId, req.body);
-      res.json(application);
-    } catch (error) {
-      console.error("Error creating job application:", error);
-      res.status(500).json({ error: "Failed to create job application" });
-    }
-  });
+  app.post(
+    "/api/job-applications",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims?.sub || req.user.id;
+        const application = await storage.createJobApplication(
+          userId,
+          req.body,
+        );
+        res.json(application);
+      } catch (error) {
+        console.error("Error creating job application:", error);
+        res.status(500).json({ error: "Failed to create job application" });
+      }
+    },
+  );
 
-  app.put('/api/job-applications/:id', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const userId = req.user.claims?.sub || req.user.id;
-      const { id } = req.params;
-      const application = await storage.updateJobApplication(userId, id, req.body);
-      res.json(application);
-    } catch (error) {
-      console.error("Error updating job application:", error);
-      res.status(500).json({ error: "Failed to update job application" });
-    }
-  });
+  app.put(
+    "/api/job-applications/:id",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims?.sub || req.user.id;
+        const { id } = req.params;
+        const application = await storage.updateJobApplication(
+          userId,
+          id,
+          req.body,
+        );
+        res.json(application);
+      } catch (error) {
+        console.error("Error updating job application:", error);
+        res.status(500).json({ error: "Failed to update job application" });
+      }
+    },
+  );
 
-  app.delete('/api/job-applications/:id', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const userId = req.user.claims?.sub || req.user.id;
-      const { id } = req.params;
-      await storage.deleteJobApplication(userId, id);
-      res.json({ message: "Application deleted successfully" });
-    } catch (error) {
-      console.error("Error deleting job application:", error);
-      res.status(500).json({ error: "Failed to delete job application" });
-    }
-  });
+  app.delete(
+    "/api/job-applications/:id",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims?.sub || req.user.id;
+        const { id } = req.params;
+        await storage.deleteJobApplication(userId, id);
+        res.json({ message: "Application deleted successfully" });
+      } catch (error) {
+        console.error("Error deleting job application:", error);
+        res.status(500).json({ error: "Failed to delete job application" });
+      }
+    },
+  );
 
   // Salary Negotiator API Routes
-  app.get('/api/salary-research', isAuthenticatedAny, async (req: any, res) => {
+  app.get("/api/salary-research", isAuthenticatedAny, async (req: any, res) => {
     try {
       const userId = req.user.claims?.sub || req.user.id;
       const research = await storage.getSalaryResearch(userId);
@@ -2866,65 +3389,180 @@ Return ONLY the JSON object, no additional text or formatting.`;
     }
   });
 
-  app.post('/api/salary-research', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const userId = req.user.claims?.sub || req.user.id;
+  app.delete(
+    "/api/salary-research/:id",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims?.sub || req.user.id;
+        const { id } = req.params;
+        await storage.deleteSalaryResearch(userId, id);
+        res.json({ message: "Salary research deleted successfully" });
+      } catch (error) {
+        console.error("Error deleting salary research:", error);
+        res.status(500).json({ error: "Failed to delete salary research" });
+      }
+    },
+  );
 
-      // Generate AI-powered negotiation strategy
-      const anthropic = new Anthropic({
-        apiKey: process.env.ANTHROPIC_API_KEY,
-      });
+  app.post(
+    "/api/salary-research",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims?.sub || req.user.id;
 
-      const prompt = `Generate a personalized salary negotiation strategy based on:
-      - Job Title: ${req.body.jobTitle}
-      - Location: ${req.body.location}
-      - Experience Level: ${req.body.experienceLevel}
-      - Current Salary: $${req.body.currentSalary}
-      - Target Salary: $${req.body.targetSalary}
-      - Key Strengths: ${req.body.strengths.join(', ')}
-      - Achievements: ${req.body.achievements.join(', ')}
-      - Company Size: ${req.body.companySize}
-      - Industry: ${req.body.industry}
+        const body = req.body || {};
+        const jobTitle = String(body.jobTitle || "").trim();
+        const location = String(body.location || "").trim();
+        const experienceLevel = String(body.experienceLevel || "").trim();
+        const currentSalary = Number(body.currentSalary);
+        const targetSalary = Number(body.targetSalary);
+        const strengths = Array.isArray(body.strengths)
+          ? body.strengths.map((s: any) => String(s || "").trim()).filter(Boolean)
+          : [];
+        const achievements = Array.isArray(body.achievements)
+          ? body.achievements.map((a: any) => String(a || "").trim()).filter(Boolean)
+          : [];
+        const companySize = String(body.companySize || "").trim();
+        const industry = String(body.industry || "").trim();
 
-      Provide a comprehensive negotiation strategy including:
-      1. Market analysis and salary positioning
-      2. Specific talking points based on their strengths
-      3. Negotiation timeline and approach
-      4. Common objections and how to address them
-      5. Alternative benefits to consider if salary is inflexible
+        if (!jobTitle || !location || !experienceLevel || !Number.isFinite(currentSalary) || !Number.isFinite(targetSalary) || strengths.length === 0) {
+          return res.status(400).json({
+            error:
+              "Missing or invalid fields. Required: jobTitle, location, experienceLevel, currentSalary, targetSalary, strengths[]",
+          });
+        }
 
-      Format the response as a detailed, actionable strategy.`;
+        let negotiationStrategy = "";
 
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 2000,
-        messages: [{ role: "user", content: prompt }],
-      });
+        const prompt = `Generate a personalized salary negotiation strategy based on:
+      - Job Title: ${jobTitle}
+      - Location: ${location}
+      - Experience Level: ${experienceLevel}
+      - Current Salary: $${currentSalary}
+      - Target Salary: $${targetSalary}
+      - Key Strengths: ${strengths.join(", ")}
+      - Achievements: ${achievements.join(", ")}
+      - Company Size: ${companySize}
+      - Industry: ${industry}
 
-      const negotiationStrategy = response.content[0].text;
+      Output MUST include these 3 sections (use the exact labels below):
 
-      const researchData = {
-        ...req.body,
-        negotiationStrategy,
-        marketData: {
-          averageSalary: Math.round((req.body.currentSalary + req.body.targetSalary) / 2 * 1.1),
-          salaryRange: {
-            min: Math.round(req.body.currentSalary * 0.9),
-            max: Math.round(req.body.targetSalary * 1.2)
+      BENCHMARK RANGES FOR YOUR ROLE AND LOCATION:
+      - Provide a realistic range (low / typical / high) for base salary and briefly explain the assumptions.
+      - Mention how level, company size, and industry may shift the range.
+
+      SCRIPTS FOR COUNTER-OFFERS AND PROMOTIONS:
+      - Provide 3 short scripts: (1) counter-offer on a new offer, (2) ask for a promotion/level-up, (3) ask for an out-of-cycle raise.
+      - Make them copy/paste-ready, professional, and specific to the user's inputs.
+
+      CONFIDENCE BACKED BY TALKING POINTS:
+      - Provide 6–10 bullet talking points anchored in strengths/achievements and business impact.
+      - Include 2 responses to common objections (budget/leveling).
+
+      Then add (briefly):
+      - Negotiation timeline and approach (3–6 bullets)
+      - Alternative benefits to negotiate if base is inflexible (bullets)
+      - Suggested anchor number and walk-away floor (with numbers)
+
+      IMPORTANT: Do NOT use markdown headings like "#", "##", or "###".
+      Use plain text only. Keep it structured and skimmable.`;
+
+        if (process.env.ANTHROPIC_API_KEY) {
+          const anthropic = new Anthropic({
+            apiKey: process.env.ANTHROPIC_API_KEY,
+          });
+
+          const response = await anthropic.messages.create({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 2000,
+            messages: [{ role: "user", content: prompt }],
+          });
+
+          const first = response.content?.[0];
+          if (first && typeof first === "object" && "type" in first && (first as any).type === "text") {
+            negotiationStrategy = String((first as any).text || "");
+          } else if (first && typeof first === "object" && "text" in first) {
+            // Back-compat if SDK returns plain text blocks
+            negotiationStrategy = String((first as any).text || "");
           }
         }
-      };
 
-      const research = await storage.createSalaryResearch(userId, researchData);
-      res.json(research);
-    } catch (error) {
-      console.error("Error creating salary research:", error);
-      res.status(500).json({ error: "Failed to create salary research" });
-    }
-  });
+        // Normalize output: remove markdown heading markers if model uses them anyway.
+        if (negotiationStrategy) {
+          negotiationStrategy = negotiationStrategy
+            .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+            .replace(/^\s{0,3}#{1,6}\s*$/gm, "")
+            .trim();
+        }
+
+        if (!negotiationStrategy) {
+          // Safe fallback so the tool still works without AI configured
+          negotiationStrategy = [
+            "BENCHMARK RANGES FOR YOUR ROLE AND LOCATION:",
+            `- Low: $${Math.round(targetSalary * 0.9).toLocaleString()} • Typical: $${Math.round(((currentSalary + targetSalary) / 2) * 1.05).toLocaleString()} • High: $${Math.round(targetSalary * 1.15).toLocaleString()} (base salary)`,
+            `- Assumptions: ${experienceLevel} ${jobTitle} in ${location}. Larger companies and high-demand industries tend to pay toward the high end.`,
+            "",
+            "SCRIPTS FOR COUNTER-OFFERS AND PROMOTIONS:",
+            `1) Counter-offer (new offer): “I’m excited about the ${jobTitle} role. Based on market ranges for ${location} and the impact I’ll deliver (${strengths.slice(0, 2).join("; ") || "my core strengths"}), I’m targeting $${Math.round(targetSalary * 1.05).toLocaleString()} base. Is there flexibility to move the offer closer to that?”`,
+            `2) Promotion / level-up: “I’d like to discuss leveling based on scope and results. Over the last cycle I delivered ${achievements.filter(Boolean).slice(0, 1)[0] || "measurable outcomes"} and I’m already operating at the next level. Can we align my level and compensation to reflect that?”`,
+            `3) Out-of-cycle raise: “Given the expanded responsibilities and results I’m driving, I’d like to revisit compensation now rather than waiting for the annual cycle. What would we need to see to move my base to $${Math.round(targetSalary).toLocaleString()}?”`,
+            "",
+            "CONFIDENCE BACKED BY TALKING POINTS:",
+            ...strengths.slice(0, 5).map((s: string) => `- ${s}`),
+            ...achievements.slice(0, 5).map((a: string) => `- Proof: ${a}`),
+            "- Objection: “We don’t have budget.” → “What range is approved? If base is capped, can we bridge the gap with sign-on, bonus, equity, or a 90-day salary review tied to clear milestones?”",
+            "- Objection: “This is standard for this level.” → “Happy to align—can we re-check leveling given scope/impact, or adjust comp within-band based on market and my experience?”",
+            "",
+            "Negotiation timeline and approach:",
+            "- Reaffirm excitement → ask about flexibility → present benchmark range + anchor → pause and listen → trade variables (base vs bonus/equity) → confirm next steps in writing.",
+            "",
+            "Alternative benefits to negotiate:",
+            "- Sign-on bonus, performance bonus, equity, remote/hybrid, extra PTO, learning budget, title/level alignment, review in 3–6 months.",
+            "",
+            `Anchor & walk-away floor: Anchor $${Math.round(targetSalary * 1.05).toLocaleString()} • Walk-away (base) $${Math.round(targetSalary * 0.92).toLocaleString()}`,
+          ]
+            .filter(Boolean)
+            .join("\n");
+        }
+
+        const researchData = {
+          jobTitle,
+          location,
+          experienceLevel,
+          currentSalary,
+          targetSalary,
+          strengths,
+          achievements,
+          companySize,
+          industry,
+          negotiationStrategy,
+          marketData: {
+            averageSalary: Math.round(
+              ((currentSalary + targetSalary) / 2) * 1.1,
+            ),
+            salaryRange: {
+              min: Math.round(currentSalary * 0.9),
+              max: Math.round(targetSalary * 1.2),
+            },
+          },
+        };
+
+        const research = await storage.createSalaryResearch(
+          userId,
+          researchData,
+        );
+        res.json(research);
+      } catch (error) {
+        console.error("Error creating salary research:", error);
+        res.status(500).json({ error: "Failed to create salary research" });
+      }
+    },
+  );
 
   // Career Path Analyzer API Routes
-  app.get('/api/career-paths', isAuthenticatedAny, async (req: any, res) => {
+  app.get("/api/career-paths", isAuthenticatedAny, async (req: any, res) => {
     try {
       const userId = req.user.claims?.sub || req.user.id;
       const paths = await storage.getCareerPaths(userId);
@@ -2935,7 +3573,7 @@ Return ONLY the JSON object, no additional text or formatting.`;
     }
   });
 
-  app.post('/api/career-paths', isAuthenticatedAny, async (req: any, res) => {
+  app.post("/api/career-paths", isAuthenticatedAny, async (req: any, res) => {
     try {
       const userId = req.user.claims?.sub || req.user.id;
 
@@ -2947,9 +3585,9 @@ Return ONLY the JSON object, no additional text or formatting.`;
       const prompt = `Analyze career progression opportunities based on:
       - Current Role: ${req.body.currentRole}
       - Experience: ${req.body.experienceYears} years
-      - Skills: ${req.body.skills.join(', ')}
-      - Interests: ${req.body.interests.join(', ')}
-      - Goals: ${req.body.goals.join(', ')}
+      - Skills: ${req.body.skills.join(", ")}
+      - Interests: ${req.body.interests.join(", ")}
+      - Goals: ${req.body.goals.join(", ")}
 
       Provide 3-4 potential career pathways with:
       1. Career progression title and description
@@ -2975,16 +3613,21 @@ Return ONLY the JSON object, no additional text or formatting.`;
       const pathways = [
         {
           title: `Senior ${req.body.currentRole}`,
-          description: "Natural progression in current role with increased responsibilities",
+          description:
+            "Natural progression in current role with increased responsibilities",
           timeline: "1-2 years",
           salaryRange: "$80k - $120k",
           difficulty: "Medium",
-          requiredSkills: ["Advanced technical skills", "Leadership", "Mentoring"],
+          requiredSkills: [
+            "Advanced technical skills",
+            "Leadership",
+            "Mentoring",
+          ],
           nextSteps: [
             "Take on leadership projects",
             "Mentor junior team members",
-            "Develop strategic thinking skills"
-          ]
+            "Develop strategic thinking skills",
+          ],
         },
         {
           title: "Team Lead/Manager",
@@ -2992,12 +3635,16 @@ Return ONLY the JSON object, no additional text or formatting.`;
           timeline: "2-3 years",
           salaryRange: "$90k - $140k",
           difficulty: "Medium",
-          requiredSkills: ["People management", "Strategic planning", "Communication"],
+          requiredSkills: [
+            "People management",
+            "Strategic planning",
+            "Communication",
+          ],
           nextSteps: [
             "Complete management training",
             "Lead cross-functional projects",
-            "Build stakeholder relationships"
-          ]
+            "Build stakeholder relationships",
+          ],
         },
         {
           title: "Subject Matter Expert",
@@ -3005,13 +3652,17 @@ Return ONLY the JSON object, no additional text or formatting.`;
           timeline: "1-3 years",
           salaryRange: "$85k - $130k",
           difficulty: "Low",
-          requiredSkills: ["Deep technical expertise", "Thought leadership", "Communication"],
+          requiredSkills: [
+            "Deep technical expertise",
+            "Thought leadership",
+            "Communication",
+          ],
           nextSteps: [
             "Publish articles and content",
             "Speak at industry events",
-            "Build professional network"
-          ]
-        }
+            "Build professional network",
+          ],
+        },
       ];
 
       const analysisData = {
@@ -3021,9 +3672,9 @@ Return ONLY the JSON object, no additional text or formatting.`;
           "Update LinkedIn profile with latest achievements",
           "Identify skill gaps for target roles",
           "Network with professionals in desired paths",
-          "Set 3-month career development goals"
+          "Set 3-month career development goals",
         ],
-        analysisText
+        analysisText,
       };
 
       const analysis = await storage.createCareerPath(userId, analysisData);
@@ -3035,31 +3686,38 @@ Return ONLY the JSON object, no additional text or formatting.`;
   });
 
   // Skills Assessment API Routes
-  app.get('/api/skills-assessments', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const userId = req.user.claims?.sub || req.user.id;
-      const assessments = await storage.getSkillsAssessments(userId);
-      res.json(assessments);
-    } catch (error) {
-      console.error("Error fetching skills assessments:", error);
-      res.status(500).json({ error: "Failed to fetch skills assessments" });
-    }
-  });
+  app.get(
+    "/api/skills-assessments",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims?.sub || req.user.id;
+        const assessments = await storage.getSkillsAssessments(userId);
+        res.json(assessments);
+      } catch (error) {
+        console.error("Error fetching skills assessments:", error);
+        res.status(500).json({ error: "Failed to fetch skills assessments" });
+      }
+    },
+  );
 
-  app.post('/api/skills-assessments', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const userId = req.user.claims?.sub || req.user.id;
+  app.post(
+    "/api/skills-assessments",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims?.sub || req.user.id;
 
-      // Generate AI-powered skills assessment analysis
-      const anthropic = new Anthropic({
-        apiKey: process.env.ANTHROPIC_API_KEY,
-      });
+        // Generate AI-powered skills assessment analysis
+        const anthropic = new Anthropic({
+          apiKey: process.env.ANTHROPIC_API_KEY,
+        });
 
-      const prompt = `Analyze skills assessment results and provide detailed feedback:
+        const prompt = `Analyze skills assessment results and provide detailed feedback:
       - Assessment Type: ${req.body.assessmentType}
       - Current Role: ${req.body.currentRole}
-      - Target Role: ${req.body.targetRole || 'Not specified'}
-      - Skills Assessed: ${req.body.skillsToAssess.join(', ')}
+      - Target Role: ${req.body.targetRole || "Not specified"}
+      - Skills Assessed: ${req.body.skillsToAssess.join(", ")}
       - Skill Ratings: ${JSON.stringify(req.body.assessment)}
 
       For each skill, provide:
@@ -3076,48 +3734,64 @@ Return ONLY the JSON object, no additional text or formatting.`;
 
       Format as detailed, actionable feedback.`;
 
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 2000,
-        messages: [{ role: "user", content: prompt }],
-      });
+        const response = await anthropic.messages.create({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 2000,
+          messages: [{ role: "user", content: prompt }],
+        });
 
-      const analysisText = response.content[0].text;
+        const analysisText = response.content[0].text;
 
-      // Calculate overall score
-      const avgScore = req.body.assessment.reduce((sum: number, skill: any) => sum + skill.level, 0) / req.body.assessment.length;
-      const overallScore = Math.round(avgScore * 20); // Convert to 100 point scale
+        // Calculate overall score
+        const avgScore =
+          req.body.assessment.reduce(
+            (sum: number, skill: any) => sum + skill.level,
+            0,
+          ) / req.body.assessment.length;
+        const overallScore = Math.round(avgScore * 20); // Convert to 100 point scale
 
-      const assessmentData = {
-        ...req.body,
-        overallScore,
-        strengthAreas: req.body.assessment.filter((s: any) => s.level >= 4).map((s: any) => s.skill),
-        improvementAreas: req.body.assessment.filter((s: any) => s.level <= 2).map((s: any) => s.skill),
-        analysisText,
-        completedAt: new Date().toISOString()
-      };
+        const assessmentData = {
+          ...req.body,
+          overallScore,
+          strengthAreas: req.body.assessment
+            .filter((s: any) => s.level >= 4)
+            .map((s: any) => s.skill),
+          improvementAreas: req.body.assessment
+            .filter((s: any) => s.level <= 2)
+            .map((s: any) => s.skill),
+          analysisText,
+          completedAt: new Date().toISOString(),
+        };
 
-      const assessment = await storage.createSkillsAssessment(userId, assessmentData);
-      res.json(assessment);
-    } catch (error) {
-      console.error("Error creating skills assessment:", error);
-      res.status(500).json({ error: "Failed to create skills assessment" });
-    }
-  });
+        const assessment = await storage.createSkillsAssessment(
+          userId,
+          assessmentData,
+        );
+        res.json(assessment);
+      } catch (error) {
+        console.error("Error creating skills assessment:", error);
+        res.status(500).json({ error: "Failed to create skills assessment" });
+      }
+    },
+  );
 
   // Portfolio Builder API Routes
-  app.get('/api/portfolios/current', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const userId = req.user.claims?.sub || req.user.id;
-      const portfolio = await storage.getPortfolio(userId);
-      res.json(portfolio);
-    } catch (error) {
-      console.error("Error fetching portfolio:", error);
-      res.status(500).json({ error: "Failed to fetch portfolio" });
-    }
-  });
+  app.get(
+    "/api/portfolios/current",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims?.sub || req.user.id;
+        const portfolio = await storage.getPortfolio(userId);
+        res.json(portfolio);
+      } catch (error) {
+        console.error("Error fetching portfolio:", error);
+        res.status(500).json({ error: "Failed to fetch portfolio" });
+      }
+    },
+  );
 
-  app.post('/api/portfolios', isAuthenticatedAny, async (req: any, res) => {
+  app.post("/api/portfolios", isAuthenticatedAny, async (req: any, res) => {
     try {
       const userId = req.user.claims?.sub || req.user.id;
       const portfolio = await storage.createPortfolio(userId, req.body);
@@ -3128,7 +3802,7 @@ Return ONLY the JSON object, no additional text or formatting.`;
     }
   });
 
-  app.put('/api/portfolios/:id', isAuthenticatedAny, async (req: any, res) => {
+  app.put("/api/portfolios/:id", isAuthenticatedAny, async (req: any, res) => {
     try {
       const userId = req.user.claims?.sub || req.user.id;
       const { id } = req.params;
@@ -3141,51 +3815,148 @@ Return ONLY the JSON object, no additional text or formatting.`;
   });
 
   // Networking Assistant API Routes
-  app.get('/api/network-connections', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const userId = req.user.claims?.sub || req.user.id;
-      const connections = await storage.getNetworkConnections(userId);
-      res.json(connections);
-    } catch (error) {
-      console.error("Error fetching network connections:", error);
-      res.status(500).json({ error: "Failed to fetch network connections" });
-    }
-  });
+  app.get(
+    "/api/network-connections",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims?.sub || req.user.id;
+        const connections = await storage.getNetworkConnections(userId);
+        res.json(connections);
+      } catch (error) {
+        console.error("Error fetching network connections:", error);
+        res.status(500).json({ error: "Failed to fetch network connections" });
+      }
+    },
+  );
 
-  app.post('/api/network-connections', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const userId = req.user.claims?.sub || req.user.id;
-      const connection = await storage.createNetworkConnection(userId, req.body);
-      res.json(connection);
-    } catch (error) {
-      console.error("Error creating network connection:", error);
-      res.status(500).json({ error: "Failed to create network connection" });
-    }
-  });
+  app.post(
+    "/api/network-connections",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims?.sub || req.user.id;
+        const connection = await storage.createNetworkConnection(
+          userId,
+          req.body,
+        );
+        res.json(connection);
+      } catch (error) {
+        console.error("Error creating network connection:", error);
+        res.status(500).json({ error: "Failed to create network connection" });
+      }
+    },
+  );
 
-  app.put('/api/network-connections/:id', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const userId = req.user.claims?.sub || req.user.id;
-      const { id } = req.params;
-      const connection = await storage.updateNetworkConnection(userId, id, req.body);
-      res.json(connection);
-    } catch (error) {
-      console.error("Error updating network connection:", error);
-      res.status(500).json({ error: "Failed to update network connection" });
-    }
-  });
+  app.put(
+    "/api/network-connections/:id",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims?.sub || req.user.id;
+        const { id } = req.params;
+        const connection = await storage.updateNetworkConnection(
+          userId,
+          id,
+          req.body,
+        );
+        res.json(connection);
+      } catch (error) {
+        console.error("Error updating network connection:", error);
+        res.status(500).json({ error: "Failed to update network connection" });
+      }
+    },
+  );
 
-  app.delete('/api/network-connections/:id', isAuthenticatedAny, async (req: any, res) => {
-    try {
-      const userId = req.user.claims?.sub || req.user.id;
-      const { id } = req.params;
-      await storage.deleteNetworkConnection(userId, id);
-      res.json({ message: "Connection deleted successfully" });
-    } catch (error) {
-      console.error("Error deleting network connection:", error);
-      res.status(500).json({ error: "Failed to delete network connection" });
-    }
-  });
+  app.delete(
+    "/api/network-connections/:id",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims?.sub || req.user.id;
+        const { id } = req.params;
+        await storage.deleteNetworkConnection(userId, id);
+        res.json({ message: "Connection deleted successfully" });
+      } catch (error) {
+        console.error("Error deleting network connection:", error);
+        res.status(500).json({ error: "Failed to delete network connection" });
+      }
+    },
+  );
+
+  // Networking Assistant — AI message generator
+  app.post(
+    "/api/networking-assistant/generate-message",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const body = req.body || {};
+        const contextType = String(body.contextType || "").trim(); // cold-outreach | follow-up | job-inquiry
+        const contact = body.contact && typeof body.contact === "object" ? body.contact : {};
+        const name = String((contact as any).name || "").trim();
+        const company = String((contact as any).company || "").trim();
+        const role = String((contact as any).role || "").trim();
+        const linkedInUrl = String((contact as any).linkedInUrl || (contact as any).contactLinkedIn || "").trim();
+        const notes = String((contact as any).notes || "").trim();
+        const extraContext = String(body.context || "").trim();
+
+        if (!contextType) {
+          return res.status(400).json({ error: "contextType is required" });
+        }
+
+        const prompt = `Write a professional, friendly, non-robotic networking message.
+
+Context type: ${contextType}
+Recipient name: ${name || "(unknown)"}
+Recipient company: ${company || "(unknown)"}
+Recipient role: ${role || "(unknown)"}
+LinkedIn URL (if any): ${linkedInUrl || "(none)"}
+Notes about the person / last conversation (if any): ${notes || "(none)"}
+Extra context from user: ${extraContext || "(none)"}
+
+Requirements:
+- Output ONLY the message text (no headings, no markdown, no bullet lists).
+- Keep it concise: 70–140 words.
+- Include 1 clear call-to-action.
+- Avoid generic fluff, avoid sounding like AI, avoid emojis.
+- If context type is "follow-up", reference a plausible prior touchpoint.
+- If context type is "job-inquiry", include a respectful ask and mention fit briefly.
+`;
+
+        if (process.env.ANTHROPIC_API_KEY) {
+          const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+          const response = await anthropic.messages.create({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 350,
+            messages: [{ role: "user", content: prompt }],
+          });
+
+          const first = response.content?.[0] as any;
+          const text =
+            first && typeof first === "object" && "text" in first
+              ? String(first.text || "")
+              : "";
+          return res.json({ message: text.trim() });
+        }
+
+        // Fallback (no AI key)
+        const fallback = (() => {
+          if (contextType === "follow-up") {
+            return `Hi ${name || "there"},\n\nI hope you’ve been well. I wanted to follow up on our last conversation${company ? ` about ${company}` : ""}—your perspective was helpful, and I’ve been thinking about it. If you’re open to it, I’d love to reconnect for 10–15 minutes this week to get your latest thoughts${role ? ` on ${role}` : ""}.\n\nWould Tuesday or Thursday work for a quick chat?\n`;
+          }
+          if (contextType === "job-inquiry") {
+            return `Hi ${name || "there"},\n\nI’m reaching out because I’m exploring ${role ? role : "roles"}${company ? ` at ${company}` : ""} and your background stood out. I’d appreciate any guidance on the team’s needs and what strong candidates typically demonstrate. If you’re open to a quick 10-minute chat, I can work around your schedule.\n\nWould you have time sometime this week?\n`;
+          }
+          return `Hi ${name || "there"},\n\nI came across your profile${company ? ` at ${company}` : ""} and wanted to reach out. I’m currently focusing on ${role ? role : "my next role"} and would love to connect and learn from your experience. If you’re open to it, I’d appreciate a quick 10-minute chat to hear how you approached your career moves.\n\nWould you be open to connecting?\n`;
+        })();
+
+        return res.json({ message: fallback.trim() });
+      } catch (error) {
+        console.error("Error generating networking message:", error);
+        res.status(500).json({ error: "Failed to generate message" });
+      }
+    },
+  );
 
   const resumeJsonStructure = `
 {
@@ -3223,7 +3994,7 @@ Return ONLY the JSON object, no additional text or formatting.`;
 }
 `;
 
-  app.post('/api/upload-resume', async (req, res) => {
+  app.post("/api/upload-resume", async (req, res) => {
     try {
       const form = new Formidable();
       const anthropic = new Anthropic({
@@ -3237,41 +4008,49 @@ Return ONLY the JSON object, no additional text or formatting.`;
       const user = await GetUserScscriptionTrialValidation(id);
 
       if (!user) {
-        return res.status(400).json({ error: 'Subscription has expired, or you have not subscribed' });
+        return res
+          .status(400)
+          .json({
+            error: "Subscription has expired, or you have not subscribed",
+          });
       }
-
-
 
       if (!resumeFile) {
-        return res.status(400).json({ error: 'No resume file uploaded.' });
+        return res.status(400).json({ error: "No resume file uploaded." });
       }
 
-
-
-      let rawText = '';
+      let rawText = "";
       const filePath = resumeFile.filepath;
-      const fileExt = path.extname(resumeFile.originalFilename || '').toLowerCase();
+      const fileExt = path
+        .extname(resumeFile.originalFilename || "")
+        .toLowerCase();
 
       // Extract raw text from the uploaded file
-      if (fileExt === '.pdf') {
+      if (fileExt === ".pdf") {
         const dataBuffer = fs.readFileSync(filePath);
         const data = await pdf(dataBuffer);
         rawText = data.text;
-      } else if (fileExt === '.docx') {
+      } else if (fileExt === ".docx") {
         const { value } = await mammoth.extractRawText({ path: filePath });
         rawText = value;
-      } else if (fileExt === '.txt') {
-        rawText = fs.readFileSync(filePath, 'utf8');
+      } else if (fileExt === ".txt") {
+        rawText = fs.readFileSync(filePath, "utf8");
       } else {
         fs.unlinkSync(filePath); // Clean up temp file
-        return res.status(400).json({ error: 'Unsupported file type. Please use PDF, DOCX, or TXT.' });
+        return res
+          .status(400)
+          .json({
+            error: "Unsupported file type. Please use PDF, DOCX, or TXT.",
+          });
       }
 
       // Clean up the temporary file
       fs.unlinkSync(filePath);
 
       if (!rawText.trim()) {
-        return res.status(400).json({ error: 'Could not extract any text from the file.' });
+        return res
+          .status(400)
+          .json({ error: "Could not extract any text from the file." });
       }
 
       // --- AI-Powered Parsing Step using Anthropic Claude ---
@@ -3296,7 +4075,7 @@ Return ONLY the JSON object, no additional text or formatting.`;
         model: "claude-sonnet-4-20250514",
         max_tokens: 2000,
         temperature: 0.1,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: "user", content: prompt }],
       });
 
       const responseText = msg.content[0].text;
@@ -3304,51 +4083,75 @@ Return ONLY the JSON object, no additional text or formatting.`;
 
       try {
         parsedData = JSON.parse(responseText);
-        await DetuctCredits(user)
-
+        await DetuctCredits(user);
       } catch (parseError) {
         console.error("Failed to parse JSON from AI response:", responseText);
         throw new Error("AI returned a non-JSON response. Please try again.");
       }
 
       console.log("✅ Successfully parsed resume with Claude.");
-      res.status(200).json({ message: 'Resume parsed successfully', parsedData });
-
+      res
+        .status(200)
+        .json({ message: "Resume parsed successfully", parsedData });
     } catch (error) {
-      console.error('Error in /api/upload-resume:', error);
-      res.status(500).json({ error: 'Failed to process resume.', details: error.message });
+      console.error("Error in /api/upload-resume:", error);
+      res
+        .status(500)
+        .json({ error: "Failed to process resume.", details: error.message });
     }
   });
-
 
   async function scrapeLinkedInProfile(profileUrl) {
     console.log(`Simulating scraping for: ${profileUrl}`);
     // In a real implementation, you would use a library like Puppeteer or an API call to a scraping service here.
     // For now, return mock data.
-    await new Promise(resolve => setTimeout(resolve, 1500)); // Simulate network delay
+    await new Promise((resolve) => setTimeout(resolve, 1500)); // Simulate network delay
     return {
       name: "Alex Doe",
       headline: "Software Engineer at TechCorp | Building the Future of Web",
-      about: "Experienced Software Engineer with a demonstrated history of working in the computer software industry. Skilled in JavaScript, React, Node.js, and Agile Methodologies. Strong engineering professional with a Bachelor's degree focused in Computer Science from University of Technology.",
+      about:
+        "Experienced Software Engineer with a demonstrated history of working in the computer software industry. Skilled in JavaScript, React, Node.js, and Agile Methodologies. Strong engineering professional with a Bachelor's degree focused in Computer Science from University of Technology.",
       location: "San Francisco Bay Area",
       experience: [
-        { title: "Software Engineer", company: "TechCorp", duration: "2021 - Present", description: "Developed and maintained web applications using React and Node.js. Improved application performance by 20%." },
-        { title: "Junior Developer", company: "Innovate LLC", duration: "2019 - 2021", description: "Assisted in the development of client websites." }
+        {
+          title: "Software Engineer",
+          company: "TechCorp",
+          duration: "2021 - Present",
+          description:
+            "Developed and maintained web applications using React and Node.js. Improved application performance by 20%.",
+        },
+        {
+          title: "Junior Developer",
+          company: "Innovate LLC",
+          duration: "2019 - 2021",
+          description: "Assisted in the development of client websites.",
+        },
       ],
-      skills: ["React", "Node.js", "TypeScript", "JavaScript", "Agile Methodologies", "Leadership", "Problem Solving"],
+      skills: [
+        "React",
+        "Node.js",
+        "TypeScript",
+        "JavaScript",
+        "Agile Methodologies",
+        "Leadership",
+        "Problem Solving",
+      ],
       keywords: ["software engineer", "react", "node.js", "developer", "tech"],
       profileImageUrl: `https://i.pravatar.cc/150?u=${profileUrl}`,
       connectionCount: "500+ connections",
     };
   }
 
-
-
   app.post("/api/analyze-profile-with-ai", async (req, res) => {
     const { profileData, targetJobTitle } = req.body;
 
     if (!profileData || !targetJobTitle) {
-      return res.status(400).json({ error: "Profile data and target job title are required for AI analysis." });
+      return res
+        .status(400)
+        .json({
+          error:
+            "Profile data and target job title are required for AI analysis.",
+        });
     }
 
     const anthropic = new Anthropic({
@@ -3425,30 +4228,32 @@ Return ONLY the JSON object, no additional text or formatting.`;
         model: "claude-sonnet-4-20250514", // Using Opus for best results on complex JSON tasks
         max_tokens: 4000,
         temperature: 0.2,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: "user", content: prompt }],
       });
 
       const responseText = msg.content[0].text;
 
       // Find the start and end of the JSON object
-      const jsonStart = responseText.indexOf('{');
-      const jsonEnd = responseText.lastIndexOf('}') + 1;
+      const jsonStart = responseText.indexOf("{");
+      const jsonEnd = responseText.lastIndexOf("}") + 1;
       const jsonString = responseText.substring(jsonStart, jsonEnd);
 
       const analysisReport = JSON.parse(jsonString);
 
       console.log("✅ Successfully generated AI analysis report.");
       res.status(200).json(analysisReport);
-
     } catch (error) {
-      console.error('Error in /api/analyze-profile-with-ai:', error);
-      res.status(500).json({ error: 'Failed to generate AI analysis.', details: error.message });
+      console.error("Error in /api/analyze-profile-with-ai:", error);
+      res
+        .status(500)
+        .json({
+          error: "Failed to generate AI analysis.",
+          details: error.message,
+        });
     }
   });
 
-
-
-  app.post('/api/generate-outreach-message', async (req, res) => {
+  app.post("/api/generate-outreach-message", async (req, res) => {
     try {
       const {
         messageType, // 'linkedin-dm', 'email', 'referral'
@@ -3460,17 +4265,23 @@ Return ONLY the JSON object, no additional text or formatting.`;
         industry,
         experience,
         tone,
-        id
+        id,
       } = req.body;
 
       if (!yourName || !messageType) {
-        return res.status(400).json({ error: 'Your name and message type are required.' });
+        return res
+          .status(400)
+          .json({ error: "Your name and message type are required." });
       }
 
       const user = await GetUserScscriptionTrialValidation(id);
 
       if (!user) {
-        return res.status(400).json({ error: 'Subscription has expired, or you have not subscribed' });
+        return res
+          .status(400)
+          .json({
+            error: "Subscription has expired, or you have not subscribed",
+          });
       }
 
       const anthropic = new Anthropic({
@@ -3479,11 +4290,10 @@ Return ONLY the JSON object, no additional text or formatting.`;
 
       // Determine the message type name for the prompt
       const messageTypeName = {
-        'linkedin-dm': 'LinkedIn Direct Message',
-        'email': 'Cold Email',
-        'referral': 'Referral Request'
+        "linkedin-dm": "LinkedIn Direct Message",
+        email: "Cold Email",
+        referral: "Referral Request",
       }[messageType];
-
 
       const prompt = `
 You are an expert career coach and professional copywriter specializing in job search outreach. 
@@ -3520,24 +4330,27 @@ Do not include any other text, explanations, or markdown formatting like \`\`\`j
 Example format: {"message": "Subject: Inquiry about opportunities\\n\\nDear John,\\n..."}
 `;
 
-
       const msg = await anthropic.messages.create({
         model: "claude-sonnet-4-20250514",
         max_tokens: 1000,
         temperature: 0.6,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: "user", content: prompt }],
       });
 
       const responseText = msg.content[0].text;
       const parsedResponse = JSON.parse(responseText);
 
       console.log(`✅ Successfully generated ${messageTypeName} with Claude.`);
-      await DetuctCredits(user)
+      await DetuctCredits(user);
       res.status(200).json({ generatedMessage: parsedResponse.message });
-
     } catch (error) {
-      console.error('Error in /api/generate-outreach-message:', error);
-      res.status(500).json({ error: 'Failed to generate outreach message.', details: error.message });
+      console.error("Error in /api/generate-outreach-message:", error);
+      res
+        .status(500)
+        .json({
+          error: "Failed to generate outreach message.",
+          details: error.message,
+        });
     }
   });
 
@@ -3557,7 +4370,6 @@ Example format: {"message": "Subject: Inquiry about opportunities\\n\\nDear John
         apiKey: process.env.ANTHROPIC_API_KEY,
       });
 
-
       if (!fieldName || !resumeContext) {
         return res.status(400).json({ error: "Missing required fields." });
       }
@@ -3566,7 +4378,7 @@ Example format: {"message": "Subject: Inquiry about opportunities\\n\\nDear John
 
       let prompt;
 
-      if (fieldName === 'skills') {
+      if (fieldName === "skills") {
         // --- PROMPT FOR SKILLS ---
         let userInstruction;
         if (improvementType === "manual" && manualPrompt) {
@@ -3593,7 +4405,6 @@ Your task: ${userInstruction}
 
 IMPORTANT: Respond ONLY with a single, comma-separated string of skills. Do not include any explanations, greetings, or markdown formatting. For example: "React, JavaScript, Node.js, Agile Methodologies, Team Leadership, SQL".
 `;
-
       } else {
         // --- DEFAULT PROMPT FOR OTHER FIELDS (like summary, description, etc.) ---
         let userInstruction;
@@ -3624,22 +4435,22 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
 
       // --- CHANGE ENDS HERE ---
 
-
       // --- API Call to Claude (No changes needed here) ---
       const msg = await anthropic.messages.create({
         model: "claude-sonnet-4-20250514",
         max_tokens: 500,
         temperature: 0.7,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: "user", content: prompt }],
       });
 
       const suggestion = msg.content[0].text;
 
       res.status(200).json({ suggestion: suggestion.trim() });
-
     } catch (error) {
       console.error("Error calling Anthropic API:", error);
-      res.status(500).json({ error: "An error occurred while communicating with the AI." });
+      res
+        .status(500)
+        .json({ error: "An error occurred while communicating with the AI." });
     }
   });
 
@@ -3653,14 +4464,18 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
         category = "all",
         year,
         search,
-        id
+        id,
       } = req.query;
 
       const user = await GetUserScscriptionTrialValidation(id);
-      console.log(user, id)
+      console.log(user, id);
 
       if (!user) {
-        return res.status(400).json({ error: 'Subscription has expired, or you have not subscribed.' });
+        return res
+          .status(400)
+          .json({
+            error: "Subscription has expired, or you have not subscribed.",
+          });
       }
 
       const pageNum = parseInt(page as string);
@@ -3672,9 +4487,7 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
 
       // Handle "upcoming" category - layoffs with dates in the future
       if (category === "upcoming") {
-        conditions.push(
-          gte(layoffs.date, new Date())
-        );
+        conditions.push(gte(layoffs.date, new Date()));
       }
       // Category filter (for industries)
       else if (category !== "all") {
@@ -3687,22 +4500,20 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
         const startDate = new Date(`${yearNum}-01-01`);
         const endDate = new Date(`${yearNum}-12-31`);
         conditions.push(
-          and(
-            gte(layoffs.date, startDate),
-            lte(layoffs.date, endDate)
-          )
+          and(gte(layoffs.date, startDate), lte(layoffs.date, endDate)),
         );
       }
 
       // Search filter (company name)
       if (search) {
         conditions.push(
-          sql`LOWER(${layoffs.company}) LIKE ${`%${(search as string).toLowerCase()}%`}`
+          sql`LOWER(${layoffs.company}) LIKE ${`%${(search as string).toLowerCase()}%`}`,
         );
       }
 
       // Build the where clause
-      const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+      const whereClause =
+        conditions.length > 0 ? and(...conditions) : undefined;
 
       // Get total count for pagination
       const [{ count }] = await db
@@ -3720,25 +4531,34 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
         .offset(offset);
 
       // Calculate stats
-      const allLayoffs = await db
-        .select()
-        .from(layoffs)
-        .where(whereClause);
+      const allLayoffs = await db.select().from(layoffs).where(whereClause);
 
       const stats = {
         total: count,
         by_year: {
-          2024: allLayoffs.filter(l => l.date && new Date(l.date).getFullYear() === 2024).length,
-          2025: allLayoffs.filter(l => l.date && new Date(l.date).getFullYear() === 2025).length,
-          2026: allLayoffs.filter(l => l.date && new Date(l.date).getFullYear() === 2026).length,
+          2024: allLayoffs.filter(
+            (l) => l.date && new Date(l.date).getFullYear() === 2024,
+          ).length,
+          2025: allLayoffs.filter(
+            (l) => l.date && new Date(l.date).getFullYear() === 2025,
+          ).length,
+          2026: allLayoffs.filter(
+            (l) => l.date && new Date(l.date).getFullYear() === 2026,
+          ).length,
         },
-        by_industry: allLayoffs.reduce((acc, l) => {
-          if (l.industry) {
-            acc[l.industry] = (acc[l.industry] || 0) + 1;
-          }
-          return acc;
-        }, {} as Record<string, number>),
-        total_employees: allLayoffs.reduce((sum, l) => sum + (l.employeesLaidOff || 0), 0)
+        by_industry: allLayoffs.reduce(
+          (acc, l) => {
+            if (l.industry) {
+              acc[l.industry] = (acc[l.industry] || 0) + 1;
+            }
+            return acc;
+          },
+          {} as Record<string, number>,
+        ),
+        total_employees: allLayoffs.reduce(
+          (sum, l) => sum + (l.employeesLaidOff || 0),
+          0,
+        ),
       };
 
       const totalPages = Math.ceil(count / limitNum);
@@ -3754,17 +4574,16 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
             total: count,
             totalPages,
             hasNextPage: pageNum < totalPages,
-            hasPreviousPage: pageNum > 1
-          }
-        }
+            hasPreviousPage: pageNum > 1,
+          },
+        },
       });
-
     } catch (error: any) {
       console.error("Error fetching layoffs:", error);
       res.status(500).json({
         success: false,
         error: "Failed to fetch layoffs",
-        message: error.message
+        message: error.message,
       });
     }
   });
@@ -3777,32 +4596,46 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
       const user = await GetUserScscriptionTrialValidation(id);
 
       if (!user) {
-        return res.status(400).json({ error: 'Subscription has expired, or you have not subscribed.' });
+        return res
+          .status(400)
+          .json({
+            error: "Subscription has expired, or you have not subscribed.",
+          });
       }
 
-      const whereClause = category !== "all"
-        ? eq(layoffs.industry, category as string)
-        : undefined;
+      const whereClause =
+        category !== "all"
+          ? eq(layoffs.industry, category as string)
+          : undefined;
 
-      const allLayoffs = await db
-        .select()
-        .from(layoffs)
-        .where(whereClause);
+      const allLayoffs = await db.select().from(layoffs).where(whereClause);
 
       const stats = {
         total: allLayoffs.length,
         by_year: {
-          2024: allLayoffs.filter(l => l.date && new Date(l.date).getFullYear() === 2024).length,
-          2025: allLayoffs.filter(l => l.date && new Date(l.date).getFullYear() === 2025).length,
-          2026: allLayoffs.filter(l => l.date && new Date(l.date).getFullYear() === 2026).length,
+          2024: allLayoffs.filter(
+            (l) => l.date && new Date(l.date).getFullYear() === 2024,
+          ).length,
+          2025: allLayoffs.filter(
+            (l) => l.date && new Date(l.date).getFullYear() === 2025,
+          ).length,
+          2026: allLayoffs.filter(
+            (l) => l.date && new Date(l.date).getFullYear() === 2026,
+          ).length,
         },
-        by_industry: allLayoffs.reduce((acc, l) => {
-          if (l.industry) {
-            acc[l.industry] = (acc[l.industry] || 0) + 1;
-          }
-          return acc;
-        }, {} as Record<string, number>),
-        total_employees: allLayoffs.reduce((sum, l) => sum + (l.employeesLaidOff || 0), 0),
+        by_industry: allLayoffs.reduce(
+          (acc, l) => {
+            if (l.industry) {
+              acc[l.industry] = (acc[l.industry] || 0) + 1;
+            }
+            return acc;
+          },
+          {} as Record<string, number>,
+        ),
+        total_employees: allLayoffs.reduce(
+          (sum, l) => sum + (l.employeesLaidOff || 0),
+          0,
+        ),
         recent_layoffs: allLayoffs
           .sort((a, b) => {
             const dateA = a.date ? new Date(a.date).getTime() : 0;
@@ -3810,24 +4643,23 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
             return dateB - dateA;
           })
           .slice(0, 5)
-          .map(l => ({
+          .map((l) => ({
             company: l.company,
             date: l.date,
-            employees: l.employeesLaidOff
-          }))
+            employees: l.employeesLaidOff,
+          })),
       };
 
       res.json({
         success: true,
-        data: stats
+        data: stats,
       });
-
     } catch (error: any) {
       console.error("Error fetching stats:", error);
       res.status(500).json({
         success: false,
         error: "Failed to fetch statistics",
-        message: error.message
+        message: error.message,
       });
     }
   });
@@ -3846,473 +4678,494 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
       if (!layoff) {
         return res.status(404).json({
           success: false,
-          error: "Layoff not found"
+          error: "Layoff not found",
         });
       }
 
       res.json({
         success: true,
-        data: layoff
+        data: layoff,
       });
-
     } catch (error: any) {
       console.error("Error fetching layoff:", error);
       res.status(500).json({
         success: false,
         error: "Failed to fetch layoff",
-        message: error.message
+        message: error.message,
       });
     }
   });
-
-
-
-
-
-
-
 
   // ==================================================
   //       =========== Profile Building =======
   //===================================================
 
-
-
-  app.post("/api/profile/:section/:id", upload.single('file'), async (req, resp) => {
-    try {
-
-
-      const { id } = req.params;
-      const { section } = req.params;
-      console.log("section.................", section)
-      const data = req.body[section];
-      console.log("personal data_________", data)
-      const user = await GetUserScscriptionTrialValidation(id);
-      if (!user) {
-        return resp.status(400).json({
-          success: false,
-          error: "Subscription has expired, or you have not subscribed."
-        })
-      }
-
-      // Check if profile exists; if not, create it
-      const [existingProfile] = await db
-        .select()
-        .from(userJobProfiles)
-        .where(eq(userJobProfiles.userId, id))
-        .limit(1);
-
-      if (!existingProfile) {
-        console.log("No profile found for user, creating one now...");
-        await db.insert(userJobProfiles).values({
-          userId: id,
-          profileCompletion: 0
-        });
-      }
-
-      // =========== For input Varificaiton============
-
-
-      const SECTION_FIELDS: Record<string, string[]> = {
-        personal: [
-          "firstName",
-          "lastName",
-          "email",
-          "phone",
-          "linkedin",
-          "twitter",
-          "website",
-          "github",
-        ],
-        residency: [
-          "street",
-          "buildingNo",
-          "apartmentNo",
-          "country",
-          "city",
-          "zip",
-          "authorizedCountries",
-          "sponsorship",
-          "relocate",
-        ],
-        experience: ["totalExperience", "experiences"],
-        education: ["education"],
-        general: [
-          "expectedSalary",
-          "expectedSalaryCurrency",
-          "currentSalary",
-          "currentSalaryCurrency",
-          "noticePeriod",
-          "startDate",
-          "race",
-          "disability",
-          "veteran",
-        ],
-        skillAndLanguages: ["skills", "languages"],
-        achievements: ["achievements"],
-        documentupdate: ["resume", "recommendationLetters", "documents"],
-
-      };
-
-
-      const cleanPayload = (payload: any) => {
-        if (!payload) return {};
-        return Object.fromEntries(
-          Object.entries(payload).filter(
-            ([_, value]) => value !== undefined && value !== null && value !== ""
-          )
-        );
-      }
-
-      const pickSectionFields = (data: any, allowedFields: string[]) => {
-        if (!data) return {};
-        return Object.fromEntries(
-          Object.entries(data).filter(([key]) => allowedFields.includes(key))
-
-        );
-      }
-
-      const allowedFields = SECTION_FIELDS[section];
-      if (!allowedFields) {
-        return resp.status(400).json({
-          success: false,
-          error: "Invalid section",
-        });
-      }
-
-      console.log("data", data)
-      const cleaned = cleanPayload(data || {});
-      const updateData = pickSectionFields(cleaned, allowedFields);
-
-      // Timestamp columns need Date objects; client often sends startDate as ISO string
-      if (section === 'general' && updateData.startDate != null && typeof (updateData.startDate as any)?.toISOString !== 'function') {
-        const val = updateData.startDate as string | number;
-        updateData.startDate = new Date(val) as any;
-      }
-
-      // =========== ============ =======================
-
-      console.log("fields to update....", updateData)
-      const updatepersonalDetails = async () => {
-        if (!updateData.firstName || !updateData.lastName || !updateData.email || !updateData.phone) {
+  app.post(
+    "/api/profile/:section/:id",
+    upload.single("file"),
+    async (req, resp) => {
+      try {
+        const { id } = req.params;
+        const { section } = req.params;
+        console.log("section.................", section);
+        const data = req.body[section];
+        console.log("personal data_________", data);
+        const user = await GetUserScscriptionTrialValidation(id);
+        if (!user) {
           return resp.status(400).json({
             success: false,
-            error: "Missing required fields"
-          })
+            error: "Subscription has expired, or you have not subscribed.",
+          });
         }
-        const updatedUser = await db
-          .update(userJobProfiles)
-          .set(updateData)
+
+        // Check if profile exists; if not, create it
+        const [existingProfile] = await db
+          .select()
+          .from(userJobProfiles)
           .where(eq(userJobProfiles.userId, id))
-          .returning();
+          .limit(1);
 
-        return resp.status(200).json({
-          success: true,
-          data: updatedUser,
-          message: "User updated successfully"
-        })
-
-      }
-
-      const update_residencyDetails = async () => {
-
-        if (!updateData.city || !updateData.country) {
-          return resp.status(400).json({
-            success: false,
-            error: "You are missing required data"
-          })
+        if (!existingProfile) {
+          console.log("No profile found for user, creating one now...");
+          await db.insert(userJobProfiles).values({
+            userId: id,
+            profileCompletion: 0,
+          });
         }
 
-        const updatedUser = await db
-          .update(userJobProfiles)
-          .set(updateData)
-          .where(eq(userJobProfiles.userId, id))
-          .returning();
+        // =========== For input Varificaiton============
 
-        return resp.status(200).json({
-          success: true,
-          data: updatedUser,
-          message: "Adress added successfuly"
-        })
+        const SECTION_FIELDS: Record<string, string[]> = {
+          personal: [
+            "firstName",
+            "lastName",
+            "email",
+            "phone",
+            "linkedin",
+            "twitter",
+            "website",
+            "github",
+          ],
+          residency: [
+            "street",
+            "buildingNo",
+            "apartmentNo",
+            "country",
+            "city",
+            "zip",
+            "authorizedCountries",
+            "sponsorship",
+            "relocate",
+          ],
+          experience: ["totalExperience", "experiences"],
+          education: ["education"],
+          general: [
+            "expectedSalary",
+            "expectedSalaryCurrency",
+            "currentSalary",
+            "currentSalaryCurrency",
+            "noticePeriod",
+            "startDate",
+            "race",
+            "disability",
+            "veteran",
+          ],
+          skillAndLanguages: ["skills", "languages"],
+          achievements: ["achievements"],
+          documentupdate: ["resume", "recommendationLetters", "documents"],
+        };
 
-      }
+        const cleanPayload = (payload: any) => {
+          if (!payload) return {};
+          return Object.fromEntries(
+            Object.entries(payload).filter(
+              ([_, value]) =>
+                value !== undefined && value !== null && value !== "",
+            ),
+          );
+        };
 
-      const update_experience = async () => {
-        if (!data.totalExperience) {
+        const pickSectionFields = (data: any, allowedFields: string[]) => {
+          if (!data) return {};
+          return Object.fromEntries(
+            Object.entries(data).filter(([key]) => allowedFields.includes(key)),
+          );
+        };
+
+        const allowedFields = SECTION_FIELDS[section];
+        if (!allowedFields) {
           return resp.status(400).json({
             success: false,
-            error: "Total experience is required"
-          })
+            error: "Invalid section",
+          });
         }
 
-        if (!data.experiences || !Array.isArray(data.experiences)) {
-          return resp.status(400).json({
-            success: false,
-            error: "Experiences data is required"
-          })
+        console.log("data", data);
+        const cleaned = cleanPayload(data || {});
+        const updateData = pickSectionFields(cleaned, allowedFields);
+
+        // Timestamp columns need Date objects; client often sends startDate as ISO string
+        if (
+          section === "general" &&
+          updateData.startDate != null &&
+          typeof (updateData.startDate as any)?.toISOString !== "function"
+        ) {
+          const val = updateData.startDate as string | number;
+          updateData.startDate = new Date(val) as any;
         }
 
-        // Validate each experience entry has required fields
-        for (const exp of data.experiences) {
-          if (!exp.company || !exp.title || !exp.fromMonth || !exp.fromYear) {
+        // =========== ============ =======================
+
+        console.log("fields to update....", updateData);
+        const updatepersonalDetails = async () => {
+          if (
+            !updateData.firstName ||
+            !updateData.lastName ||
+            !updateData.email ||
+            !updateData.phone
+          ) {
             return resp.status(400).json({
               success: false,
-              error: "Each experience must have company, title, from month and from year"
-            })
-          }
-          // If not currently working, toMonth and toYear are required
-          if (!exp.currentlyWorking && (!exp.toMonth || !exp.toYear)) {
-            return resp.status(400).json({
-              success: false,
-              error: "End date (month and year) is required for past roles"
-            })
-          }
-        }
-
-        const updatedUser = await db
-          .update(userJobProfiles)
-          .set({
-            totalExperience: data.totalExperience,
-            experiences: data.experiences || [],
-          })
-          .where(eq(userJobProfiles.userId, id))
-          .returning();
-
-        return resp.status(200).json({
-          success: true,
-          data: updatedUser,
-          message: "Experience updated successfully"
-        })
-      }
-
-      const update_education = async () => {
-        if (!data.education || !Array.isArray(data.education)) {
-          return resp.status(400).json({
-            success: false,
-            error: "Education data is required"
-          })
-        }
-
-        // Validate each education entry
-        for (const edu of data.education) {
-          if (!edu.school || !edu.degree || !edu.fromMonth || !edu.fromYear) {
-            return resp.status(400).json({
-              success: false,
-              error: "Each education entry must have school, degree, from month and from year"
-            })
-          }
-          if (!edu.isCurrentlyStudying && (!edu.toMonth || !edu.toYear)) {
-            return resp.status(400).json({
-              success: false,
-              error: "End date (month and year) is required for completed education"
-            })
-          }
-        }
-
-        const updatedUser = await db
-          .update(userJobProfiles)
-          .set({
-            education: data.education,
-          })
-          .where(eq(userJobProfiles.userId, id))
-          .returning();
-
-        return resp.status(200).json({
-          success: true,
-          data: updatedUser,
-          message: "Education updated successfully"
-        })
-      }
-
-      const update_general = async () => {
-        // data is req.body[section], so for section "general" it is the flat payload (expectedSalary, etc.), not { general: ... }
-        if (!data || typeof data !== 'object' || Object.keys(data).length === 0) {
-          return resp.status(400).json({
-            success: false,
-            error: "General preference data is required"
-          })
-        }
-
-        const updatedUser = await db
-          .update(userJobProfiles)
-          .set(updateData)
-          .where(eq(userJobProfiles.userId, id))
-          .returning();
-
-        return resp.status(200).json({
-          success: true,
-          data: updatedUser,
-          message: "General preferences updated successfully"
-        })
-      }
-
-      const update_skill_languages = async () => {
-        const updatedUser = await db
-          .update(userJobProfiles)
-          .set(updateData)
-          .where(eq(userJobProfiles.userId, id))
-          .returning();
-
-        return resp.status(200).json({
-          success: true,
-          data: updatedUser,
-          message: "Skills and Languages updated successfully"
-        })
-      }
-
-      const update_achievements = async () => {
-        const updatedUser = await db
-          .update(userJobProfiles)
-          .set(updateData)
-          .where(eq(userJobProfiles.userId, id))
-          .returning();
-
-        return resp.status(200).json({
-          success: true,
-          data: updatedUser,
-          message: "Achievements updated successfully"
-        })
-      }
-
-      const update_document = async () => {
-        try {
-          const { id } = req.params;
-          const { documentType } = req.query; // Optional query param to specify type
-
-          if (!req.file) {
-            return resp.status(400).json({
-              success: false,
-              message: "No file uploaded",
+              error: "Missing required fields",
             });
           }
-
-          console.log(`Uploading ${req.file.mimetype} to Cloudinary...`);
-
-          // Upload to Cloudinary with optimization
-          const result = await cloudinary.uploader.upload(req.file.path, {
-            resource_type: "auto", // Better for PDFs than "raw" in some cases
-            folder: "job-profiles/documents",
-            access_mode: "public"
-          });
-
-          // Determine document type
-          let docType = 'certificate'; // Default
-          if (documentType === 'resume' || req.file.originalname.toLowerCase().includes('resume')) {
-            docType = 'resume';
-          } else if (documentType === 'recommendation_letter' || req.file.originalname.toLowerCase().includes('recommendation')) {
-            docType = 'recommendation_letter';
-          }
-
-          // Get profile ID first without updating
-          const [userProfile] = await db
-            .select()
-            .from(userJobProfiles)
+          const updatedUser = await db
+            .update(userJobProfiles)
+            .set(updateData)
             .where(eq(userJobProfiles.userId, id))
-            .limit(1);
-
-          // 2. Insert record into userDocuments table
-          await db.insert(userDocuments).values({
-            userId: id,
-            profileId: userProfile?.id, // Link to the profile if it exists
-            documentType: docType,
-            fileName: req.file.originalname,
-            fileUrl: result.secure_url,
-            fileSize: req.file.size,
-            mimeType: req.file.mimetype,
-          });
-
-          // 3. Update the main userJobProfiles table with the latest URL for this type
-          if (docType === 'resume') {
-            await db.update(userJobProfiles)
-              .set({ resume: result.secure_url, updatedAt: new Date() })
-              .where(eq(userJobProfiles.userId, id));
-          } else if (docType === 'recommendation_letter') {
-            await db.update(userJobProfiles)
-              .set({ recommendationLetter: result.secure_url, updatedAt: new Date() })
-              .where(eq(userJobProfiles.userId, id));
-          } else if (docType === 'certificate') {
-            await db.update(userJobProfiles)
-              .set({ certificates: result.secure_url, updatedAt: new Date() })
-              .where(eq(userJobProfiles.userId, id));
-          }
-
-          // Clean up temp file
-          if (fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
-          }
-
-          let message = 'Document uploaded and saved successfully';
-          if (docType === 'resume') message = 'Resume uploaded and saved successfully';
-          else if (docType === 'recommendation_letter') message = 'Recommendation letter uploaded and saved successfully';
+            .returning();
 
           return resp.status(200).json({
             success: true,
-            data: userProfile,
-            message: message,
-            url: result.secure_url
+            data: updatedUser,
+            message: "User updated successfully",
           });
-        } catch (error) {
-          console.error("Cloudinary upload/DB update error:", error)
-          return resp.status(500).json({
-            success: false,
-            message: "Internal Server Error",
-            error: error instanceof Error ? error.message : "Error during Uploading"
-          })
+        };
+
+        const update_residencyDetails = async () => {
+          if (!updateData.city || !updateData.country) {
+            return resp.status(400).json({
+              success: false,
+              error: "You are missing required data",
+            });
+          }
+
+          const updatedUser = await db
+            .update(userJobProfiles)
+            .set(updateData)
+            .where(eq(userJobProfiles.userId, id))
+            .returning();
+
+          return resp.status(200).json({
+            success: true,
+            data: updatedUser,
+            message: "Adress added successfuly",
+          });
+        };
+
+        const update_experience = async () => {
+          if (!data.totalExperience) {
+            return resp.status(400).json({
+              success: false,
+              error: "Total experience is required",
+            });
+          }
+
+          if (!data.experiences || !Array.isArray(data.experiences)) {
+            return resp.status(400).json({
+              success: false,
+              error: "Experiences data is required",
+            });
+          }
+
+          // Validate each experience entry has required fields
+          for (const exp of data.experiences) {
+            if (!exp.company || !exp.title || !exp.fromMonth || !exp.fromYear) {
+              return resp.status(400).json({
+                success: false,
+                error:
+                  "Each experience must have company, title, from month and from year",
+              });
+            }
+            // If not currently working, toMonth and toYear are required
+            if (!exp.currentlyWorking && (!exp.toMonth || !exp.toYear)) {
+              return resp.status(400).json({
+                success: false,
+                error: "End date (month and year) is required for past roles",
+              });
+            }
+          }
+
+          const updatedUser = await db
+            .update(userJobProfiles)
+            .set({
+              totalExperience: data.totalExperience,
+              experiences: data.experiences || [],
+            })
+            .where(eq(userJobProfiles.userId, id))
+            .returning();
+
+          return resp.status(200).json({
+            success: true,
+            data: updatedUser,
+            message: "Experience updated successfully",
+          });
+        };
+
+        const update_education = async () => {
+          if (!data.education || !Array.isArray(data.education)) {
+            return resp.status(400).json({
+              success: false,
+              error: "Education data is required",
+            });
+          }
+
+          // Validate each education entry
+          for (const edu of data.education) {
+            if (!edu.school || !edu.degree || !edu.fromMonth || !edu.fromYear) {
+              return resp.status(400).json({
+                success: false,
+                error:
+                  "Each education entry must have school, degree, from month and from year",
+              });
+            }
+            if (!edu.isCurrentlyStudying && (!edu.toMonth || !edu.toYear)) {
+              return resp.status(400).json({
+                success: false,
+                error:
+                  "End date (month and year) is required for completed education",
+              });
+            }
+          }
+
+          const updatedUser = await db
+            .update(userJobProfiles)
+            .set({
+              education: data.education,
+            })
+            .where(eq(userJobProfiles.userId, id))
+            .returning();
+
+          return resp.status(200).json({
+            success: true,
+            data: updatedUser,
+            message: "Education updated successfully",
+          });
+        };
+
+        const update_general = async () => {
+          // data is req.body[section], so for section "general" it is the flat payload (expectedSalary, etc.), not { general: ... }
+          if (
+            !data ||
+            typeof data !== "object" ||
+            Object.keys(data).length === 0
+          ) {
+            return resp.status(400).json({
+              success: false,
+              error: "General preference data is required",
+            });
+          }
+
+          const updatedUser = await db
+            .update(userJobProfiles)
+            .set(updateData)
+            .where(eq(userJobProfiles.userId, id))
+            .returning();
+
+          return resp.status(200).json({
+            success: true,
+            data: updatedUser,
+            message: "General preferences updated successfully",
+          });
+        };
+
+        const update_skill_languages = async () => {
+          const updatedUser = await db
+            .update(userJobProfiles)
+            .set(updateData)
+            .where(eq(userJobProfiles.userId, id))
+            .returning();
+
+          return resp.status(200).json({
+            success: true,
+            data: updatedUser,
+            message: "Skills and Languages updated successfully",
+          });
+        };
+
+        const update_achievements = async () => {
+          const updatedUser = await db
+            .update(userJobProfiles)
+            .set(updateData)
+            .where(eq(userJobProfiles.userId, id))
+            .returning();
+
+          return resp.status(200).json({
+            success: true,
+            data: updatedUser,
+            message: "Achievements updated successfully",
+          });
+        };
+
+        const update_document = async () => {
+          try {
+            const { id } = req.params;
+            const { documentType } = req.query; // Optional query param to specify type
+
+            if (!req.file) {
+              return resp.status(400).json({
+                success: false,
+                message: "No file uploaded",
+              });
+            }
+
+            // Determine document type
+            let docType = "certificate"; // Default
+            if (
+              documentType === "resume" ||
+              req.file.originalname.toLowerCase().includes("resume")
+            ) {
+              docType = "resume";
+            } else if (
+              documentType === "recommendation_letter" ||
+              req.file.originalname.toLowerCase().includes("recommendation")
+            ) {
+              docType = "recommendation_letter";
+            }
+
+            console.log(`Uploading ${req.file.mimetype} to Cloudinary...`);
+
+            // For PDFs/DOCs/etc: upload as "raw" so the generated URL serves the file reliably.
+            // Images can still be "image"/"auto".
+            const resourceType =
+              req.file.mimetype && req.file.mimetype.startsWith("image/")
+                ? "image"
+                : "raw";
+
+            const result = await cloudinary.uploader.upload(req.file.path, {
+              resource_type: resourceType,
+              folder: "job-profiles/documents",
+              access_mode: "public",
+            });
+
+            // Get profile ID first without updating
+            const [userProfile] = await db
+              .select()
+              .from(userJobProfiles)
+              .where(eq(userJobProfiles.userId, id))
+              .limit(1);
+
+            // 2. Insert record into userDocuments table
+            await db.insert(userDocuments).values({
+              userId: id,
+              profileId: userProfile?.id, // Link to the profile if it exists
+              documentType: docType,
+              fileName: req.file.originalname,
+              fileUrl: result.secure_url,
+              fileSize: req.file.size,
+              mimeType: req.file.mimetype,
+            });
+
+            // 3. Update the main userJobProfiles table with the latest URL for this type
+            if (docType === "resume") {
+              await db
+                .update(userJobProfiles)
+                .set({ resume: result.secure_url, updatedAt: new Date() })
+                .where(eq(userJobProfiles.userId, id));
+            } else if (docType === "recommendation_letter") {
+              await db
+                .update(userJobProfiles)
+                .set({
+                  recommendationLetter: result.secure_url,
+                  updatedAt: new Date(),
+                })
+                .where(eq(userJobProfiles.userId, id));
+            } else if (docType === "certificate") {
+              await db
+                .update(userJobProfiles)
+                .set({ certificates: result.secure_url, updatedAt: new Date() })
+                .where(eq(userJobProfiles.userId, id));
+            }
+
+            // Clean up temp file
+            if (fs.existsSync(req.file.path)) {
+              fs.unlinkSync(req.file.path);
+            }
+
+            let message = "Document uploaded and saved successfully";
+            if (docType === "resume")
+              message = "Resume uploaded and saved successfully";
+            else if (docType === "recommendation_letter")
+              message = "Recommendation letter uploaded and saved successfully";
+
+            return resp.status(200).json({
+              success: true,
+              data: userProfile,
+              message: message,
+              url: result.secure_url,
+            });
+          } catch (error) {
+            console.error("Cloudinary upload/DB update error:", error);
+            return resp.status(500).json({
+              success: false,
+              message: "Internal Server Error",
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Error during Uploading",
+            });
+          }
+        };
+
+        switch (section) {
+          case "personal":
+            await updatepersonalDetails();
+            break;
+          case "residency":
+            await update_residencyDetails();
+            break;
+          case "experience":
+            await update_experience();
+            break;
+          case "education":
+            await update_education();
+            break;
+          case "skillAndLanguages":
+            await update_skill_languages();
+            break;
+          case "achievements":
+            await update_achievements();
+            break;
+          case "documentupdate":
+            await update_document();
+            break;
+          case "general":
+            await update_general();
+            break;
+          default:
+            break;
         }
+
+        // Persist multi-step form current step so user returns to same step on reload
+        const stepIndex = req.body.currentStep;
+        if (typeof stepIndex === "number" && stepIndex >= 0) {
+          await db
+            .update(userJobProfiles)
+            .set({ currentStep: stepIndex, updatedAt: new Date() })
+            .where(eq(userJobProfiles.userId, id));
+        }
+      } catch (error) {
+        console.error("Error updating user:", error);
+        resp.status(500).json({
+          success: false,
+          error: "Failed to update user",
+          message: "Internal server error",
+        });
       }
-
-
-
-      switch (section) {
-        case "personal":
-          await updatepersonalDetails();
-          break;
-        case "residency":
-          await update_residencyDetails();
-          break;
-        case "experience":
-          await update_experience();
-          break;
-        case "education":
-          await update_education();
-          break;
-        case "skillAndLanguages":
-          await update_skill_languages();
-          break;
-        case "achievements":
-          await update_achievements();
-          break;
-        case "documentupdate":
-          await update_document();
-          break;
-        case "general":
-          await update_general();
-          break
-        default:
-          break;
-      }
-
-      // Persist multi-step form current step so user returns to same step on reload
-      const stepIndex = req.body.currentStep;
-      if (typeof stepIndex === 'number' && stepIndex >= 0) {
-        await db.update(userJobProfiles)
-          .set({ currentStep: stepIndex, updatedAt: new Date() })
-          .where(eq(userJobProfiles.userId, id));
-      }
-
-    } catch (error) {
-      console.error("Error updating user:", error);
-      resp.status(500).json({
-        success: false,
-        error: "Failed to update user",
-        message: "Internal server error"
-      })
-    }
-  })
-
+    },
+  );
 
   app.get("/api/profile/jobprofile/:id", async (req, resp) => {
-
     try {
       const { id } = req.params;
       const [userProfile] = await db
@@ -4321,35 +5174,22 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
         .where(eq(userJobProfiles.userId, id))
         .limit(1);
 
-      console.log(userProfile)
+      console.log(userProfile);
 
       return resp.status(200).json({
         success: true,
         data: userProfile || null,
-        message: "Job profile fetched successfully"
-      })
+        message: "Job profile fetched successfully",
+      });
     } catch (error) {
       console.error("Error fetching job profile:", error);
       resp.status(500).json({
         success: false,
         error: "Failed to fetch job profile",
-        message: "Internal server error"
-      })
+        message: "Internal server error",
+      });
     }
-  })
-
-
-
-
-
-
-
-
-
-
-
-
-
+  });
 
   // ====== END NEW CAREER TOOLS API ROUTES ======
 
@@ -4363,15 +5203,18 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
   console.log("Resume data:", JSON.stringify(resumeData, null, 2));
 
   // Helper to check if a value is present (not null, undefined, or empty string)
-  const isPresent = (val: any) => val && String(val).trim() !== '';
+  const isPresent = (val: any) => val && String(val).trim() !== "";
 
   // --- MODIFICATION: Added .slice(0, 15) to limit skills ---
   const processSkills = (skills: any): string[] => {
     let processed: string[] = [];
     if (Array.isArray(skills)) {
       processed = skills.filter(isPresent).map(String);
-    } else if (typeof skills === 'string' && isPresent(skills)) {
-      processed = skills.split(',').map(skill => skill.trim()).filter(isPresent);
+    } else if (typeof skills === "string" && isPresent(skills)) {
+      processed = skills
+        .split(",")
+        .map((skill) => skill.trim())
+        .filter(isPresent);
     }
     // Apply the limit here, after processing and before returning.
     return processed.slice(0, 15);
@@ -4379,71 +5222,80 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
   // --- END MODIFICATION ---
 
   // Helper to generate experience sections dynamically
-  const generateExperienceHTML = (experience: any[], template: 'professional' | 'harvard' | 'creative'): string => {
-    if (!experience || experience.length === 0) return '';
-    return experience.map(exp => {
-      const title = exp.title || '';
-      const company = exp.company || '';
-      const location = exp.location || '';
-      const duration = exp.duration || '';
-      const description = exp.description || '';
-      const companyAndLocation = [company, location].filter(isPresent).join(' | ');
+  const generateExperienceHTML = (
+    experience: any[],
+    template: "professional" | "harvard" | "creative",
+  ): string => {
+    if (!experience || experience.length === 0) return "";
+    return experience
+      .map((exp) => {
+        const title = exp.title || "";
+        const company = exp.company || "";
+        const location = exp.location || "";
+        const duration = exp.duration || "";
+        const description = exp.description || "";
+        const companyAndLocation = [company, location]
+          .filter(isPresent)
+          .join(" | ");
 
-      switch (template) {
-        case 'professional':
-          return `
+        switch (template) {
+          case "professional":
+            return `
             <div class="experience-item">
-              ${isPresent(title) ? `<h3>${title}</h3>` : ''}
-              ${isPresent(duration) ? `<div class="duration">${duration}</div>` : ''}
-              ${isPresent(companyAndLocation) ? `<div class="company">${companyAndLocation}</div>` : ''}
-              ${isPresent(description) ? `<div class="description">${description.replace(/\n/g, '<br>')}</div>` : ''}
+              ${isPresent(title) ? `<h3>${title}</h3>` : ""}
+              ${isPresent(duration) ? `<div class="duration">${duration}</div>` : ""}
+              ${isPresent(companyAndLocation) ? `<div class="company">${companyAndLocation}</div>` : ""}
+              ${isPresent(description) ? `<div class="description">${description.replace(/\n/g, "<br>")}</div>` : ""}
             </div>`;
-        case 'harvard':
-          return `
-            <div class="experience-item">
-              <div class="title-row">
-                ${isPresent(title) ? `<h3>${title}</h3>` : ''}
-                ${isPresent(duration) ? `<span class="duration">${duration}</span>` : ''}
-              </div>
-              ${isPresent(companyAndLocation) ? `<div class="company">${companyAndLocation}</div>` : ''}
-              ${isPresent(description) ? `<div class="description">${description.replace(/\n/g, '<br>')}</div>` : ''}
-            </div>`;
-        case 'creative':
-          return `
+          case "harvard":
+            return `
             <div class="experience-item">
               <div class="title-row">
-                ${isPresent(company) ? `<h3>${company}</h3>` : ''}
-                ${isPresent(duration) ? `<span class="duration">${duration}</span>` : ''}
+                ${isPresent(title) ? `<h3>${title}</h3>` : ""}
+                ${isPresent(duration) ? `<span class="duration">${duration}</span>` : ""}
               </div>
-              ${isPresent(title) ? `<div class="company">${title}</div>` : ''}
-              ${isPresent(description) ? `<div class="description">${description.replace(/\n/g, '<br>')}</div>` : ''}
+              ${isPresent(companyAndLocation) ? `<div class="company">${companyAndLocation}</div>` : ""}
+              ${isPresent(description) ? `<div class="description">${description.replace(/\n/g, "<br>")}</div>` : ""}
             </div>`;
-        default: return '';
-      }
-    }).join('');
+          case "creative":
+            return `
+            <div class="experience-item">
+              <div class="title-row">
+                ${isPresent(company) ? `<h3>${company}</h3>` : ""}
+                ${isPresent(duration) ? `<span class="duration">${duration}</span>` : ""}
+              </div>
+              ${isPresent(title) ? `<div class="company">${title}</div>` : ""}
+              ${isPresent(description) ? `<div class="description">${description.replace(/\n/g, "<br>")}</div>` : ""}
+            </div>`;
+          default:
+            return "";
+        }
+      })
+      .join("");
   };
 
   // Helper to generate education sections dynamically
   const generateEducationHTML = (education: any[]): string => {
-    if (!education || education.length === 0) return '';
-    return education.map(edu => {
-      const degree = edu.degree || '';
-      const school = edu.school || '';
-      const duration = edu.duration || '';
+    if (!education || education.length === 0) return "";
+    return education
+      .map((edu) => {
+        const degree = edu.degree || "";
+        const school = edu.school || "";
+        const duration = edu.duration || "";
 
-      if (!isPresent(degree) && !isPresent(school)) return '';
-      return `
+        if (!isPresent(degree) && !isPresent(school)) return "";
+        return `
             <div class="education-item">
-                ${isPresent(degree) ? `<h3>${degree}</h3>` : ''}
-                ${isPresent(school) ? `<div class="school">${school}</div>` : ''}
-                ${isPresent(duration) ? `<div class="details">${duration}</div>` : ''}
+                ${isPresent(degree) ? `<h3>${degree}</h3>` : ""}
+                ${isPresent(school) ? `<div class="school">${school}</div>` : ""}
+                ${isPresent(duration) ? `<div class="details">${duration}</div>` : ""}
             </div>`;
-    }).join('');
+      })
+      .join("");
   };
 
-
   switch (templateId) {
-    case 'professional':
+    case "professional":
       return `
         <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
             * { margin: 0; padding: 0; box-sizing: border-box; } body { font-family: 'Arial', sans-serif; line-height: 1.4; color: #333; background: white; }
@@ -4459,29 +5311,449 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
             .education-item { margin-bottom: 15px; } .education-item h3 { font-weight: bold; margin-bottom: 5px; } .education-item .school { color: #666; margin-bottom: 5px; } .education-item .details { color: #666; font-size: 0.9rem; }
         </style></head><body><div class="container">
             <div class="header">
-              ${isPresent(resumeData.name) ? `<h1>${resumeData.name}</h1>` : ''}
+              ${isPresent(resumeData.name) ? `<h1>${resumeData.name}</h1>` : ""}
               <div class="contact-info">
-                ${isPresent(resumeData.email) ? `<span>📧 <a href="mailto:${resumeData.email}">${resumeData.email}</a></span>` : ''}
-                ${isPresent(resumeData.phone) ? `<span>📞 ${resumeData.phone}</span>` : ''}
-                ${isPresent(resumeData.location) ? `<span>📍 ${resumeData.location}</span>` : ''}
-                ${isPresent(resumeData.linkedin) ? `<span>🔗 <a href="${resumeData.linkedin}" target="_blank">LinkedIn</a></span>` : ''}
-                ${isPresent(resumeData.github) ? `<span>💻 <a href="${resumeData.github}" target="_blank">GitHub</a></span>` : ''}
-                ${isPresent(resumeData.website) ? `<span>🌐 <a href="${resumeData.website}" target="_blank">Website</a></span>` : ''}
+                ${isPresent(resumeData.email) ? `<span>📧 <a href="mailto:${resumeData.email}">${resumeData.email}</a></span>` : ""}
+                ${isPresent(resumeData.phone) ? `<span>📞 ${resumeData.phone}</span>` : ""}
+                ${isPresent(resumeData.location) ? `<span>📍 ${resumeData.location}</span>` : ""}
+                ${isPresent(resumeData.linkedin) ? `<span>🔗 <a href="${resumeData.linkedin}" target="_blank">LinkedIn</a></span>` : ""}
+                ${isPresent(resumeData.github) ? `<span>💻 <a href="${resumeData.github}" target="_blank">GitHub</a></span>` : ""}
+                ${isPresent(resumeData.website) ? `<span>🌐 <a href="${resumeData.website}" target="_blank">Website</a></span>` : ""}
               </div>
               <div class="divider"></div>
             </div>
 
             <!-- --- MODIFICATION: Skills moved after summary --- -->
-            ${isPresent(resumeData.summary) ? `<div class="section"><h2>Professional Summary</h2><p>${resumeData.summary}</p></div>` : ''}
-            ${processSkills(resumeData.skills).length > 0 ? `<div class="section"><h2>Skills</h2><div class="skills-grid">${processSkills(resumeData.skills).map(skill => `<div class="skill-item">${skill}</div>`).join('')}</div></div>` : ''}
-            ${resumeData.experience && resumeData.experience.length > 0 ? `<div class="section"><h2>Work Experience</h2>${generateExperienceHTML(resumeData.experience, 'professional')}</div>` : ''}
-            ${resumeData.education && resumeData.education.length > 0 ? `<div class="section"><h2>Education</h2>${generateEducationHTML(resumeData.education)}</div>` : ''}
+            ${isPresent(resumeData.summary) ? `<div class="section"><h2>Professional Summary</h2><p>${resumeData.summary}</p></div>` : ""}
+            ${
+              processSkills(resumeData.skills).length > 0
+                ? `<div class="section"><h2>Skills</h2><div class="skills-grid">${processSkills(
+                    resumeData.skills,
+                  )
+                    .map((skill) => `<div class="skill-item">${skill}</div>`)
+                    .join("")}</div></div>`
+                : ""
+            }
+            ${resumeData.experience && resumeData.experience.length > 0 ? `<div class="section"><h2>Work Experience</h2>${generateExperienceHTML(resumeData.experience, "professional")}</div>` : ""}
+            ${resumeData.education && resumeData.education.length > 0 ? `<div class="section"><h2>Education</h2>${generateEducationHTML(resumeData.education)}</div>` : ""}
             <!-- --- END MODIFICATION --- -->
             
         </div></body></html>`;
 
-    case 'harvard':
-      const harvardContact = [resumeData.phone, resumeData.email, resumeData.linkedin, resumeData.location].filter(isPresent).join(' • ');
+    case "emerald-sidebar": {
+      const contactBits = [
+        isPresent(resumeData.phone) ? `📞 ${resumeData.phone}` : "",
+        isPresent(resumeData.email) ? `✉️ ${resumeData.email}` : "",
+        isPresent(resumeData.location) ? `📍 ${resumeData.location}` : "",
+      ].filter(isPresent);
+
+      const portfolioUrl =
+        (isPresent(resumeData.website) && resumeData.website) ||
+        (isPresent(resumeData.linkedin) && resumeData.linkedin) ||
+        (isPresent(resumeData.github) && resumeData.github) ||
+        "";
+
+      const expHtml =
+        resumeData.experience && resumeData.experience.length > 0
+          ? generateExperienceHTML(resumeData.experience, "professional")
+          : "";
+
+      const eduHtml =
+        resumeData.education && resumeData.education.length > 0
+          ? generateEducationHTML(resumeData.education)
+          : "";
+
+      const highlights = isPresent(resumeData.summary)
+        ? String(resumeData.summary).replace(/\n/g, "<br>")
+        : "";
+
+      return `
+        <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: Arial, sans-serif; line-height: 1.35; color: #0f172a; background: #ffffff; }
+          .page { max-width: 900px; margin: 18px auto; border: 1px solid #e5e7eb; }
+          .layout { display: grid; grid-template-columns: 280px 1fr; min-height: 1050px; }
+          .sidebar { background: #f8fafc; border-right: 1px solid #e5e7eb; padding: 26px 22px; }
+          .main { padding: 28px 28px; }
+          .avatar { width: 86px; height: 86px; border-radius: 999px; background: #e5e7eb; margin: 0 auto 14px; border: 4px solid rgba(16,185,129,0.25); overflow: hidden; }
+          .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+          .name { text-align:center; font-weight: 900; letter-spacing: 0.22em; text-transform: uppercase; font-size: 18px; color: #047857; }
+          .role { text-align:center; margin-top: 6px; font-weight: 700; font-size: 11px; color: #334155; text-transform: uppercase; }
+          .contacts { margin: 12px auto 18px; display:flex; justify-content:center; flex-wrap: wrap; gap: 8px; }
+          .chip { font-size: 10px; color: #0f172a; background: #ecfeff; border: 1px solid #99f6e4; padding: 4px 10px; border-radius: 999px; }
+          .s-title { margin-top: 18px; font-size: 10px; letter-spacing: 0.24em; font-weight: 900; color: #059669; text-transform: uppercase; }
+          .s-box { margin-top: 8px; border: 1px dashed #cbd5e1; border-radius: 12px; background: #fff; padding: 10px; }
+          .muted { color: #64748b; }
+          .qr { width: 78px; height: 78px; border-radius: 14px; border: 2px solid rgba(16,185,129,0.35); background:
+              linear-gradient(45deg, rgba(16,185,129,0.12), rgba(34,197,94,0.12)),
+              repeating-linear-gradient(45deg, rgba(15,118,110,0.22) 0, rgba(15,118,110,0.22) 2px, transparent 2px, transparent 6px);
+            margin: 8px 0 6px;
+          }
+          .list { margin: 8px 0 0; padding-left: 16px; }
+          .list li { margin: 4px 0; font-size: 11px; color: #0f172a; }
+
+          .rail { height: 10px; border-radius: 999px; background: linear-gradient(90deg, #10b981, #22c55e); margin-bottom: 16px; }
+          .section { margin-bottom: 18px; }
+          .h { font-size: 11px; letter-spacing: 0.22em; font-weight: 900; color: #047857; text-transform: uppercase; margin-bottom: 10px; }
+          .card { border: 1px solid #e5e7eb; border-radius: 14px; padding: 14px; background: #ffffff; }
+          .card .bar { height: 7px; border-radius: 999px; background: linear-gradient(90deg, #10b981, #22c55e); margin-bottom: 12px; }
+
+          /* Re-skin experience blocks from 'professional' template */
+          .experience-item { margin-bottom: 14px; }
+          .experience-item h3 { font-size: 12px; font-weight: 900; color: #0f172a; margin-bottom: 2px; }
+          .experience-item .duration { color: #64748b; font-size: 10px; float: right; margin-top: -18px; }
+          .experience-item .company { color: #047857; font-weight: 700; font-size: 11px; margin-bottom: 6px; }
+          .experience-item .description { font-size: 11px; color: #0f172a; }
+          .education-item { margin-bottom: 10px; }
+          .education-item h3 { font-size: 11px; font-weight: 900; color: #0f172a; margin-bottom: 2px; }
+          .education-item .school { color: #047857; font-weight: 700; font-size: 11px; margin-bottom: 2px; }
+          .education-item .details { color: #64748b; font-size: 10px; }
+        </style></head><body>
+          <div class="page">
+            <div class="layout">
+              <aside class="sidebar">
+                <div class="avatar">${isPresent(resumeData.profileImageDataUrl) ? `<img src="${resumeData.profileImageDataUrl}" alt="Profile" />` : ""}</div>
+                ${isPresent(resumeData.name) ? `<div class="name">${String(resumeData.name)}</div>` : ""}
+                ${isPresent(resumeData.profession) ? `<div class="role">${String(resumeData.profession)}</div>` : ""}
+                ${contactBits.length ? `<div class="contacts">${contactBits.map((c) => `<span class="chip">${c}</span>`).join("")}</div>` : ""}
+
+                <div class="s-title">My Portfolio</div>
+                <div class="s-box">
+                  <div class="muted" style="font-size:10px;">Click here to view</div>
+                  ${isPresent(portfolioUrl) ? `<div style="font-weight:900;color:#047857;word-break:break-word;">${portfolioUrl}</div>` : `<div class="muted" style="font-size:10px;">(add website/linkedin/github)</div>`}
+                </div>
+
+                <div class="s-title">Area of Expertise</div>
+                ${
+                  processSkills(resumeData.skills).length
+                    ? `<ul class="list">${processSkills(resumeData.skills)
+                        .map((s) => `<li>${s}</li>`)
+                        .join("")}</ul>`
+                    : `<div class="muted" style="font-size:11px;margin-top:8px;">—</div>`
+                }
+
+                ${eduHtml ? `<div class="s-title">Education</div><div class="s-box">${eduHtml}</div>` : ""}
+              </aside>
+
+              <main class="main">
+                <div class="rail"></div>
+                ${highlights ? `<div class="section card"><div class="bar"></div><div class="h">Professional Highlights</div><div style="font-size:11px;color:#0f172a;">${highlights}</div></div>` : ""}
+                ${expHtml ? `<div class="section card"><div class="bar"></div><div class="h">Work Experience</div>${expHtml}</div>` : ""}
+                ${
+                  processSkills(resumeData.skills).length
+                    ? `<div class="section card"><div class="bar"></div><div class="h">Technical Skills</div><div style="display:flex;flex-wrap:wrap;gap:8px;">${processSkills(
+                        resumeData.skills,
+                      )
+                        .map(
+                          (s) =>
+                            `<span class="chip" style="border-color: rgba(16,185,129,0.35); background: rgba(16,185,129,0.10);">${s}</span>`,
+                        )
+                        .join("")}</div></div>`
+                    : ""
+                }
+                ${
+                  resumeData.achievements && resumeData.achievements.length
+                    ? `<div class="section card"><div class="bar"></div><div class="h">Honors & Awards</div><ul class="list">${resumeData.achievements
+                        .filter(isPresent)
+                        .slice(0, 6)
+                        .map((a: string) => `<li>${a}</li>`)
+                        .join("")}</ul></div>`
+                    : ""
+                }
+              </main>
+            </div>
+          </div>
+        </body></html>`;
+    }
+
+    case "photo-classic": {
+      const esc = (s: unknown) =>
+        String(s ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+
+      const linesToLis = (text: unknown) =>
+        esc(text)
+          .split(/\n+/)
+          .map((x) => x.trim())
+          .filter(Boolean)
+          .slice(0, 6)
+          .map((x) => `<li>${x}</li>`)
+          .join("");
+
+      const projects = Array.isArray(resumeData.projects)
+        ? resumeData.projects
+        : [];
+      const projectLinks = projects
+        .slice(0, 7)
+        .map((p: any) => {
+          const url = typeof p === "string" ? p : p?.url || p?.name || "";
+          return isPresent(url) ? `<div class="link">${esc(url)}</div>` : "";
+        })
+        .join("");
+
+      return `
+        <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: Georgia, "Times New Roman", serif; color: #111827; background: #ffffff; }
+          .page { max-width: 980px; margin: 14px auto; border: 1px solid #e5e7eb; }
+          .top { display: grid; grid-template-columns: 150px 1fr; gap: 18px; padding: 22px 26px 14px; }
+          .photo { width: 124px; height: 124px; border-radius: 999px; overflow: hidden; background: #e5e7eb; border: 4px solid #ffffff; box-shadow: 0 10px 22px rgba(0,0,0,0.10); }
+          .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+          .name { font-size: 34px; font-weight: 900; }
+          .role { margin-top: 4px; font-size: 14px; font-weight: 800; font-family: Arial, sans-serif; }
+          .summary { margin-top: 8px; font-size: 12px; color: #374151; line-height: 1.5; font-family: Arial, sans-serif; }
+          .band { background: #f3f4f6; border-top: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; padding: 10px 26px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; font-family: Arial, sans-serif; font-size: 11px; }
+          .band span { display: inline-flex; gap: 8px; align-items: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+          .icon { width: 18px; height: 18px; border-radius: 6px; background: #111827; color: white; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; flex: 0 0 auto; }
+          .grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 28px; padding: 18px 26px 26px; }
+          h2 { font-size: 14px; font-weight: 900; margin: 0 0 10px; letter-spacing: 0.02em; }
+          .section { margin-bottom: 18px; }
+          .job { margin-bottom: 12px; }
+          .job h3 { font-size: 12px; font-weight: 900; margin: 0; }
+          .meta { font-size: 10px; color: #6b7280; font-style: italic; margin: 2px 0 6px; font-family: Arial, sans-serif; }
+          ul { padding-left: 18px; font-family: Arial, sans-serif; font-size: 11px; }
+          li { margin: 4px 0; }
+          .chips { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; font-family: Arial, sans-serif; }
+          .chip { border: 1px solid #d1d5db; background: #f9fafb; border-radius: 6px; padding: 4px 8px; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+          .links { display: grid; gap: 6px; font-family: Arial, sans-serif; font-size: 11px; }
+          .link { word-break: break-word; }
+          .muted { font-family: Arial, sans-serif; font-size: 11px; color: #6b7280; }
+          .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+          .edu-item { margin-bottom: 10px; }
+          .edu-item h3 { font-size: 12px; font-weight: 900; margin: 0; }
+        </style></head><body>
+          <div class="page">
+            <div class="top">
+              <div class="photo">${isPresent(resumeData.profileImageDataUrl) ? `<img src="${resumeData.profileImageDataUrl}" alt="Profile" />` : ""}</div>
+              <div>
+                ${isPresent(resumeData.name) ? `<div class="name">${esc(resumeData.name)}</div>` : ""}
+                ${isPresent(resumeData.profession) ? `<div class="role">${esc(resumeData.profession)}</div>` : ""}
+                ${isPresent(resumeData.summary) ? `<div class="summary">${esc(resumeData.summary).replace(/\n/g, "<br/>")}</div>` : ""}
+              </div>
+            </div>
+
+            <div class="band">
+              <span><span class="icon">✉</span><span>${esc(resumeData.email)}</span></span>
+              <span><span class="icon">⌂</span><span>${esc(resumeData.location)}</span></span>
+              <span><span class="icon">☎</span><span>${esc(resumeData.phone)}</span></span>
+              <span><span class="icon">in</span><span>${esc(String(resumeData.linkedin || "").replace(/^https?:\/\//, ""))}</span></span>
+            </div>
+
+            <div class="grid">
+              <div>
+                <div class="section">
+                  <h2>WORK EXPERIENCE</h2>
+                  ${(resumeData.experience || [])
+                    .map(
+                      (e: any) => `
+                    <div class="job">
+                      ${isPresent(e?.title) ? `<h3>${esc(e.title)}</h3>` : ""}
+                      <div class="meta">${esc(e?.company || "")}${isPresent(e?.duration) ? ` • ${esc(e.duration)}` : ""}</div>
+                      <ul>${linesToLis(e?.description)}</ul>
+                    </div>
+                  `,
+                    )
+                    .join("")}
+                </div>
+
+                <div class="section">
+                  <h2>EDUCATION</h2>
+                  ${(resumeData.education || [])
+                    .slice(0, 3)
+                    .map(
+                      (e: any) => `
+                    <div class="edu-item">
+                      <h3>${esc(e?.degree || "")}</h3>
+                      <div class="meta">${esc(e?.school || e?.institution || "")}${isPresent(e?.year) ? ` • ${esc(e.year)}` : ""}</div>
+                    </div>
+                  `,
+                    )
+                    .join("")}
+                </div>
+              </div>
+
+              <div>
+                <div class="section">
+                  <h2>SKILLS</h2>
+                  <div class="chips">${processSkills(resumeData.skills)
+                    .map((s) => `<span class="chip">${esc(s)}</span>`)
+                    .join("")}</div>
+                </div>
+
+                <div class="section">
+                  <h2>PROJECTS</h2>
+                  <div class="links">${projectLinks || `<div class="muted">—</div>`}</div>
+                </div>
+
+                <div class="section">
+                  <h2>HONOR AWARDS</h2>
+                  <div class="muted">${
+                    (resumeData.achievements || [])
+                      .filter(isPresent)
+                      .slice(0, 2)
+                      .map((a: string) => esc(a))
+                      .join("<br/>") || "—"
+                  }</div>
+                </div>
+
+                <div class="section">
+                  <h2>LANGUAGES</h2>
+                  <div class="two">${(resumeData.languages || [])
+                    .slice(0, 4)
+                    .map(
+                      (l: string) =>
+                        `<div><div style="font-weight:900;">${esc(l)}</div><div class="muted">Full/Professional Proficiency</div></div>`,
+                    )
+                    .join("")}</div>
+                </div>
+
+                <div class="section">
+                  <h2>INTERESTS</h2>
+                  <div class="chips">${processSkills(resumeData.skills)
+                    .slice(0, 3)
+                    .map((s) => `<span class="chip">${esc(s)}</span>`)
+                    .join("")}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </body></html>`;
+    }
+
+    case "brand-split": {
+      const esc = (s: unknown) =>
+        String(s ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+
+      const bullets = (text: unknown) =>
+        esc(text)
+          .split(/\n+/)
+          .map((x) => x.trim())
+          .filter(Boolean)
+          .slice(0, 6)
+          .map((x) => `<li>${x}</li>`)
+          .join("");
+
+      const projectBlocks = Array.isArray(resumeData.projects)
+        ? resumeData.projects
+            .slice(0, 8)
+            .map((p: any) => {
+              const url = typeof p === "string" ? p : p?.url || p?.name || "";
+              return isPresent(url) ? `<div class="link">${esc(url)}</div>` : "";
+            })
+            .join("")
+        : "";
+
+      return `
+        <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { background: #ffffff; color: #0f172a; font-family: Arial, sans-serif; }
+          .page { width: 100%; max-width: 980px; margin: 14px auto; border: 1px solid #e5e7eb; }
+          .hero { position: relative; padding: 22px 26px 18px; overflow: hidden; }
+          .hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(800px circle at 8% 0%, rgba(45,212,191,0.22), transparent 55%), radial-gradient(700px circle at 92% 10%, rgba(167,139,250,0.20), transparent 55%), linear-gradient(135deg, rgba(13,148,136,0.10), rgba(99,102,241,0.10)); }
+          .hero-inner { position: relative; display: grid; grid-template-columns: 96px 1fr; gap: 16px; align-items: center; }
+          .photo { width: 86px; height: 86px; border-radius: 999px; overflow: hidden; background: #e5e7eb; border: 4px solid #ffffff; box-shadow: 0 14px 28px rgba(2,6,23,0.10); }
+          .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+          .name { font-size: 28px; font-weight: 900; letter-spacing: 0.02em; }
+          .role { margin-top: 2px; color: #0f766e; font-weight: 900; text-transform: uppercase; letter-spacing: 0.12em; font-size: 11px; }
+          .meta { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; color: #334155; }
+          .pill { padding: 4px 10px; border-radius: 999px; border: 1px solid #cbd5e1; background: rgba(255,255,255,0.78); }
+          .grid { display: grid; grid-template-columns: 1.25fr 0.95fr; gap: 22px; padding: 18px 26px 26px; }
+          .section { margin-bottom: 14px; }
+          .h { font-size: 12px; font-weight: 900; letter-spacing: 0.22em; text-transform: uppercase; margin: 0 0 10px; }
+          .h span { background: linear-gradient(90deg, #0d9488, #6366f1); -webkit-background-clip: text; background-clip: text; color: transparent; }
+          .card { border: 1px solid #e5e7eb; border-radius: 14px; padding: 12px; background: #ffffff; }
+          .summary { color: #334155; font-size: 12px; line-height: 1.5; }
+          .job { margin-bottom: 12px; }
+          .job-title { font-weight: 900; font-size: 12px; }
+          .job-meta { color: #64748b; font-size: 10px; margin-top: 2px; font-style: italic; }
+          .job ul { margin: 6px 0 0; padding-left: 18px; color: #0f172a; font-size: 11px; }
+          .job li { margin: 4px 0; }
+          .skills { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+          .skill { border: 1px solid #d1d5db; background: #f8fafc; border-radius: 10px; padding: 7px 10px; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+          .links { display: grid; gap: 6px; font-size: 11px; color: #0f172a; }
+          .link { word-break: break-word; }
+          .muted { color: #64748b; font-size: 11px; }
+        </style></head><body>
+          <div class="page">
+            <div class="hero">
+              <div class="hero-inner">
+                <div class="photo">${isPresent(resumeData.profileImageDataUrl) ? `<img src="${resumeData.profileImageDataUrl}" alt="Profile" />` : ""}</div>
+                <div>
+                  ${isPresent(resumeData.name) ? `<div class="name">${esc(resumeData.name)}</div>` : ""}
+                  ${isPresent(resumeData.profession) ? `<div class="role">${esc(resumeData.profession)}</div>` : ""}
+                  <div class="meta">
+                    ${isPresent(resumeData.email) ? `<span class="pill">✉ ${esc(resumeData.email)}</span>` : ""}
+                    ${isPresent(resumeData.phone) ? `<span class="pill">☎ ${esc(resumeData.phone)}</span>` : ""}
+                    ${isPresent(resumeData.location) ? `<span class="pill">⌂ ${esc(resumeData.location)}</span>` : ""}
+                    ${isPresent(resumeData.linkedin) ? `<span class="pill">in ${esc(String(resumeData.linkedin).replace(/^https?:\/\//, ""))}</span>` : ""}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="grid">
+              <div>
+                <div class="section card">
+                  <div class="h"><span>Summary</span></div>
+                  <div class="summary">${isPresent(resumeData.summary) ? esc(resumeData.summary).replace(/\\n/g, "<br/>") : `<span class="muted">—</span>`}</div>
+                </div>
+
+                <div class="section card">
+                  <div class="h"><span>Experience</span></div>
+                  ${(resumeData.experience || []).map((e: any) => `
+                    <div class="job">
+                      ${isPresent(e?.title) ? `<div class="job-title">${esc(e.title)}</div>` : ""}
+                      <div class="job-meta">${esc(e?.company || "")}${isPresent(e?.duration) ? ` • ${esc(e.duration)}` : ""}</div>
+                      ${bullets(e?.description) ? `<ul>${bullets(e?.description)}</ul>` : ""}
+                    </div>
+                  `).join("") || `<div class="muted">Add experience to see it here.</div>`}
+                </div>
+              </div>
+
+              <div>
+                <div class="section card">
+                  <div class="h"><span>Skills</span></div>
+                  <div class="skills">${processSkills(resumeData.skills).map((s) => `<div class="skill">${esc(s)}</div>`).join("")}</div>
+                </div>
+
+                <div class="section card">
+                  <div class="h"><span>Education</span></div>
+                  ${(resumeData.education || []).slice(0, 3).map((e: any) => `
+                    <div style="margin-bottom:10px;">
+                      <div style="font-weight:900;">${esc(e?.degree || "")}</div>
+                      <div class="muted">${esc(e?.school || e?.institution || "")}${isPresent(e?.year) ? ` • ${esc(e.year)}` : ""}</div>
+                    </div>
+                  `).join("") || `<div class="muted">—</div>`}
+                </div>
+
+                <div class="section card">
+                  <div class="h"><span>Projects</span></div>
+                  <div class="links">${projectBlocks || `<div class="muted">—</div>`}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </body></html>`;
+    }
+
+    case "harvard":
+      const harvardContact = [
+        resumeData.phone,
+        resumeData.email,
+        resumeData.linkedin,
+        resumeData.location,
+      ]
+        .filter(isPresent)
+        .join(" • ");
       return `
         <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
             * { margin: 0; padding: 0; box-sizing: border-box; } body { font-family: 'Times New Roman', serif; line-height: 1.5; color: #000; background: white; }
@@ -4496,30 +5768,57 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
             .skills-section ul, .achievements-section ul { columns: 3; column-gap: 20px; margin-left: 20px; } .skills-section li, .achievements-section li { margin-bottom: 5px; break-inside: avoid; }
         </style></head><body><div class="container">
             <div class="header">
-              ${isPresent(resumeData.name) ? `<h1>${resumeData.name}</h1>` : ''}
-              ${isPresent(harvardContact) ? `<div class="contact-info">${harvardContact}</div>` : ''}
+              ${isPresent(resumeData.name) ? `<h1>${resumeData.name}</h1>` : ""}
+              ${isPresent(harvardContact) ? `<div class="contact-info">${harvardContact}</div>` : ""}
             </div>
 
             <!-- --- MODIFICATION: Skills moved after summary --- -->
-            ${isPresent(resumeData.summary) ? `<div class="section summary"><h2>Summary</h2><p>${resumeData.summary}</p></div>` : ''}
-            ${processSkills(resumeData.skills).length > 0 ? `<div class="section skills-section"><h2>Skills</h2><ul>${processSkills(resumeData.skills).map(skill => `<li>${skill}</li>`).join('')}</ul></div>` : ''}
-            ${resumeData.experience && resumeData.experience.length > 0 ? `<div class="section"><h2>Professional Experience</h2>${generateExperienceHTML(resumeData.experience, 'harvard')}</div>` : ''}
+            ${isPresent(resumeData.summary) ? `<div class="section summary"><h2>Summary</h2><p>${resumeData.summary}</p></div>` : ""}
+            ${
+              processSkills(resumeData.skills).length > 0
+                ? `<div class="section skills-section"><h2>Skills</h2><ul>${processSkills(
+                    resumeData.skills,
+                  )
+                    .map((skill) => `<li>${skill}</li>`)
+                    .join("")}</ul></div>`
+                : ""
+            }
+            ${resumeData.experience && resumeData.experience.length > 0 ? `<div class="section"><h2>Professional Experience</h2>${generateExperienceHTML(resumeData.experience, "harvard")}</div>` : ""}
             
-            ${resumeData.education && resumeData.education.length > 0 ? `<div class="section"><h2>Education</h2>${resumeData.education.map((edu: any) => `
+            ${
+              resumeData.education && resumeData.education.length > 0
+                ? `<div class="section"><h2>Education</h2>${resumeData.education
+                    .map(
+                      (edu: any) => `
                 <div class="education-item">
                   <div class="title-row">
-                    ${isPresent(edu.degree) ? `<h3>${edu.degree}</h3>` : `<h3>${edu.school || ''}</h3>`}
-                    ${isPresent(edu.duration) ? `<span class="duration">${edu.duration}</span>` : ''}
+                    ${isPresent(edu.degree) ? `<h3>${edu.degree}</h3>` : `<h3>${edu.school || ""}</h3>`}
+                    ${isPresent(edu.duration) ? `<span class="duration">${edu.duration}</span>` : ""}
                   </div>
-                  ${isPresent(edu.degree) && isPresent(edu.school) ? `<div class="school">${edu.school}</div>` : ''}
-                </div>`).join('')}</div>` : ''}
+                  ${isPresent(edu.degree) && isPresent(edu.school) ? `<div class="school">${edu.school}</div>` : ""}
+                </div>`,
+                    )
+                    .join("")}</div>`
+                : ""
+            }
             
-            ${resumeData.achievements && resumeData.achievements.length > 0 ? `<div class="section achievements-section"><h2>Achievements</h2><ul>${resumeData.achievements.filter(isPresent).map((ach: string) => `<li>${ach}</li>`).join('')}</ul></div>` : ''}
+            ${
+              resumeData.achievements && resumeData.achievements.length > 0
+                ? `<div class="section achievements-section"><h2>Achievements</h2><ul>${resumeData.achievements
+                    .filter(isPresent)
+                    .map((ach: string) => `<li>${ach}</li>`)
+                    .join("")}</ul></div>`
+                : ""
+            }
              <!-- --- END MODIFICATION --- -->
         </div></body></html>`;
 
-    case 'creative':
-      const creativeContactExists = isPresent(resumeData.phone) || isPresent(resumeData.email) || isPresent(resumeData.location) || isPresent(resumeData.website);
+    case "creative":
+      const creativeContactExists =
+        isPresent(resumeData.phone) ||
+        isPresent(resumeData.email) ||
+        isPresent(resumeData.location) ||
+        isPresent(resumeData.website);
       return `
         <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
             * { margin: 0; padding: 0; box-sizing: border-box; } body { font-family: 'Arial', sans-serif; line-height: 1.4; color: #333; background: #f4f4f4; }
@@ -4540,38 +5839,67 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
             /* --- END MODIFICATION --- */
         </style></head><body><div class="resume-container">
             <div class="sidebar">
-              ${isPresent(resumeData.name) ? `<h1>${resumeData.name.toUpperCase()}</h1>` : ''}
-              ${isPresent(resumeData.profession) ? `<div class="title">${resumeData.profession}</div>` : ''}
+              ${isPresent(resumeData.name) ? `<h1>${resumeData.name.toUpperCase()}</h1>` : ""}
+              ${isPresent(resumeData.profession) ? `<div class="title">${resumeData.profession}</div>` : ""}
 
-              ${creativeContactExists ? `<div class="section"><h3>Contact</h3>
-                ${isPresent(resumeData.phone) ? `<div class="contact-item"><span>📞</span><span>${resumeData.phone}</span></div>` : ''}
-                ${isPresent(resumeData.email) ? `<div class="contact-item"><span>📧</span><span>${resumeData.email}</span></div>` : ''}
-                ${isPresent(resumeData.location) ? `<div class="contact-item"><span>📍</span><span>${resumeData.location}</span></div>` : ''}
-                ${isPresent(resumeData.website) ? `<div class="contact-item"><span>🌐</span><span>${resumeData.website}</span></div>` : ''}
-              </div>` : ''}
+              ${
+                creativeContactExists
+                  ? `<div class="section"><h3>Contact</h3>
+                ${isPresent(resumeData.phone) ? `<div class="contact-item"><span>📞</span><span>${resumeData.phone}</span></div>` : ""}
+                ${isPresent(resumeData.email) ? `<div class="contact-item"><span>📧</span><span>${resumeData.email}</span></div>` : ""}
+                ${isPresent(resumeData.location) ? `<div class="contact-item"><span>📍</span><span>${resumeData.location}</span></div>` : ""}
+                ${isPresent(resumeData.website) ? `<div class="contact-item"><span>🌐</span><span>${resumeData.website}</span></div>` : ""}
+              </div>`
+                  : ""
+              }
 
-              ${resumeData.education && resumeData.education.length > 0 ? `<div class="section"><h3>Education</h3>${resumeData.education.map((edu: any) => {
-        if (!isPresent(edu.degree) && !isPresent(edu.school)) return '';
-        return `<div style="margin-bottom: 15px;">
-                    ${isPresent(edu.duration) ? `<div style="font-weight: bold; margin-bottom: 5px;">${edu.duration}</div>` : ''}
-                    ${isPresent(edu.degree) ? `<div style="font-size: 0.9rem;">${edu.degree.toUpperCase()}</div>` : ''}
-                    ${isPresent(edu.school) ? `<div style="font-size: 0.85rem; color: #BDC3C7;">${edu.school}</div>` : ''}
-                  </div>`
-      }).join('')}</div>` : ''}
+              ${
+                resumeData.education && resumeData.education.length > 0
+                  ? `<div class="section"><h3>Education</h3>${resumeData.education
+                      .map((edu: any) => {
+                        if (!isPresent(edu.degree) && !isPresent(edu.school))
+                          return "";
+                        return `<div style="margin-bottom: 15px;">
+                    ${isPresent(edu.duration) ? `<div style="font-weight: bold; margin-bottom: 5px;">${edu.duration}</div>` : ""}
+                    ${isPresent(edu.degree) ? `<div style="font-size: 0.9rem;">${edu.degree.toUpperCase()}</div>` : ""}
+                    ${isPresent(edu.school) ? `<div style="font-size: 0.85rem; color: #BDC3C7;">${edu.school}</div>` : ""}
+                  </div>`;
+                      })
+                      .join("")}</div>`
+                  : ""
+              }
               
-              ${resumeData.achievements && resumeData.achievements.length > 0 ? `<div class="section"><h3>Achievements</h3>${resumeData.achievements.filter(isPresent).map((ach: string) => `<div class="skill-item">• ${ach}</div>`).join('')}</div>` : ''}
+              ${
+                resumeData.achievements && resumeData.achievements.length > 0
+                  ? `<div class="section"><h3>Achievements</h3>${resumeData.achievements
+                      .filter(isPresent)
+                      .map(
+                        (ach: string) =>
+                          `<div class="skill-item">• ${ach}</div>`,
+                      )
+                      .join("")}</div>`
+                  : ""
+              }
               <!-- --- MODIFICATION: Skills moved from sidebar to main content --- -->
             </div>
 
             <div class="main-content">
-              ${isPresent(resumeData.summary) ? `<div class="section"><h2>Profile</h2><p>${resumeData.summary.replace(/\n/g, '<br>')}</p></div>` : ''}
+              ${isPresent(resumeData.summary) ? `<div class="section"><h2>Profile</h2><p>${resumeData.summary.replace(/\n/g, "<br>")}</p></div>` : ""}
               <!-- --- MODIFICATION: Skills now rendered here in main content --- -->
-              ${processSkills(resumeData.skills).length > 0 ? `<div class="section"><h2>Skills</h2><div class="skills-grid">${processSkills(resumeData.skills).map(skill => `<div class="skill-item">${skill}</div>`).join('')}</div></div>` : ''}
-              ${resumeData.experience && resumeData.experience.length > 0 ? `<div class="section"><h2>Work Experience</h2>${generateExperienceHTML(resumeData.experience, 'creative')}</div>` : ''}
+              ${
+                processSkills(resumeData.skills).length > 0
+                  ? `<div class="section"><h2>Skills</h2><div class="skills-grid">${processSkills(
+                      resumeData.skills,
+                    )
+                      .map((skill) => `<div class="skill-item">${skill}</div>`)
+                      .join("")}</div></div>`
+                  : ""
+              }
+              ${resumeData.experience && resumeData.experience.length > 0 ? `<div class="section"><h2>Work Experience</h2>${generateExperienceHTML(resumeData.experience, "creative")}</div>` : ""}
             </div>
         </div></body></html>`;
 
     default:
-      return generateResumeHTML('professional', resumeData);
+      return generateResumeHTML("professional", resumeData);
   }
 }

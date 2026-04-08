@@ -214,7 +214,7 @@ export default function RecruiterOutreach() {
                 <div>
                   <label className="text-sm font-medium">Target Job Title</label>
                   <Input
-                    placeholder="Senior Software Engineer"
+                    placeholder="Software Engineer"
                     value={jobTitle}
                     onChange={(e) => setJobTitle(e.target.value)}
                   />

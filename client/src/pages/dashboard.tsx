@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
-import Header from "@/components/Header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -94,8 +93,6 @@ export default function Dashboard() {
         limit: itemsPerPage.toString(),
         category: category,
       });
-      console.log(user)
-
       if (user?.id) {
         params.append("id", user.id);
       }
@@ -167,52 +164,57 @@ export default function Dashboard() {
 
   if (isLoading || !user) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center lp-page-mesh">
         <div className="text-center">
-          <Loader2 className="w-12 h-12 animate-spin text-blue-600 mx-auto mb-4" />
-          <p className="text-slate-600">Loading dashboard...</p>
+          <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-primary" />
+          <p className="text-muted-foreground">Loading dashboard...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+    <div className="min-h-screen lp-page-mesh">
       <GlobalHeader />
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         {/* Welcome Section */}
         <div className="mb-8">
-          <div className="bg-gradient-to-r from-blue-600 to-blue-800 rounded-2xl p-8 text-white shadow-2xl">
-            <h2 className="text-4xl font-bold mb-2">
-              Welcome back, {user?.firstName || 'User'}! 👋
+          <div className="lp-gradient-cta relative overflow-hidden rounded-2xl p-8 text-white shadow-2xl shadow-teal-900/15">
+            <div
+              className="pointer-events-none absolute -right-16 top-0 h-48 w-48 rounded-full bg-white/10 blur-3xl"
+              aria-hidden
+            />
+            <h2 className="relative text-3xl font-bold tracking-tight drop-shadow-sm sm:text-4xl">
+              Welcome back, {user?.firstName || "User"}! 👋
             </h2>
-            <p className="text-blue-100 text-lg">
-              Real-time layoff tracking across industries • Updated hourly with AI-powered data extraction
+            <p className="relative mt-2 max-w-2xl text-lg text-white/90">
+              Real-time layoff tracking across industries • Updated hourly with
+              AI-powered data extraction
             </p>
           </div>
         </div>
 
         {/* Search Bar */}
         <div className="mb-8">
-          <div className="flex gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row">
             <div className="relative flex-1">
-              <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
+              <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 type="text"
                 placeholder="Search by company name..."
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                className="pl-12 h-12 text-base border-2 border-slate-200 focus:border-blue-500"
+                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                className="h-12 border-2 border-border pl-12 text-base focus-visible:ring-primary"
               />
             </div>
             <Button
               onClick={handleSearch}
-              className="h-12 px-8 bg-blue-600 hover:bg-blue-700"
+              className="h-12 border-0 px-8 text-primary-foreground lp-gradient-fill sm:w-auto"
               disabled={loading}
             >
-              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Search"}
+              {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : "Search"}
             </Button>
             {searchQuery && (
               <Button
@@ -232,8 +234,10 @@ export default function Dashboard() {
 
         {/* Category Selector */}
         <div className="mb-8">
-          <h3 className="text-lg font-semibold text-slate-700 mb-4">Select Industry</h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-10 gap-3">
+          <h3 className="mb-4 text-lg font-semibold text-foreground">
+            Select Industry
+          </h3>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-10">
             {CATEGORIES.map((cat) => {
               const Icon = cat.icon;
               const isSelected = selectedCategory === cat.id;
@@ -241,19 +245,25 @@ export default function Dashboard() {
               return (
                 <button
                   key={cat.id}
+                  type="button"
                   onClick={() => handleCategoryChange(cat.id)}
                   disabled={loading}
-                  className={`
-                    p-4 rounded-xl border-2 transition-all duration-200 
-                    ${isSelected
-                      ? `border-blue-500 bg-blue-50 shadow-lg scale-105`
-                      : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-md'
-                    }
-                    ${loading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
-                  `}
+                  className={`rounded-xl border-2 p-4 transition-all duration-200 ${
+                    isSelected
+                      ? "scale-[1.02] border-primary bg-primary/10 shadow-lg shadow-primary/10"
+                      : "border-border bg-card hover:border-primary/30 hover:shadow-md"
+                  } ${loading ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
                 >
-                  <Icon className={`w-8 h-8 mx-auto mb-2 ${isSelected ? 'text-blue-600' : 'text-slate-400'}`} />
-                  <p className={`text-sm font-medium ${isSelected ? 'text-blue-700' : 'text-slate-600'}`}>
+                  <Icon
+                    className={`mx-auto mb-2 h-8 w-8 ${
+                      isSelected ? "text-primary" : "text-muted-foreground"
+                    }`}
+                  />
+                  <p
+                    className={`text-sm font-medium ${
+                      isSelected ? "text-primary" : "text-muted-foreground"
+                    }`}
+                  >
                     {cat.label}
                   </p>
                 </button>
@@ -326,24 +336,36 @@ export default function Dashboard() {
         )}
 
         {/* Layoffs Table */}
-        <Card className="border-0 shadow-xl">
-          <CardHeader className="pb-4 bg-gradient-to-r from-slate-50 to-slate-100">
-            <div className="flex items-center justify-between">
-              <CardTitle className="flex items-center text-xl">
-                {selectedCategory === 'upcoming' ? (
-                  <Clock className="w-5 h-5 mr-2 text-orange-500" />
+        <Card className="overflow-hidden border border-border/80 shadow-xl">
+          <CardHeader className="border-b border-border/60 bg-muted/40 pb-4 backdrop-blur-sm">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <CardTitle className="flex flex-wrap items-center gap-2 text-xl text-card-foreground">
+                {selectedCategory === "upcoming" ? (
+                  <Clock className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                 ) : (
-                  <AlertTriangle className="w-5 h-5 mr-2 text-red-500" />
+                  <AlertTriangle className="h-5 w-5 text-primary" />
                 )}
-                {selectedCategory === 'upcoming' ? 'Upcoming Layoffs' : 'Recent Layoffs'} ({selectedCategory === 'all' ? 'All Industries' : CATEGORIES.find(c => c.id === selectedCategory)?.label})
+                <span>
+                  {selectedCategory === "upcoming"
+                    ? "Upcoming Layoffs"
+                    : "Recent Layoffs"}{" "}
+                  (
+                  {selectedCategory === "all"
+                    ? "All Industries"
+                    : CATEGORIES.find((c) => c.id === selectedCategory)?.label}
+                  )
+                </span>
                 {loading && (
-                  <Badge variant="secondary" className="ml-3 animate-pulse">
+                  <Badge variant="secondary" className="animate-pulse">
                     Loading...
                   </Badge>
                 )}
               </CardTitle>
               {pagination && (
-                <Badge variant="secondary" className="text-sm">
+                <Badge
+                  variant="outline"
+                  className="w-fit border-primary/25 bg-primary/5 text-sm font-medium text-primary"
+                >
                   Page {pagination.page} of {pagination.totalPages}
                 </Badge>
               )}
@@ -355,22 +377,26 @@ export default function Dashboard() {
               <div className="space-y-4">
                 {[1, 2, 3, 4, 5].map((i) => (
                   <div key={i} className="animate-pulse">
-                    <div className="h-24 bg-slate-200 rounded-xl mb-3"></div>
+                    <div className="mb-3 h-24 rounded-xl bg-muted" />
                   </div>
                 ))}
               </div>
             ) : layoffs.length === 0 ? (
-              <div className="text-center py-16">
-                {selectedCategory === 'upcoming' ? (
-                  <Clock className="w-16 h-16 text-slate-300 mx-auto mb-4" />
+              <div className="py-16 text-center">
+                {selectedCategory === "upcoming" ? (
+                  <Clock className="mx-auto mb-4 h-16 w-16 text-muted-foreground/40" />
                 ) : (
-                  <AlertTriangle className="w-16 h-16 text-slate-300 mx-auto mb-4" />
+                  <AlertTriangle className="mx-auto mb-4 h-16 w-16 text-muted-foreground/40" />
                 )}
-                <p className="text-slate-500 text-lg">
-                  {selectedCategory === 'upcoming' ? 'No upcoming layoffs found' : 'No layoffs found'}
+                <p className="text-lg text-muted-foreground">
+                  {selectedCategory === "upcoming"
+                    ? "No upcoming layoffs found"
+                    : "No layoffs found"}
                 </p>
-                <p className="text-slate-400 text-sm mt-2">
-                  {searchQuery ? "Try a different search term" : "Try selecting a different industry"}
+                <p className="mt-2 text-sm text-muted-foreground/80">
+                  {searchQuery
+                    ? "Try a different search term"
+                    : "Try selecting a different industry"}
                 </p>
               </div>
             ) : (
@@ -382,7 +408,11 @@ export default function Dashboard() {
                     return (
                       <div
                         key={layoff.id}
-                        className={`border-l-4 ${upcoming ? 'border-orange-400' : 'border-red-400'} pl-6 py-4 bg-gradient-to-r ${upcoming ? 'from-orange-50' : 'from-red-50'} via-white to-transparent rounded-r-xl hover:shadow-lg transition-all duration-200 animate-slide-in`}
+                        className={`rounded-r-xl border-l-4 py-4 pl-6 transition-all duration-200 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-left-4 motion-safe:duration-300 ${
+                          upcoming
+                            ? "border-amber-500 bg-gradient-to-r from-amber-500/10 via-card to-transparent hover:shadow-md"
+                            : "border-primary/70 bg-gradient-to-r from-teal-500/8 via-card to-transparent hover:shadow-md"
+                        }`}
                         style={{ animationDelay: `${index * 50}ms` }}
                       >
                         <div className="flex items-start justify-between">
@@ -393,7 +423,7 @@ export default function Dashboard() {
                                 <img
                                   src={`https://logo.clearbit.com/${layoff.company?.toLowerCase().replace(/\s+/g, '')}.com`}
                                   alt={`${layoff.company} logo`}
-                                  className="w-12 h-12 rounded-lg object-contain bg-white border border-slate-200 p-1"
+                                  className="h-12 w-12 rounded-lg border border-border bg-card object-contain p-1"
                                   onError={(e) => {
                                     const target = e.target as HTMLImageElement;
                                     target.style.display = 'none';
@@ -402,8 +432,8 @@ export default function Dashboard() {
                                   }}
                                 />
                                 <div
-                                  className="w-12 h-12 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 items-center justify-center text-white font-bold text-lg hidden"
-                                  style={{ display: 'none' }}
+                                  className="hidden h-12 w-12 items-center justify-center rounded-lg text-lg font-bold text-primary-foreground lp-gradient-fill"
+                                  style={{ display: "none" }}
                                 >
                                   {layoff.company?.charAt(0).toUpperCase()}
                                 </div>
@@ -412,9 +442,11 @@ export default function Dashboard() {
                               {/* Company Info */}
                               <div className="flex-1">
                                 <div className="flex items-center gap-3 flex-wrap">
-                                  <h4 className="font-bold text-xl text-slate-900">{layoff.company}</h4>
+                                  <h4 className="text-xl font-bold text-card-foreground">
+                                    {layoff.company}
+                                  </h4>
                                   {upcoming && (
-                                    <Badge className="text-xs font-semibold bg-orange-500 text-white">
+                                    <Badge className="bg-amber-500 text-xs font-semibold text-white hover:bg-amber-500">
                                       Upcoming
                                     </Badge>
                                   )}
@@ -433,14 +465,22 @@ export default function Dashboard() {
                             </div>
 
                             {layoff.details && (
-                              <p className="text-sm text-slate-700 mb-4 leading-relaxed">{layoff.details}</p>
+                              <p className="mb-4 text-sm leading-relaxed text-muted-foreground">
+                                {layoff.details}
+                              </p>
                             )}
 
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-slate-600">
+                            <div className="grid grid-cols-2 gap-4 text-sm text-muted-foreground md:grid-cols-4">
                               {layoff.employeesLaidOff && (
                                 <span className="flex items-center">
-                                  <Users className={`w-4 h-4 mr-2 ${upcoming ? 'text-orange-500' : 'text-red-500'}`} />
-                                  <strong className="text-slate-900">{layoff.employeesLaidOff.toLocaleString()}</strong>
+                                  <Users
+                                    className={`mr-2 h-4 w-4 ${
+                                      upcoming ? "text-amber-600" : "text-rose-600"
+                                    }`}
+                                  />
+                                  <strong className="text-foreground">
+                                    {layoff.employeesLaidOff.toLocaleString()}
+                                  </strong>
                                   <span className="ml-1">{upcoming ? 'affected' : 'laid off'}</span>
                                 </span>
                               )}
@@ -456,7 +496,7 @@ export default function Dashboard() {
                               )}
                               {layoff.location && (
                                 <span className="flex items-center">
-                                  <MapPin className="w-4 h-4 mr-2 text-green-500" />
+                                  <MapPin className="mr-2 h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                                   {layoff.location}
                                 </span>
                               )}
@@ -468,10 +508,10 @@ export default function Dashboard() {
                               href={layoff.source}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="ml-4 p-3 hover:bg-slate-100 rounded-xl transition-colors"
+                              className="ml-4 rounded-xl p-3 transition-colors hover:bg-muted"
                               title="View source"
                             >
-                              <ExternalLink className="w-5 h-5 text-slate-400 hover:text-blue-600" />
+                              <ExternalLink className="h-5 w-5 text-muted-foreground hover:text-primary" />
                             </a>
                           )}
                         </div>
@@ -482,8 +522,8 @@ export default function Dashboard() {
 
                 {/* Pagination */}
                 {pagination && pagination.totalPages > 1 && (
-                  <div className="flex items-center justify-between pt-6 border-t">
-                    <div className="text-sm text-slate-600">
+                  <div className="flex flex-col gap-4 border-t border-border pt-6 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="text-sm text-muted-foreground">
                       Showing {((pagination.page - 1) * pagination.limit) + 1}-{Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} layoffs
                     </div>
 
@@ -545,24 +585,6 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
-
-      <style jsx>{`
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(-10px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes slideIn {
-          from { opacity: 0; transform: translateX(-20px); }
-          to { opacity: 1; transform: translateX(0); }
-        }
-        .animate-fade-in {
-          animation: fadeIn 0.5s ease-out;
-        }
-        .animate-slide-in {
-          animation: slideIn 0.4s ease-out forwards;
-          opacity: 0;
-        }
-      `}</style>
     </div>
   );
 }

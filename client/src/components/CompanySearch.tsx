@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Search } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getApiErrorMessage } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import type { Company } from "@shared/schema";
@@ -33,7 +33,7 @@ export default function CompanySearch() {
       });
       queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
     },
-    onError: (error) => {
+    onError: (error: unknown) => {
       if (isUnauthorizedError(error)) {
         toast({
           title: "Unauthorized",
@@ -47,7 +47,7 @@ export default function CompanySearch() {
       }
       toast({
         title: "Error",
-        description: "Failed to select company",
+        description: getApiErrorMessage(error, "Failed to select company"),
         variant: "destructive",
       });
     },

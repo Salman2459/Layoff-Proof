@@ -8,7 +8,7 @@ import {
     User, Briefcase, FileText, MapPin, GraduationCap,
     Code2, Globe, ChevronRight, Linkedin, Search, CheckCircle2,
     Clock, AlertTriangle, Bot, Settings, Phone, Mail, Award,
-    X, Calendar, AlertCircle
+    X, Calendar, AlertCircle, Building2, Rocket
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,7 +101,7 @@ function calcProgress(p: ProfileData | null | undefined): number {
     if (p.achievements) score += 5;
     if (p.expectedSalary && p.noticePeriod) score += 10;
     else if (p.expectedSalary || p.noticePeriod) score += 5;
-    return score;
+    return Math.min(100, score);
 }
 
 function scoreColor(n: number) {
@@ -487,7 +487,7 @@ export default function AutoJobApplyDashboard() {
 
     const platforms: PlatformCardProps[] = [
         {
-            name: 'LinkedIn Auto Apply',
+            name: 'LinkedIn',
             icon: <Linkedin className="w-6 h-6 text-white" />,
             description: 'Automatically apply to LinkedIn Easy Apply jobs that match your profile and preferences.',
             gradient: 'bg-gradient-to-r from-blue-600 to-blue-500',
@@ -496,22 +496,31 @@ export default function AutoJobApplyDashboard() {
             features: ['Smart job matching with your profile', 'Auto-fills all Easy Apply forms', 'Skips jobs below your salary range', 'Human-like typing & behavior'],
         },
         {
-            name: 'Indeed Auto Apply',
-            icon: <Search className="w-6 h-6 text-white" />,
-            description: 'Let AI browse Indeed and submit applications for you while you focus on interviews.',
-            gradient: 'bg-gradient-to-r from-purple-600 to-violet-500',
-            badgeColor: 'bg-purple-100 text-purple-700',
-            status: 'coming_soon',
-            features: ['Filters jobs by salary, location & type', 'Fills multi-step application forms', 'Cover letter generation per job', 'Tracks every application automatically'],
+            name: 'Glassdoor',
+            icon: <Building2 className="w-6 h-6 text-white" />,
+            description: 'Apply on Glassdoor with AI that uses your profile to complete applications consistently.',
+            gradient: 'bg-gradient-to-r from-emerald-600 to-teal-500',
+            badgeColor: 'bg-emerald-100 text-emerald-700',
+            status: 'available',
+            features: ['Profile-based job targeting', 'Auto-fills application fields', 'Smart question handling', 'Application tracking'],
         },
         {
-            name: 'Google Jobs Auto Apply',
-            icon: <Bot className="w-6 h-6 text-white" />,
-            description: 'Discover and apply to jobs listed on Google Search with AI-powered precision.',
-            gradient: 'bg-gradient-to-r from-indigo-600 to-purple-500',
-            badgeColor: 'bg-indigo-100 text-indigo-700',
-            status: 'coming_soon',
-            features: ['Aggregates jobs from all Google listings', 'AI-driven job relevance scoring', 'One-click apply where available', 'Daily new job alerts to your profile'],
+            name: 'Wellfound',
+            icon: <Rocket className="w-6 h-6 text-white" />,
+            description: 'Apply to startup roles on Wellfound faster with AI-powered auto-apply.',
+            gradient: 'bg-gradient-to-r from-violet-600 to-fuchsia-500',
+            badgeColor: 'bg-violet-100 text-violet-700',
+            status: 'available',
+            features: ['Startup-focused role matching', 'Auto-fills startup application forms', 'Keeps your profile consistent', 'Fast multi-apply sessions'],
+        },
+        {
+            name: 'Monster',
+            icon: <Briefcase className="w-6 h-6 text-white" />,
+            description: 'Let AI handle Monster applications end-to-end while you focus on interview prep.',
+            gradient: 'bg-gradient-to-r from-orange-600 to-amber-500',
+            badgeColor: 'bg-orange-100 text-orange-700',
+            status: 'available',
+            features: ['Quick apply flows', 'Form autofill + validation', 'Resume-aware field mapping', 'Application tracking'],
         },
     ];
 

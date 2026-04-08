@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getApiErrorMessage } from "@/lib/queryClient";
 import { 
   Info, 
   TriangleAlert, 
@@ -34,7 +34,7 @@ export default function Sidebar() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
     },
-    onError: (error) => {
+    onError: (error: unknown) => {
       if (isUnauthorizedError(error)) {
         toast({
           title: "Unauthorized",
@@ -48,7 +48,10 @@ export default function Sidebar() {
       }
       toast({
         title: "Error",
-        description: "Failed to mark notification as read",
+        description: getApiErrorMessage(
+          error,
+          "Failed to mark notification as read"
+        ),
         variant: "destructive",
       });
     },
