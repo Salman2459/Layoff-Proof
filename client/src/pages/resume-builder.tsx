@@ -15,6 +15,9 @@ import {
   Loader2,
   Sparkles,
 } from "lucide-react";
+import { MdLocationOn } from "react-icons/md";
+import { SiGithub, SiLinkedin } from "react-icons/si";
+import { resumeLocationSvg, resumeSocialSvg } from "@shared/resumeSocialIcons";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -513,7 +516,13 @@ const ResumeEditorForm = ({
                 />
               </div>
               <div>
-                <Label htmlFor="location">Location</Label>
+                <Label
+                  htmlFor="location"
+                  className="inline-flex items-center gap-2"
+                >
+                  <MdLocationOn className="h-4 w-4 shrink-0 text-emerald-700" aria-hidden />
+                  Location
+                </Label>
                 <Input
                   id="location"
                   value={extractedData.location}
@@ -527,7 +536,13 @@ const ResumeEditorForm = ({
                 />
               </div>
               <div>
-                <Label htmlFor="linkedin">LinkedIn Profile</Label>
+                <Label
+                  htmlFor="linkedin"
+                  className="inline-flex items-center gap-2"
+                >
+                  <SiLinkedin className="h-4 w-4 shrink-0 text-[#0A66C2]" aria-hidden />
+                  LinkedIn Profile
+                </Label>
                 <Input
                   id="linkedin"
                   value={extractedData.linkedin}
@@ -541,7 +556,13 @@ const ResumeEditorForm = ({
                 />
               </div>
               <div>
-                <Label htmlFor="github">GitHub Profile</Label>
+                <Label
+                  htmlFor="github"
+                  className="inline-flex items-center gap-2"
+                >
+                  <SiGithub className="h-4 w-4 shrink-0 text-[#24292f]" aria-hidden />
+                  GitHub Profile
+                </Label>
                 <Input
                   id="github"
                   value={extractedData.github}
@@ -1185,6 +1206,7 @@ export default function ResumeBuilder() {
                       <div class="contact">
                         ${resumeData.phone ? `<span class="pill">📞 ${resumeData.phone}</span>` : ""}
                         ${resumeData.email ? `<span class="pill">✉️ ${resumeData.email}</span>` : ""}
+                        ${resumeData.location ? `<span class="pill">${resumeLocationSvg({ size: 12, fill: "#047857" })}${resumeData.location}</span>` : ""}
                       </div>
                       <div class="s-h">My Portfolio</div>
                       <div class="box">
@@ -1235,9 +1257,10 @@ export default function ResumeBuilder() {
                 .name { font-size: 30px; font-weight: 800; margin: 0; font-family: Georgia, 'Times New Roman', serif; }
                 .role { margin-top: 4px; font-weight: 700; font-size: 14px; font-family: Arial, sans-serif; }
                 .summary { margin-top: 8px; color: #374151; font-size: 12px; line-height: 1.4; font-family: Arial, sans-serif; }
-                .band { background: #f3f4f6; border-top: 1px solid #e5e7eb; border-bottom: none; padding: 10px 24px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; font-family: Arial, sans-serif; font-size: 11px; color: #111827; }
+                .band { background: #f3f4f6; border-top: 1px solid #e5e7eb; border-bottom: none; padding: 10px 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 10px; font-family: Arial, sans-serif; font-size: 11px; color: #111827; }
                 .band span { display: inline-flex; gap: 8px; align-items: center; min-width: 0; }
                 .icon { width: 18px; height: 18px; border-radius: 6px; background: #111827; color: white; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; flex: 0 0 auto; }
+                .icon svg { display: block; }
                 .grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 26px; padding: 18px 24px 24px; }
                 h2 { font-size: 14px; letter-spacing: 0.02em; margin: 0 0 10px; font-weight: 900; }
                 .section { margin-bottom: 18px; }
@@ -1264,10 +1287,11 @@ export default function ResumeBuilder() {
                     </div>
                   </div>
                   <div class="band">
-                    <span><span class="icon">✉</span><span>${resumeData.email || ""}</span></span>
-                    <span><span class="icon">⌂</span><span>${resumeData.location || ""}</span></span>
-                    <span><span class="icon">☎</span><span>${resumeData.phone || ""}</span></span>
-                    <span><span class="icon">in</span><span>${(resumeData.linkedin || "").replace(/^https?:\/\//, "")}</span></span>
+                    ${resumeData.email ? `<span><span class="icon">✉</span><span>${resumeData.email}</span></span>` : ""}
+                    ${resumeData.location ? `<span><span class="icon">${resumeLocationSvg({ size: 12, fill: "#ffffff" })}</span><span>${resumeData.location}</span></span>` : ""}
+                    ${resumeData.phone ? `<span><span class="icon">☎</span><span>${resumeData.phone}</span></span>` : ""}
+                    ${resumeData.linkedin ? `<span><span class="icon">${resumeSocialSvg("linkedin", { size: 12, fill: "#ffffff" })}</span><span>${(resumeData.linkedin || "").replace(/^https?:\/\//, "")}</span></span>` : ""}
+                    ${resumeData.github ? `<span><span class="icon">${resumeSocialSvg("github", { size: 12, fill: "#ffffff" })}</span><span>${(resumeData.github || "").replace(/^https?:\/\//, "")}</span></span>` : ""}
                   </div>
                   <div class="grid">
                     <div>
@@ -1412,8 +1436,9 @@ export default function ResumeBuilder() {
                         <div class="meta">
                           ${resumeData.email ? `<span class="pill">✉ ${resumeData.email}</span>` : ``}
                           ${resumeData.phone ? `<span class="pill">☎ ${resumeData.phone}</span>` : ``}
-                          ${resumeData.location ? `<span class="pill">⌂ ${resumeData.location}</span>` : ``}
-                          ${resumeData.linkedin ? `<span class="pill">in ${(resumeData.linkedin || "").replace(/^https?:\/\//, "")}</span>` : ``}
+                          ${resumeData.location ? `<span class="pill" style="display:inline-flex;align-items:center;gap:6px;">${resumeLocationSvg({ size: 14, fill: "#0f766e" })}${resumeData.location}</span>` : ``}
+                          ${resumeData.linkedin ? `<span class="pill" style="display:inline-flex;align-items:center;gap:6px;">${resumeSocialSvg("linkedin", { size: 14, fill: "#0A66C2" })}${(resumeData.linkedin || "").replace(/^https?:\/\//, "")}</span>` : ``}
+                          ${resumeData.github ? `<span class="pill" style="display:inline-flex;align-items:center;gap:6px;">${resumeSocialSvg("github", { size: 14, fill: "#24292f" })}${(resumeData.github || "").replace(/^https?:\/\//, "")}</span>` : ``}
                         </div>
                       </div>
                     </div>
@@ -1498,7 +1523,7 @@ export default function ResumeBuilder() {
                 .section h2 { text-transform: uppercase; border-bottom: none; padding-bottom: 5px; margin-top: 20px; font-size: 1.2rem; }
                 .job, .education-item { margin-bottom: 15px; } h4 { margin: 0 0 5px; }
               </style></head><body>
-                <div class="header"><h1>${resumeData.name || "YOUR NAME"}</h1><p>${resumeData.location || ""} | ${resumeData.email || ""} | ${resumeData.phone || ""}</p></div>
+                <div class="header"><h1>${resumeData.name || "YOUR NAME"}</h1><p>${resumeData.location ? `<span style="display:inline-flex;align-items:center;gap:5px;vertical-align:middle;">${resumeLocationSvg({ size: 14, fill: "#333333" })}${resumeData.location}</span>` : ""}${resumeData.location && (resumeData.email || resumeData.phone) ? " | " : ""}${resumeData.email || ""}${resumeData.email && resumeData.phone ? " | " : ""}${resumeData.phone || ""}</p>${resumeData.linkedin ? `<p style="margin-top:6px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;justify-content:center;">${resumeSocialSvg("linkedin", { size: 14, fill: "#0A66C2" })}${resumeData.linkedin}</p>` : ""}${resumeData.github ? `<p style="margin-top:4px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;justify-content:center;">${resumeSocialSvg("github", { size: 14, fill: "#24292f" })}${resumeData.github}</p>` : ""}</div>
                 <div class="section"><h2>Summary</h2><p>${formatTextForHtml(resumeData.summary)}</p></div>
                 <div class="section"><h2>Skills</h2><p>${renderSkills(resumeData.skills)}</p></div>
                 <div class="section"><h2>Experience</h2>${renderExperience(resumeData.experience)}</div>
@@ -1517,7 +1542,9 @@ export default function ResumeBuilder() {
               </style></head><body>
                 <div class="sidebar">
                   <h1>${resumeData.name || "Your Name"}</h1><p>${resumeData.profession || "Your Profession"}</p>
-                  <h2>Contact</h2><p>${resumeData.email}<br/>${resumeData.phone}<br/>${resumeData.location}</p>
+                  <h2>Contact</h2><p>${resumeData.email}<br/>${resumeData.phone}${resumeData.location ? `<br/><span style="display:inline-flex;align-items:center;gap:8px;">${resumeLocationSvg({ size: 18, fill: "#ffffff" })}<span>${resumeData.location}</span></span>` : ""}</p>
+                  ${resumeData.linkedin ? `<p style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:0.9rem;">${resumeSocialSvg("linkedin", { size: 18, fill: "#ffffff" })}<span style="word-break:break-all;">${resumeData.linkedin}</span></p>` : ""}
+                  ${resumeData.github ? `<p style="display:flex;align-items:flex-start;gap:8px;margin-top:8px;font-size:0.9rem;">${resumeSocialSvg("github", { size: 18, fill: "#ffffff" })}<span style="word-break:break-all;">${resumeData.github}</span></p>` : ""}
                 </div>
                 <div class="main">
                   <h2>Summary</h2><p>${formatTextForHtml(resumeData.summary)}</p>
@@ -1541,7 +1568,7 @@ export default function ResumeBuilder() {
                 .section h2 { color: #2563eb; border-bottom: none; padding-bottom: 5px; margin-top: 20px; }
                 .job, .education-item { margin-bottom: 15px; } h4 { margin: 0 0 5px; }
               </style></head><body>
-                <div class="header"><h1>${resumeData.name || "YOUR NAME"}</h1><p>${resumeData.profession || "Your Profession"}</p><p>${resumeData.email || ""} | ${resumeData.phone || ""}</p></div>
+                <div class="header"><h1>${resumeData.name || "YOUR NAME"}</h1><p>${resumeData.profession || "Your Profession"}</p><p>${resumeData.email || ""}${resumeData.email && resumeData.phone ? " | " : ""}${resumeData.phone || ""}${(resumeData.email || resumeData.phone) && resumeData.location ? " | " : ""}${resumeData.location ? `<span style="display:inline-flex;align-items:center;gap:5px;">${resumeLocationSvg({ size: 14, fill: "#555555" })}${resumeData.location}</span>` : ""}</p>${resumeData.linkedin ? `<p style="margin-top:8px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;">${resumeSocialSvg("linkedin", { size: 15, fill: "#0A66C2" })}<a href="${resumeData.linkedin}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;">LinkedIn</a></p>` : ""}${resumeData.github ? `<p style="margin-top:4px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;">${resumeSocialSvg("github", { size: 15, fill: "#24292f" })}<a href="${resumeData.github}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;">GitHub</a></p>` : ""}</div>
                 <div class="section"><h2>Summary</h2><p>${formatTextForHtml(resumeData.summary)}</p></div>
                 <div class="section"><h2>Skills</h2><p>${renderSkills(resumeData.skills)}</p></div>
                 <div class="section"><h2>Experience</h2>${renderExperience(resumeData.experience)}</div>

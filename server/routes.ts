@@ -33,6 +33,7 @@ import { db } from "./db";
 import Parser from "rss-parser";
 import { eq, and, gte, lte, desc, sql } from "drizzle-orm";
 import { layoffs } from "@shared/schema";
+import { resumeLocationSvg, resumeSocialSvg } from "@shared/resumeSocialIcons";
 import {
   stripe,
   getOrCreateStripeCustomer,
@@ -1994,16 +1995,26 @@ ${instructions}
 Now, provide the complete, improved cover letter below.
 `;
 
-      // 3. Call the Anthropic API
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514", // Or another suitable model
-        max_tokens: 2048,
-        temperature: 0.45,
-        messages: [{ role: "user", content: prompt }],
-      });
+      // 3. Call the Anthropic API (retry on 529 overload / rate limits)
+      const aiResult = await anthropicMessagesCreateWithRetry(
+        anthropic,
+        {
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 2048,
+          temperature: 0.45,
+          messages: [{ role: "user", content: prompt }],
+        },
+        { label: "improve-cover-letter" },
+      );
+
+      if (!aiResult.ok) {
+        const httpStatus =
+          aiResult.status === 529 || aiResult.status === 503 ? 503 : 502;
+        return res.status(httpStatus).json({ error: aiResult.error });
+      }
 
       // 4. Extract the improved letter text
-      const improvedLetter = response.content[0].text;
+      const improvedLetter = aiResult.message.content[0].text;
 
       // 5. Deduct one credit from the user after a successful generation
 
@@ -4088,7 +4099,7 @@ Requirements:
       ---
     `;
 
-      const msg = await anthropicMessagesCreateWithRetry(
+      const aiResult = await anthropicMessagesCreateWithRetry(
         anthropic,
         {
           model: "claude-sonnet-4-20250514",
@@ -4099,7 +4110,14 @@ Requirements:
         { maxRetries: 6, baseDelayMs: 2000, label: "upload-resume" },
       );
 
-      const responseText = msg.content[0].text;
+      if (!aiResult.ok) {
+        return res.status(503).json({
+          error: "Failed to parse resume with AI.",
+          details: aiResult.error,
+        });
+      }
+
+      const responseText = aiResult.message.content[0].text;
       let parsedData;
 
       try {
@@ -5363,7 +5381,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
         <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
             * { margin: 0; padding: 0; box-sizing: border-box; } body { font-family: 'Arial', sans-serif; line-height: 1.4; color: #333; background: white; }
             .container { max-width: 800px; margin: 0 auto; padding: 40px; } .header { margin-bottom: 30px; } .header h1 { font-size: 2.5rem; font-weight: bold; color: #333; margin-bottom: 8px; }
-            .contact-info { display: flex; flex-wrap: wrap; gap: 20px; color: #666; font-size: 0.9rem; margin-bottom: 20px; } .contact-info span { display: flex; align-items: center; gap: 5px; }
+            .contact-info { display: flex; flex-wrap: wrap; gap: 20px; color: #666; font-size: 0.9rem; margin-bottom: 20px; } .contact-info span { display: flex; align-items: center; gap: 5px; } .contact-info svg { flex-shrink: 0; }
             .contact-info a { color: #3B82F6; text-decoration: none; } .contact-info a:hover { text-decoration: underline; } .divider { display: none; }
             .section { margin-bottom: 30px; } .section h2 { color: #3B82F6; font-size: 1.2rem; font-weight: bold; margin-bottom: 15px; text-transform: uppercase; }
             .experience-item { margin-bottom: 20px; } .experience-item h3 { font-size: 1.1rem; font-weight: bold; color: #333; margin-bottom: 5px; }
@@ -5378,9 +5396,9 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
               <div class="contact-info">
                 ${isPresent(resumeData.email) ? `<span>📧 <a href="mailto:${resumeData.email}">${resumeData.email}</a></span>` : ""}
                 ${isPresent(resumeData.phone) ? `<span>📞 ${resumeData.phone}</span>` : ""}
-                ${isPresent(resumeData.location) ? `<span>📍 ${resumeData.location}</span>` : ""}
-                ${isPresent(resumeData.linkedin) ? `<span>🔗 <a href="${resumeData.linkedin}" target="_blank">LinkedIn</a></span>` : ""}
-                ${isPresent(resumeData.github) ? `<span>💻 <a href="${resumeData.github}" target="_blank">GitHub</a></span>` : ""}
+                ${isPresent(resumeData.location) ? `<span>${resumeLocationSvg({ size: 16, fill: "#666666" })}${resumeData.location}</span>` : ""}
+                ${isPresent(resumeData.linkedin) ? `<span>${resumeSocialSvg("linkedin", { size: 16, fill: "#0A66C2" })}<a href="${resumeData.linkedin}" target="_blank" rel="noopener noreferrer">LinkedIn</a></span>` : ""}
+                ${isPresent(resumeData.github) ? `<span>${resumeSocialSvg("github", { size: 16, fill: "#24292f" })}<a href="${resumeData.github}" target="_blank" rel="noopener noreferrer">GitHub</a></span>` : ""}
                 ${isPresent(resumeData.website) ? `<span>🌐 <a href="${resumeData.website}" target="_blank">Website</a></span>` : ""}
               </div>
               <div class="divider"></div>
@@ -5407,7 +5425,9 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
       const contactBits = [
         isPresent(resumeData.phone) ? `📞 ${resumeData.phone}` : "",
         isPresent(resumeData.email) ? `✉️ ${resumeData.email}` : "",
-        isPresent(resumeData.location) ? `📍 ${resumeData.location}` : "",
+        isPresent(resumeData.location)
+          ? `${resumeLocationSvg({ size: 12, fill: "#047857" })} ${resumeData.location}`
+          : "",
       ].filter(isPresent);
 
       const portfolioUrl =
@@ -5443,7 +5463,8 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
           .name { text-align:center; font-weight: 900; letter-spacing: 0.22em; text-transform: uppercase; font-size: 18px; color: #047857; }
           .role { text-align:center; margin-top: 6px; font-weight: 700; font-size: 11px; color: #334155; text-transform: uppercase; }
           .contacts { margin: 12px auto 18px; display:flex; justify-content:center; flex-wrap: wrap; gap: 8px; }
-          .chip { font-size: 10px; color: #0f172a; background: #ecfeff; border: 1px solid #99f6e4; padding: 4px 10px; border-radius: 999px; }
+          .chip { font-size: 10px; color: #0f172a; background: #ecfeff; border: 1px solid #99f6e4; padding: 4px 10px; border-radius: 999px; display: inline-flex; align-items: center; gap: 5px; }
+          .chip svg { flex-shrink: 0; }
           .s-title { margin-top: 18px; font-size: 10px; letter-spacing: 0.24em; font-weight: 900; color: #059669; text-transform: uppercase; }
           .s-box { margin-top: 8px; border: 1px dashed #cbd5e1; border-radius: 12px; background: #fff; padding: 10px; }
           .muted { color: #64748b; }
@@ -5569,9 +5590,10 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
           .name { font-size: 34px; font-weight: 900; }
           .role { margin-top: 4px; font-size: 14px; font-weight: 800; font-family: Arial, sans-serif; }
           .summary { margin-top: 8px; font-size: 12px; color: #374151; line-height: 1.5; font-family: Arial, sans-serif; }
-          .band { background: #f3f4f6; border-top: 1px solid #e5e7eb; border-bottom: none; padding: 10px 26px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; font-family: Arial, sans-serif; font-size: 11px; }
+          .band { background: #f3f4f6; border-top: 1px solid #e5e7eb; border-bottom: none; padding: 10px 26px; display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 10px; font-family: Arial, sans-serif; font-size: 11px; color: #111827; }
           .band span { display: inline-flex; gap: 8px; align-items: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
           .icon { width: 18px; height: 18px; border-radius: 6px; background: #111827; color: white; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; flex: 0 0 auto; }
+          .icon svg { display: block; }
           .grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 28px; padding: 18px 26px 26px; }
           h2 { font-size: 14px; font-weight: 900; margin: 0 0 10px; letter-spacing: 0.02em; }
           .section { margin-bottom: 18px; }
@@ -5600,10 +5622,11 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
             </div>
 
             <div class="band">
-              <span><span class="icon">✉</span><span>${esc(resumeData.email)}</span></span>
-              <span><span class="icon">⌂</span><span>${esc(resumeData.location)}</span></span>
-              <span><span class="icon">☎</span><span>${esc(resumeData.phone)}</span></span>
-              <span><span class="icon">in</span><span>${esc(String(resumeData.linkedin || "").replace(/^https?:\/\//, ""))}</span></span>
+              ${isPresent(resumeData.email) ? `<span><span class="icon">✉</span><span>${esc(resumeData.email)}</span></span>` : ""}
+              ${isPresent(resumeData.location) ? `<span><span class="icon">${resumeLocationSvg({ size: 12, fill: "#ffffff" })}</span><span>${esc(resumeData.location)}</span></span>` : ""}
+              ${isPresent(resumeData.phone) ? `<span><span class="icon">☎</span><span>${esc(resumeData.phone)}</span></span>` : ""}
+              ${isPresent(resumeData.linkedin) ? `<span><span class="icon">${resumeSocialSvg("linkedin", { size: 12, fill: "#ffffff" })}</span><span>${esc(String(resumeData.linkedin).replace(/^https?:\/\//, ""))}</span></span>` : ""}
+              ${isPresent(resumeData.github) ? `<span><span class="icon">${resumeSocialSvg("github", { size: 12, fill: "#ffffff" })}</span><span>${esc(String(resumeData.github).replace(/^https?:\/\//, ""))}</span></span>` : ""}
             </div>
 
             <div class="grid">
@@ -5756,8 +5779,9 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
                   <div class="meta">
                     ${isPresent(resumeData.email) ? `<span class="pill">✉ ${esc(resumeData.email)}</span>` : ""}
                     ${isPresent(resumeData.phone) ? `<span class="pill">☎ ${esc(resumeData.phone)}</span>` : ""}
-                    ${isPresent(resumeData.location) ? `<span class="pill">⌂ ${esc(resumeData.location)}</span>` : ""}
-                    ${isPresent(resumeData.linkedin) ? `<span class="pill">in ${esc(String(resumeData.linkedin).replace(/^https?:\/\//, ""))}</span>` : ""}
+                    ${isPresent(resumeData.location) ? `<span class="pill" style="display:inline-flex;align-items:center;gap:6px;">${resumeLocationSvg({ size: 14, fill: "#0f766e" })}${esc(resumeData.location)}</span>` : ""}
+                    ${isPresent(resumeData.linkedin) ? `<span class="pill" style="display:inline-flex;align-items:center;gap:6px;">${resumeSocialSvg("linkedin", { size: 14, fill: "#0A66C2" })}${esc(String(resumeData.linkedin).replace(/^https?:\/\//, ""))}</span>` : ""}
+                    ${isPresent(resumeData.github) ? `<span class="pill" style="display:inline-flex;align-items:center;gap:6px;">${resumeSocialSvg("github", { size: 14, fill: "#24292f" })}${esc(String(resumeData.github).replace(/^https?:\/\//, ""))}</span>` : ""}
                   </div>
                 </div>
               </div>
@@ -5808,15 +5832,26 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
         </body></html>`;
     }
 
-    case "harvard":
-      const harvardContact = [
-        resumeData.phone,
-        resumeData.email,
-        resumeData.linkedin,
-        resumeData.location,
-      ]
-        .filter(isPresent)
-        .join(" • ");
+    case "harvard": {
+      const harvardBits: string[] = [];
+      if (isPresent(resumeData.phone)) harvardBits.push(resumeData.phone);
+      if (isPresent(resumeData.email)) harvardBits.push(resumeData.email);
+      if (isPresent(resumeData.linkedin)) {
+        harvardBits.push(
+          `<span style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;max-width:100%;">${resumeSocialSvg("linkedin", { size: 14, fill: "#0A66C2" })}${resumeData.linkedin}</span>`,
+        );
+      }
+      if (isPresent(resumeData.github)) {
+        harvardBits.push(
+          `<span style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;max-width:100%;">${resumeSocialSvg("github", { size: 14, fill: "#24292f" })}${resumeData.github}</span>`,
+        );
+      }
+      if (isPresent(resumeData.location)) {
+        harvardBits.push(
+          `<span style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;max-width:100%;">${resumeLocationSvg({ size: 14, fill: "#000000" })}${resumeData.location}</span>`,
+        );
+      }
+      const harvardContact = harvardBits.join(" • ");
       return `
         <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
             * { margin: 0; padding: 0; box-sizing: border-box; } body { font-family: 'Times New Roman', serif; line-height: 1.5; color: #000; background: white; }
@@ -5875,13 +5910,16 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
             }
              <!-- --- END MODIFICATION --- -->
         </div></body></html>`;
+    }
 
     case "creative":
       const creativeContactExists =
         isPresent(resumeData.phone) ||
         isPresent(resumeData.email) ||
         isPresent(resumeData.location) ||
-        isPresent(resumeData.website);
+        isPresent(resumeData.website) ||
+        isPresent(resumeData.linkedin) ||
+        isPresent(resumeData.github);
       return `
         <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
             * { margin: 0; padding: 0; box-sizing: border-box; } body { font-family: 'Arial', sans-serif; line-height: 1.4; color: #333; background: #f4f4f4; }
@@ -5910,8 +5948,10 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
                   ? `<div class="section"><h3>Contact</h3>
                 ${isPresent(resumeData.phone) ? `<div class="contact-item"><span>📞</span><span>${resumeData.phone}</span></div>` : ""}
                 ${isPresent(resumeData.email) ? `<div class="contact-item"><span>📧</span><span>${resumeData.email}</span></div>` : ""}
-                ${isPresent(resumeData.location) ? `<div class="contact-item"><span>📍</span><span>${resumeData.location}</span></div>` : ""}
+                ${isPresent(resumeData.location) ? `<div class="contact-item">${resumeLocationSvg({ size: 18, fill: "#ffffff" })}<span>${resumeData.location}</span></div>` : ""}
                 ${isPresent(resumeData.website) ? `<div class="contact-item"><span>🌐</span><span>${resumeData.website}</span></div>` : ""}
+                ${isPresent(resumeData.linkedin) ? `<div class="contact-item">${resumeSocialSvg("linkedin", { size: 18, fill: "#ffffff" })}<span><a href="${resumeData.linkedin}" target="_blank" rel="noopener noreferrer" style="color:#fff;">${resumeData.linkedin}</a></span></div>` : ""}
+                ${isPresent(resumeData.github) ? `<div class="contact-item">${resumeSocialSvg("github", { size: 18, fill: "#ffffff" })}<span><a href="${resumeData.github}" target="_blank" rel="noopener noreferrer" style="color:#fff;">${resumeData.github}</a></span></div>` : ""}
               </div>`
                   : ""
               }

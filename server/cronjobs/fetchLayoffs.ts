@@ -361,7 +361,7 @@ ${JSON.stringify(
                     )}`;
 
                     try {
-                        const msg = await anthropicMessagesCreateWithRetry(
+                        const aiResult = await anthropicMessagesCreateWithRetry(
                             anthropic,
                             {
                                 model: "claude-sonnet-4-20250514",
@@ -376,7 +376,16 @@ ${JSON.stringify(
                             },
                         );
 
-                        let data = msg.content[0].text
+                        if (!aiResult.ok) {
+                            console.error(
+                                `Claude error (${category}):`,
+                                aiResult.error,
+                                aiResult.requestId,
+                            );
+                            continue;
+                        }
+
+                        let data = aiResult.message.content[0].text
                             .trim()
                             .replace(/```json\n?/g, "")
                             .replace(/```\n?/g, "")
