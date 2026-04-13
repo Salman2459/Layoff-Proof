@@ -1,4 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+
+/** Debounce delay (ms) before live preview regenerates after edits */
+const RESUME_PREVIEW_DEBOUNCE_MS = 650;
 import {
   Upload,
   FileText,
@@ -255,6 +258,7 @@ const ProgressStepper = ({
 
 const resumeTemplates: ResumeTemplate[] = [
   {
+  
     id: "emerald-sidebar",
     name: "Emerald Sidebar",
     description: "Modern two-column layout with emerald accents.",
@@ -299,6 +303,12 @@ const resumeTemplates: ResumeTemplate[] = [
   
 ];
 
+/** Layouts that include a Projects block (keep in sync with server generateResumeHTML). */
+const RESUME_TEMPLATES_WITH_PROJECTS = new Set([
+  "photo-classic",
+  "brand-split",
+]);
+
 const initialResumeData: ParsedResumeData = {
   name: "",
   email: "",
@@ -326,10 +336,13 @@ const ResumeEditorForm = ({
   extractedData,
   setExtractedData,
   onAISuggestion,
+  selectedTemplateId = "",
 }: {
   extractedData: ParsedResumeData;
   setExtractedData: (data: ParsedResumeData) => void;
   onAISuggestion: (fieldName: string, suggestion: string) => void;
+  /** When set, used to show the Projects tab only for templates that render that section. */
+  selectedTemplateId?: string;
 }) => {
   const { toast } = useToast();
   // --- NEW: Add constants and derived state for clarity ---
@@ -337,26 +350,34 @@ const ResumeEditorForm = ({
   const skillsList = extractedData.skills || [];
   const skillCount = skillsList.length;
   const isSkillLimitReached = skillCount >= MAX_SKILLS;
+  const showProjectsTab =
+    !!selectedTemplateId &&
+    RESUME_TEMPLATES_WITH_PROJECTS.has(selectedTemplateId);
   // --- END NEW ---
 
   return (
     <Card>
-      <CardContent className="p-8">
+      <CardContent className="p-4 sm:p-6 lg:p-8">
         <Tabs defaultValue="personal" className="w-full">
-          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-5 mb-8">
+          <TabsList
+            className={`grid w-full mb-6 sm:mb-8 ${showProjectsTab ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-6" : "grid-cols-3 sm:grid-cols-5"}`}
+          >
             <TabsTrigger value="personal">Personal</TabsTrigger>
             <TabsTrigger value="summary">Summary</TabsTrigger>
             <TabsTrigger value="skills">Skills</TabsTrigger>
             <TabsTrigger value="experience">Experience</TabsTrigger>
             <TabsTrigger value="education">Education</TabsTrigger>
+            {showProjectsTab ? (
+              <TabsTrigger value="projects">Projects</TabsTrigger>
+            ) : null}
           </TabsList>
 
           <TabsContent value="personal" className="space-y-6">
-            <h3 className="text-xl font-semibold">Personal Information</h3>
-            <div className="rounded-xl border border-border bg-card p-4">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="h-16 w-16 overflow-hidden rounded-full border border-border bg-muted">
+            <h3 className="text-lg font-semibold sm:text-xl">Personal Information</h3>
+            <div className="rounded-xl border border-border bg-card p-4 sm:p-5">
+              <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between md:gap-6">
+                <div className="flex flex-col items-center gap-3 text-center sm:flex-row sm:items-center sm:gap-4 sm:text-left">
+                  <div className="h-20 w-20 shrink-0 overflow-hidden rounded-full border border-border bg-muted sm:h-16 sm:w-16">
                     {extractedData.profileImageDataUrl ? (
                       <img
                         src={extractedData.profileImageDataUrl}
@@ -364,12 +385,12 @@ const ResumeEditorForm = ({
                         className="h-full w-full object-cover"
                       />
                     ) : (
-                      <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">
+                      <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] leading-tight text-muted-foreground sm:text-xs">
                         No photo
                       </div>
                     )}
                   </div>
-                  <div>
+                  <div className="min-w-0 max-w-md">
                     <div className="text-sm font-semibold text-foreground">
                       Profile photo
                     </div>
@@ -379,7 +400,7 @@ const ResumeEditorForm = ({
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex w-full min-w-0 flex-col gap-3 md:w-auto md:shrink-0 md:items-end">
                   <Input
                     id="profile-photo"
                     type="file"
@@ -412,37 +433,40 @@ const ResumeEditorForm = ({
                       reader.readAsDataURL(file);
                     }}
                   />
-                  <Label
-                    htmlFor="profile-photo"
-                    className="inline-flex cursor-pointer items-center rounded-md border border-border bg-card px-3 py-2 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-muted"
-                  >
-                    Upload photo
-                  </Label>
-                  {extractedData.profileImageDataUrl ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() =>
-                        setExtractedData({
-                          ...extractedData,
-                          profileImageDataUrl: "",
-                        })
-                      }
+                  <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-center md:justify-end">
+                    <Label
+                      htmlFor="profile-photo"
+                      className="inline-flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-border bg-card px-4 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-muted sm:h-9 sm:w-auto sm:min-w-[8.5rem]"
                     >
-                      Remove
-                    </Button>
-                  ) : null}
-                  <div className="text-xs text-muted-foreground">
-                    Max 1MB (JPG/PNG/WebP)
+                      Upload photo
+                    </Label>
+                    {extractedData.profileImageDataUrl ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-10 w-full sm:h-9 sm:w-auto sm:min-w-[8.5rem]"
+                        onClick={() =>
+                          setExtractedData({
+                            ...extractedData,
+                            profileImageDataUrl: "",
+                          })
+                        }
+                      >
+                        Remove
+                      </Button>
+                    ) : null}
                   </div>
+                  <p className="text-center text-xs text-muted-foreground md:text-right">
+                    Max 1MB (JPG/PNG/WebP)
+                  </p>
                 </div>
               </div>
               {extractedData.profileImageDataUrl ? null : (
-                <div className="mt-2 text-xs text-muted-foreground">
+                <div className="mt-3 text-center text-xs text-muted-foreground sm:text-left">
                   Tip: use a square image for best results.
                 </div>
               )}
-              <div className="mt-2 text-xs text-muted-foreground">
+              <div className="mt-2 text-center text-xs text-muted-foreground sm:text-left">
                 If your image is larger than 1MB, compress it first.
               </div>
             </div>
@@ -823,6 +847,127 @@ const ResumeEditorForm = ({
               </Card>
             ))}
           </TabsContent>
+
+          {showProjectsTab ? (
+            <TabsContent value="projects" className="space-y-6">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="text-xl font-semibold">Projects</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Shown on Photo Classic and Brand Split. Each line appears on
+                    the resume (link URL, project name, or short description).
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  onClick={() =>
+                    setExtractedData({
+                      ...extractedData,
+                      projects: [
+                        ...(extractedData.projects || []),
+                        { name: "", url: "" },
+                      ],
+                    })
+                  }
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                >
+                  <Plus className="w-4 h-4 mr-2" /> Add project
+                </Button>
+              </div>
+              {(extractedData.projects || []).map((proj: any, index: number) => (
+                <Card
+                  key={index}
+                  className="p-4 bg-gray-50 dark:bg-gray-800"
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <Label>Project name</Label>
+                      <Input
+                        value={
+                          typeof proj === "string"
+                            ? proj
+                            : String(proj?.name ?? "")
+                        }
+                        onChange={(e) => {
+                          const list = [...(extractedData.projects || [])];
+                          const next =
+                            typeof list[index] === "string"
+                              ? {
+                                  name: e.target.value,
+                                  url: "",
+                                }
+                              : {
+                                  ...(list[index] as object),
+                                  name: e.target.value,
+                                };
+                          list[index] = next;
+                          setExtractedData({
+                            ...extractedData,
+                            projects: list,
+                          });
+                        }}
+                        placeholder="e.g. Portfolio site"
+                      />
+                    </div>
+                    <div>
+                      <Label>Link or description</Label>
+                      <Input
+                        value={
+                          typeof proj === "string"
+                            ? ""
+                            : String(proj?.url ?? "")
+                        }
+                        onChange={(e) => {
+                          const list = [...(extractedData.projects || [])];
+                          const cur = list[index];
+                          const next =
+                            typeof cur === "string"
+                              ? {
+                                  name: cur,
+                                  url: e.target.value,
+                                }
+                              : {
+                                  ...(cur as object),
+                                  url: e.target.value,
+                                };
+                          list[index] = next;
+                          setExtractedData({
+                            ...extractedData,
+                            projects: list,
+                          });
+                        }}
+                        placeholder="https://github.com/you/project"
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={() =>
+                      setExtractedData({
+                        ...extractedData,
+                        projects: (extractedData.projects || []).filter(
+                          (_, i) => i !== index,
+                        ),
+                      })
+                    }
+                    variant="outline"
+                    size="sm"
+                    className="text-red-600"
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" /> Remove
+                  </Button>
+                </Card>
+              ))}
+              {!(extractedData.projects || []).length ? (
+                <p className="text-sm text-muted-foreground">
+                  No projects yet. Use &quot;Add project&quot; to list portfolio
+                  pieces, repos, or case studies.
+                </p>
+              ) : null}
+            </TabsContent>
+          ) : null}
         </Tabs>
       </CardContent>
     </Card>
@@ -851,6 +996,7 @@ export default function ResumeBuilder() {
   const user = useAuth();
   const [debouncedExtractedData, setDebouncedExtractedData] =
     useState<ParsedResumeData>(extractedData);
+  const prevStepRef = useRef<string | null>(null);
 
   const handleAISuggestion = (fieldName: string, suggestion: string) => {
     setExtractedData((prevData) => {
@@ -883,11 +1029,22 @@ export default function ResumeBuilder() {
   };
 
   useEffect(() => {
-    const handler = setTimeout(() => {
+    const handler = window.setTimeout(() => {
       setDebouncedExtractedData(extractedData);
-    }, 500);
-    return () => clearTimeout(handler);
+    }, RESUME_PREVIEW_DEBOUNCE_MS);
+    return () => window.clearTimeout(handler);
   }, [extractedData]);
+
+  // Show correct preview immediately when opening the editor (don’t wait for debounce)
+  useEffect(() => {
+    if (
+      currentStep === "editor-preview" &&
+      prevStepRef.current !== "editor-preview"
+    ) {
+      setDebouncedExtractedData(extractedData);
+    }
+    prevStepRef.current = currentStep;
+  }, [currentStep, extractedData]);
 
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
@@ -1071,14 +1228,14 @@ export default function ResumeBuilder() {
               <html><head><style>
                 * { box-sizing: border-box; }
                 body { font-family: Georgia, 'Times New Roman', serif; margin: 0; color: #111827; background: white; }
-                .page { max-width: 980px; margin: 0 auto; border: 1px solid #e5e7eb; }
+                .page { max-width: 980px; margin: 0 auto; }
                 .top { display: grid; grid-template-columns: 140px 1fr; gap: 18px; padding: 22px 24px 16px; align-items: start; }
                 .photo { width: 120px; height: 120px; border-radius: 999px; overflow: hidden; background: #e5e7eb; border: 4px solid #ffffff; box-shadow: 0 10px 22px rgba(0,0,0,0.08); }
                 .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
                 .name { font-size: 30px; font-weight: 800; margin: 0; font-family: Georgia, 'Times New Roman', serif; }
                 .role { margin-top: 4px; font-weight: 700; font-size: 14px; font-family: Arial, sans-serif; }
                 .summary { margin-top: 8px; color: #374151; font-size: 12px; line-height: 1.4; font-family: Arial, sans-serif; }
-                .band { background: #f3f4f6; border-top: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; padding: 10px 24px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; font-family: Arial, sans-serif; font-size: 11px; color: #111827; }
+                .band { background: #f3f4f6; border-top: 1px solid #e5e7eb; border-bottom: none; padding: 10px 24px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; font-family: Arial, sans-serif; font-size: 11px; color: #111827; }
                 .band span { display: inline-flex; gap: 8px; align-items: center; min-width: 0; }
                 .icon { width: 18px; height: 18px; border-radius: 6px; background: #111827; color: white; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; flex: 0 0 auto; }
                 .grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 26px; padding: 18px 24px 24px; }
@@ -1089,8 +1246,8 @@ export default function ResumeBuilder() {
                 .job .meta { font-size: 10px; color: #6b7280; font-style: italic; margin: 1px 0 6px; font-family: Arial, sans-serif; }
                 .job ul { margin: 0; padding-left: 18px; font-size: 11px; font-family: Arial, sans-serif; }
                 .job li { margin: 4px 0; }
-                .chips { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; font-family: Arial, sans-serif; }
-                .chip { border: 1px solid #d1d5db; background: #f9fafb; border-radius: 6px; padding: 4px 8px; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .chips { display: flex; flex-wrap: wrap; gap: 6px; font-family: Arial, sans-serif; }
+                .chip { border: 1px solid #d1d5db; background: #f9fafb; border-radius: 6px; padding: 4px 8px; font-size: 11px; line-height: 1.25; white-space: normal; word-break: break-word; max-width: 100%; }
                 .links { font-family: Arial, sans-serif; font-size: 11px; display: grid; gap: 6px; }
                 .muted { color: #6b7280; font-family: Arial, sans-serif; font-size: 11px; }
                 .edu h4 { margin: 0; font-size: 12px; font-weight: 900; }
@@ -1172,7 +1329,7 @@ export default function ResumeBuilder() {
                                     const url =
                                       typeof p === "string"
                                         ? p
-                                        : p?.name || p?.url || "";
+                                        : p?.url || p?.name || "";
                                     return url
                                       ? `<div>${String(url)}</div>`
                                       : "";
@@ -1218,7 +1375,7 @@ export default function ResumeBuilder() {
               <html><head><style>
                 * { box-sizing: border-box; }
                 body { margin: 0; background: #ffffff; color: #0f172a; font-family: Arial, sans-serif; }
-                .page { width: 100%; max-width: 980px; margin: 0 auto; border: 1px solid #e5e7eb; }
+                .page { width: 100%; max-width: 980px; margin: 0 auto; }
                 .hero { position: relative; padding: 22px 26px 18px; overflow: hidden; }
                 .hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(800px circle at 8% 0%, rgba(45,212,191,0.22), transparent 55%), radial-gradient(700px circle at 92% 10%, rgba(167,139,250,0.20), transparent 55%), linear-gradient(135deg, rgba(13,148,136,0.10), rgba(99,102,241,0.10)); }
                 .hero-inner { position: relative; display: grid; grid-template-columns: 96px 1fr; gap: 16px; align-items: center; }
@@ -1228,7 +1385,7 @@ export default function ResumeBuilder() {
                 .role { margin-top: 2px; color: #0f766e; font-weight: 800; text-transform: uppercase; letter-spacing: 0.12em; font-size: 11px; }
                 .meta { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; color: #334155; }
                 .pill { padding: 4px 10px; border-radius: 999px; border: 1px solid #cbd5e1; background: rgba(255,255,255,0.75); }
-                .grid { display: grid; grid-template-columns: 1.25fr 0.95fr; gap: 22px; padding: 18px 26px 26px; }
+                .grid { display: grid; grid-template-columns: 1.25fr 0.95fr; gap: 22px; padding: 18px 26px 26px; align-items: start; }
                 .section { margin-bottom: 16px; }
                 .h { font-size: 12px; font-weight: 900; letter-spacing: 0.22em; text-transform: uppercase; margin: 0 0 10px; }
                 .h span { background: linear-gradient(90deg, #0d9488, #6366f1); -webkit-background-clip: text; background-clip: text; color: transparent; }
@@ -1239,9 +1396,9 @@ export default function ResumeBuilder() {
                 .job-meta { color: #64748b; font-size: 10px; margin-top: 2px; font-style: italic; }
                 .job ul { margin: 6px 0 0; padding-left: 18px; color: #0f172a; font-size: 11px; }
                 .job li { margin: 4px 0; }
-                .skills { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-                .skill { border: 1px solid #d1d5db; background: #f8fafc; border-radius: 10px; padding: 7px 10px; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-                .side { display: grid; gap: 14px; }
+                .skills { display: flex; flex-wrap: wrap; gap: 8px; }
+                .skill { border: 1px solid #d1d5db; background: #f8fafc; border-radius: 10px; padding: 7px 10px; font-size: 11px; line-height: 1.25; white-space: normal; word-break: break-word; max-width: 100%; }
+                .side { display: grid; gap: 14px; align-content: start; align-items: start; }
                 .links { display: grid; gap: 6px; font-size: 11px; color: #0f172a; }
                 .muted { color: #64748b; font-size: 11px; }
               </style></head><body>
@@ -1336,9 +1493,9 @@ export default function ResumeBuilder() {
             html = `
               <html><head><style>
                 body { font-family: 'Times New Roman', serif; margin: 2rem; color: #333; } p { white-space: normal; }
-                .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px;}
+                .header { text-align: center; border-bottom: none; padding-bottom: 10px; margin-bottom: 20px;}
                 .header h1 { margin: 0; font-size: 2.5rem; text-transform: uppercase; } .header p { margin: 5px 0 0; font-size: 1rem; }
-                .section h2 { text-transform: uppercase; border-bottom: 1px solid #ccc; padding-bottom: 5px; margin-top: 20px; font-size: 1.2rem; }
+                .section h2 { text-transform: uppercase; border-bottom: none; padding-bottom: 5px; margin-top: 20px; font-size: 1.2rem; }
                 .job, .education-item { margin-bottom: 15px; } h4 { margin: 0 0 5px; }
               </style></head><body>
                 <div class="header"><h1>${resumeData.name || "YOUR NAME"}</h1><p>${resumeData.location || ""} | ${resumeData.email || ""} | ${resumeData.phone || ""}</p></div>
@@ -1354,8 +1511,8 @@ export default function ResumeBuilder() {
               <html><head><style>
                 body { font-family: 'Helvetica Neue', sans-serif; margin: 0; font-size: 14px; display: flex; } p { white-space: normal; }
                 .sidebar { background-color: #1e3a8a; color: white; width: 35%; padding: 2rem; } .sidebar h1 { font-size: 2rem; margin-top: 0; }
-                .sidebar h2 { border-bottom: 1px solid #4a6fa5; padding-bottom: 5px; font-size: 1.1rem; } .sidebar p, .sidebar li { font-size: 0.9rem; }
-                .main { width: 65%; padding: 2rem; } .main h2 { color: #1e3a8a; border-bottom: 2px solid #1e3a8a; padding-bottom: 5px; }
+                .sidebar h2 { border-bottom: none; padding-bottom: 5px; font-size: 1.1rem; } .sidebar p, .sidebar li { font-size: 0.9rem; }
+                .main { width: 65%; padding: 2rem; } .main h2 { color: #1e3a8a; border-bottom: none; padding-bottom: 5px; }
                 .job, .education-item { margin-bottom: 20px; } h4 { margin: 0 0 5px; }
               </style></head><body>
                 <div class="sidebar">
@@ -1379,9 +1536,9 @@ export default function ResumeBuilder() {
             html = `
               <html><head><style>
                 body { font-family: Arial, sans-serif; margin: 2rem; } p { white-space: normal; }
-                .header { text-align: center; border-bottom: 3px solid #2563eb; padding-bottom: 10px; margin-bottom: 20px; }
+                .header { text-align: center; border-bottom: none; padding-bottom: 10px; margin-bottom: 20px; }
                 .header h1 { color: #2563eb; margin: 0; font-size: 2.5rem; } .header p { margin: 5px 0; color: #555; }
-                .section h2 { color: #2563eb; border-bottom: 1px solid #ccc; padding-bottom: 5px; margin-top: 20px; }
+                .section h2 { color: #2563eb; border-bottom: none; padding-bottom: 5px; margin-top: 20px; }
                 .job, .education-item { margin-bottom: 15px; } h4 { margin: 0 0 5px; }
               </style></head><body>
                 <div class="header"><h1>${resumeData.name || "YOUR NAME"}</h1><p>${resumeData.profession || "Your Profession"}</p><p>${resumeData.email || ""} | ${resumeData.phone || ""}</p></div>
@@ -2062,6 +2219,7 @@ export default function ResumeBuilder() {
         extractedData={extractedData}
         setExtractedData={setExtractedData}
         onAISuggestion={handleAISuggestion}
+        selectedTemplateId={selectedTemplate}
       />
       <div className="flex justify-between mt-4">
         <Button onClick={() => setCurrentStep("select")} variant="outline">
@@ -2094,25 +2252,41 @@ export default function ResumeBuilder() {
             extractedData={extractedData}
             setExtractedData={setExtractedData}
             onAISuggestion={handleAISuggestion}
+            selectedTemplateId={selectedTemplate}
           />
         </div>
         <div className="h-[calc(100vh-100px)] flex flex-col sticky top-[50px]">
-          <h2 className="text-2xl font-bold mb-4">Live Preview</h2>
+          <div className="flex items-baseline justify-between gap-2 mb-4">
+            <h2 className="text-2xl font-bold">Live Preview</h2>
+            <p className="text-xs text-muted-foreground hidden sm:block">
+              Updates {RESUME_PREVIEW_DEBOUNCE_MS / 1000}s after you stop typing
+            </p>
+          </div>
           <div className="flex-1 bg-gray-200 p-4 rounded-lg flex items-center justify-center dark:bg-gray-700">
-            <div className="w-full h-full bg-white shadow-lg">
-              {generatePreviewMutation.isPending ? (
-                <div className="flex items-center justify-center h-full text-gray-500">
+            <div className="relative w-full h-full bg-white shadow-lg min-h-[480px]">
+              {previewHtml ? (
+                <>
+                  <iframe
+                    srcDoc={previewHtml}
+                    className="w-full h-full min-h-[480px] border-0"
+                    title="Resume Preview"
+                  />
+                  {generatePreviewMutation.isPending && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-white/70 dark:bg-gray-900/60 backdrop-blur-[1px]">
+                      <div className="flex items-center gap-2 rounded-lg bg-white/95 px-4 py-2 text-sm text-gray-700 shadow-md dark:bg-gray-800 dark:text-gray-200">
+                        <Loader2 className="h-5 w-5 animate-spin shrink-0" />
+                        <span>Updating preview…</span>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : generatePreviewMutation.isPending ? (
+                <div className="flex items-center justify-center h-full min-h-[480px] text-gray-500">
                   <Loader2 className="w-8 h-8 animate-spin mr-2" /> Loading
-                  Preview...
+                  preview…
                 </div>
-              ) : previewHtml ? (
-                <iframe
-                  srcDoc={previewHtml}
-                  className="w-full h-full border-0"
-                  title="Resume Preview"
-                />
               ) : (
-                <div className="flex items-center justify-center h-full text-gray-500">
+                <div className="flex items-center justify-center h-full min-h-[480px] text-gray-500">
                   <p>Preview will appear here.</p>
                 </div>
               )}

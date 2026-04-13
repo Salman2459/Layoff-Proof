@@ -28,6 +28,7 @@ import pdf from "pdf-parse/lib/pdf-parse.js";
 import mammoth from "mammoth";
 import docxParser from "docx-parser";
 import Anthropic from "@anthropic-ai/sdk";
+import { anthropicMessagesCreateWithRetry } from "./anthropicRetry";
 import { db } from "./db";
 import Parser from "rss-parser";
 import { eq, and, gte, lte, desc, sql } from "drizzle-orm";
@@ -595,14 +596,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/stripe/apply-coupon", isAuthenticatedAny, async (req, res) => {
     try {
       const { coupon, planId } = req.body;
-      const user = req.user;
+      const user :any= req.user;
 
       if (!coupon || !coupon.trim()) {
         return res.status(400).json({ message: "Coupon code is required." });
       }
 
       // 1. Validate the plan
-      const selectedPlan = PLANS[planId];
+      const selectedPlan = PLANS[planId as keyof typeof PLANS];
       if (!selectedPlan) {
         return res.status(400).json({ message: "Invalid plan ID." });
       }
@@ -626,7 +627,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (user.stripeSubscriptionId) {
         try {
           await stripe.subscriptions.cancel(user.stripeSubscriptionId);
-        } catch (err) {
+        } catch (err:any) {
           console.log(
             "Old subscription could not be cancelled (might not exist):",
             err.message,
@@ -651,11 +652,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ],
       });
 
-      const invoice = subscription.latest_invoice;
+      const invoice :any= subscription.latest_invoice;
       const finalAmount = invoice.total;
       const originalAmount = selectedPlan.unit_amount;
       const discountAmount = invoice.total_discount_amounts.reduce(
-        (sum, d) => sum + d.amount,
+        (sum:any, d:any) => sum + d.amount,
         0,
       );
 
@@ -778,7 +779,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     isAuthenticatedAny,
     async (req, res) => {
       try {
-        const user = req.user;
+        const user:any = req.user;
 
         if (!user.stripeSubscriptionId) {
           return res
@@ -812,7 +813,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     isAuthenticatedAny,
     async (req, res) => {
       try {
-        const user = req.user;
+        const user:any = req.user;
 
         if (!user.stripeSubscriptionId) {
           return res.json({
@@ -1970,8 +1971,15 @@ You MUST respond with ONLY a single valid JSON object. Do not include any text, 
 
       // 2. Construct a precise prompt for the AI
       const prompt = `
-You are an expert career document editor. Your task is to revise the following cover letter based on the user's specific instructions.
-You MUST return ONLY the full, revised cover letter text. Do not add any extra text, comments, greetings, or markdown formatting like backticks before or after the letter. Your output should be ready to be copied and pasted directly.
+You are revising a cover letter for a real job application. Follow the user's instructions exactly, but keep the result sounding like a person wrote it—not like AI or corporate marketing copy.
+
+**Human voice (always apply):**
+- Natural rhythm: mix short sentences with longer ones; contractions (I'm, I've) where they fit.
+- Cut stiff openers ("I am writing to express…", "I am excited to submit…") and buzzwords (leverage, synergy, robust, cutting-edge, thrive in fast-paced, passion for, game-changer) unless the user asked for them.
+- Avoid stacked adjectives, "Furthermore/Additionally" at every paragraph start, and bullet lists in the letter body unless the user requested bullets.
+- Preserve facts; do not invent employers, numbers, or credentials.
+
+You MUST return ONLY the full, revised cover letter text. No markdown fences, no commentary before or after.
 
 **Original Cover Letter:**
 ---
@@ -1990,7 +1998,7 @@ Now, provide the complete, improved cover letter below.
       const response = await anthropic.messages.create({
         model: "claude-sonnet-4-20250514", // Or another suitable model
         max_tokens: 2048,
-        temperature: 0.2, // Low temperature to follow instructions closely
+        temperature: 0.45,
         messages: [{ role: "user", content: prompt }],
       });
 
@@ -2745,48 +2753,53 @@ ${applicantInfo.name}
         // --- Fallback to the Original AI Generation Logic ---
 
         const prompt = `
-            You are an expert career coach and professional cover letter writer. Your task is to write a professional, compelling, and personalized cover letter based on the provided information.
+You are helping a real person apply for a job. Write a cover letter that reads as if they wrote it themselves: clear, conversational, and specific—not generic, not "AI polished," and not full of corporate filler.
 
-            **Tone:** Confident, professional, enthusiastic, and tailored. Avoid generic phrases.
+**Human voice (critical):**
+- Mix short and medium sentences; use contractions (I'm, I've, I'd) where they sound natural.
+- Do NOT start with stiff formulas like "I am writing to express my interest," "I am excited to apply," or "Please accept this letter."
+- Avoid buzzwords and AI tells: leverage, synergy, robust, cutting-edge, dynamic environment, game-changer, "strong passion," "proven track record" unless tied to a concrete fact from the data below, stacked adjectives, or every paragraph starting with "Furthermore" / "Additionally."
+- No bullet lists in the letter body—use 3–4 tight paragraphs.
+- Stay honest: only use employers, duties, skills, tools, and credentials implied by the applicant information. Do not invent metrics, awards, or jobs.
 
-            **Applicant Information:**
-            - Name: ${applicantInfo.name}
-            - Email: ${applicantInfo.email}
-            - Phone: ${applicantInfo.phone}
-            - Profession / Field: ${applicantInfo.profession}
-            - Years of Experience: ${applicantInfo.yearsExperience} years
-            - Highest Degree: ${applicantInfo.degree} from ${applicantInfo.university}
-            - Current Company: ${applicantInfo.currentCompany || "N/A"}
-            - Key Skills: ${applicantInfo.skills}
-            - Key Certifications: ${applicantInfo.certifications || "N/A"}
-            - Top Responsibility/Duty: ${applicantInfo.mainResponsibility || applicantInfo.topDuty}
-            - Tools & Methods: ${applicantInfo.tools || "N/A"}
+**Still appropriate for work:** Warm, confident, and respectful. Sound like someone who actually read the role title and company name.
 
-            **Job Details:**
-            - Position Applying For: ${position}
-            - Company Name: ${company}
-            - Applicant's Stated Reason for Interest: ${reason || "To contribute my skills and grow with the company."}
+**Applicant Information:**
+- Name: ${applicantInfo.name}
+- Email: ${applicantInfo.email}
+- Phone: ${applicantInfo.phone}
+- Profession / Field: ${applicantInfo.profession}
+- Years of Experience: ${applicantInfo.yearsExperience} years
+- Highest Degree: ${applicantInfo.degree} from ${applicantInfo.university}
+- Current Company: ${applicantInfo.currentCompany || "N/A"}
+- Key Skills: ${applicantInfo.skills}
+- Key Certifications: ${applicantInfo.certifications || "N/A"}
+- Top Responsibility/Duty: ${applicantInfo.mainResponsibility || applicantInfo.topDuty}
+- Tools & Methods: ${applicantInfo.tools || "N/A"}
 
-            **Instructions for Writing:**
-            1.  **Header:** Start with the applicant's name and contact information (email, phone).
-            2.  **Date and Recipient:** Add the current date and the company's name. Address it to "Dear Hiring Manager,".
-            3.  **Opening Paragraph:** State the position being applied for (${position}) and where it was seen (you can omit this part if not provided). Express strong, genuine enthusiasm for the role and ${company}.
-            4.  **Body Paragraph 1:** Connect the applicant's experience directly to the job. Mention their profession (${applicantInfo.profession}) and ${applicantInfo.yearsExperience} years of experience. Weave in their main responsibility or top duty to show they are a strong fit.
-            5.  **Body Paragraph 2:** Highlight specific qualifications. Mention key skills like "${applicantInfo.skills}". If they mentioned tools or certifications, integrate them naturally to showcase their technical expertise.
-            6.  **Closing Paragraph:** Reiterate interest in the role at ${company}. Briefly mention their reason for applying ("${reason}"). Express eagerness to discuss how their background can benefit the team. Include a clear call to action.
-            7.  **Sign-off:** End with "Sincerely," followed by the applicant's full name.
+**Job Details:**
+- Position: ${position}
+- Company: ${company}
+- Why they're interested (use naturally, don't quote verbatim if awkward): ${reason || "They want to contribute their skills and grow with the team."}
 
-            **Crucial Rule:** Do NOT use any placeholders like "[Your Name]" or "[Your Skills]". Use the actual data provided above to write the complete letter. The output should be ONLY the cover letter text, ready to be copied.
+**Shape (keep it loose—avoid a rigid template feel):**
+- Top: applicant name, email, phone; today's date; address to "Dear Hiring Manager," (company name can appear in the first paragraph instead of a full formal block if that reads more natural).
+- Open by tying them to the ${position} role at ${company} in a specific, plain-spoken way.
+- One paragraph on what they actually do (${applicantInfo.profession}, ~${applicantInfo.yearsExperience} years, main responsibility/duty) and how it relates to the role.
+- One paragraph weaving skills, tools, and certifications into sentences—not a keyword dump.
+- Short close: they'd welcome a conversation; thanks; sign-off (Sincerely or Best regards) and full name.
+
+**Output rules:** Return ONLY the cover letter text—no markdown, no preamble. Never use placeholders like [Your Name] or [Company]; use the real values from the data above.
             `;
 
         let coverLetter = "";
         let generatedBy = "template";
 
         try {
-          const message = anthropic.messages.create({
+          const message = await anthropic.messages.create({
             model: "claude-sonnet-4-20250514",
             max_tokens: 2000,
-            temperature: 0.1, // Low temperature for factual, deterministic output
+            temperature: 0.72,
             messages: [{ role: "user", content: prompt }],
           });
           coverLetter = message.content[0].text;
@@ -2803,22 +2816,22 @@ ${applicantInfo.name}
 ${applicantInfo.email}
 ${applicantInfo.phone}
 
-[Date]
-
-Hiring Manager
-${company}
+${new Date().toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          })}
 
 Dear Hiring Manager,
 
-I am writing to express my enthusiastic interest in the ${position} position at ${company}. With ${applicantInfo.yearsExperience} years of experience as a ${applicantInfo.profession}, I am confident that my skills and background align perfectly with the requirements of this role.
+I'm applying for the ${position} role at ${company}. I'm a ${applicantInfo.profession} with about ${applicantInfo.yearsExperience} years in the field, and most of my day-to-day work has been ${applicantInfo.mainResponsibility || applicantInfo.topDuty || "similar to what you're hiring for"}.
 
-In my previous roles, my primary responsibility was ${applicantInfo.mainResponsibility || applicantInfo.topDuty}, where I utilized my skills in ${applicantInfo.skills}. I am adept with tools such as ${applicantInfo.tools} and believe I can bring significant value to your team.
+The areas I'm strongest in include ${applicantInfo.skills}.${applicantInfo.certifications && String(applicantInfo.certifications).trim() ? ` I'm also certified in ${applicantInfo.certifications}.` : ""}${applicantInfo.tools && String(applicantInfo.tools).trim() ? ` I regularly use ${applicantInfo.tools}.` : ""}
 
-I am particularly drawn to this opportunity at ${company} because of ${reason || "your company's excellent reputation and the chance for career growth"}.
+${reason ? `One reason this role caught my attention: ${reason}.` : `I'd like to learn more about the team at ${company} and how I could help.`} If it makes sense to talk, I'd appreciate the chance to connect.
 
-Thank you for your time and consideration. I look forward to hearing from you soon.
+Thanks for your time,
 
-Sincerely,
 ${applicantInfo.name}
                 `;
         }
@@ -3145,20 +3158,24 @@ Return ONLY the JSON object, no additional text or formatting.`;
         return res.status(400).json({ error: "No resume data received" });
       }
 
-      // let user
-      // if (isManual) {
-      //   user = await GetUserScscriptionTrialValidation(id);
-      // }
-
-      // if (!user) {
-      //   return res.status(400).json({ error: 'Subscription has expired, or you have not subscribed' });
-      // }
-
       const html = generateResumeHTML(templateId, resumeData);
-      // if (isManual) {
-      //   await DetuctCredits(user)
-      // }
-      res.send(html);
+      let pdfBuffer: Buffer;
+      try {
+        pdfBuffer = await resumeHtmlToPdfBuffer(html);
+      } catch (pdfErr) {
+        console.error("Puppeteer PDF generation failed:", pdfErr);
+        return res.status(500).json({
+          error: "Failed to generate PDF",
+          message:
+            pdfErr instanceof Error
+              ? pdfErr.message
+              : "Chromium/Puppeteer is unavailable on this server.",
+        });
+      }
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", 'attachment; filename="resume.pdf"');
+      res.send(pdfBuffer);
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: "Failed to generate resume" });
@@ -4071,12 +4088,16 @@ Requirements:
       ---
     `;
 
-      const msg = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 2000,
-        temperature: 0.1,
-        messages: [{ role: "user", content: prompt }],
-      });
+      const msg = await anthropicMessagesCreateWithRetry(
+        anthropic,
+        {
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 2000,
+          temperature: 0.1,
+          messages: [{ role: "user", content: prompt }],
+        },
+        { maxRetries: 6, baseDelayMs: 2000, label: "upload-resume" },
+      );
 
       const responseText = msg.content[0].text;
       let parsedData;
@@ -4804,14 +4825,17 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
         const cleaned = cleanPayload(data || {});
         const updateData = pickSectionFields(cleaned, allowedFields);
 
-        // Timestamp columns need Date objects; client often sends startDate as ISO string
-        if (
-          section === "general" &&
-          updateData.startDate != null &&
-          typeof (updateData.startDate as any)?.toISOString !== "function"
-        ) {
-          const val = updateData.startDate as string | number;
-          updateData.startDate = new Date(val) as any;
+        // startDate is a PG timestamp; client sends ISO strings. Invalid values must not reach Drizzle
+        // (Invalid Date still has .toISOString and throws RangeError when called).
+        if (section === "general" && updateData.startDate != null) {
+          const raw = updateData.startDate as string | number | Date;
+          const d =
+            raw instanceof Date ? raw : new Date(raw as string | number);
+          if (Number.isNaN(d.getTime())) {
+            delete (updateData as Record<string, unknown>).startDate;
+          } else {
+            (updateData as Record<string, unknown>).startDate = d;
+          }
         }
 
         // =========== ============ =======================
@@ -5197,6 +5221,45 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
   return httpServer;
 }
 
+/** Render full resume HTML document to a PDF buffer (Letter, print backgrounds). */
+async function resumeHtmlToPdfBuffer(html: string): Promise<Buffer> {
+  const launchOpts: {
+    headless: boolean;
+    args: string[];
+    executablePath?: string;
+  } = {
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--font-render-hinting=none",
+    ],
+  };
+  const chromium =
+    process.env.PUPPETEER_EXECUTABLE_PATH ||
+    process.env.CHROME_PATH ||
+    process.env.GOOGLE_CHROME_BIN;
+  if (chromium) {
+    launchOpts.executablePath = chromium;
+  }
+
+  const browser = await puppeteer.launch(launchOpts);
+  try {
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: "load", timeout: 90_000 });
+    const pdfBytes = await page.pdf({
+      format: "Letter",
+      printBackground: true,
+      margin: { top: "0.4in", right: "0.4in", bottom: "0.4in", left: "0.4in" },
+    });
+    return Buffer.from(pdfBytes);
+  } finally {
+    await browser.close();
+  }
+}
+
 // Resume HTML template generation function
 function generateResumeHTML(templateId: string, resumeData: any): string {
   console.log("Generating resume with template:", templateId);
@@ -5301,7 +5364,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
             * { margin: 0; padding: 0; box-sizing: border-box; } body { font-family: 'Arial', sans-serif; line-height: 1.4; color: #333; background: white; }
             .container { max-width: 800px; margin: 0 auto; padding: 40px; } .header { margin-bottom: 30px; } .header h1 { font-size: 2.5rem; font-weight: bold; color: #333; margin-bottom: 8px; }
             .contact-info { display: flex; flex-wrap: wrap; gap: 20px; color: #666; font-size: 0.9rem; margin-bottom: 20px; } .contact-info span { display: flex; align-items: center; gap: 5px; }
-            .contact-info a { color: #3B82F6; text-decoration: none; } .contact-info a:hover { text-decoration: underline; } .divider { height: 2px; background: #3B82F6; margin: 20px 0; }
+            .contact-info a { color: #3B82F6; text-decoration: none; } .contact-info a:hover { text-decoration: underline; } .divider { display: none; }
             .section { margin-bottom: 30px; } .section h2 { color: #3B82F6; font-size: 1.2rem; font-weight: bold; margin-bottom: 15px; text-transform: uppercase; }
             .experience-item { margin-bottom: 20px; } .experience-item h3 { font-size: 1.1rem; font-weight: bold; color: #333; margin-bottom: 5px; }
             .experience-item .company { color: #666; font-size: 0.95rem; margin-bottom: 8px; }
@@ -5371,7 +5434,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
         <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body { font-family: Arial, sans-serif; line-height: 1.35; color: #0f172a; background: #ffffff; }
-          .page { max-width: 900px; margin: 18px auto; border: 1px solid #e5e7eb; }
+          .page { max-width: 900px; margin: 18px auto; }
           .layout { display: grid; grid-template-columns: 280px 1fr; min-height: 1050px; }
           .sidebar { background: #f8fafc; border-right: 1px solid #e5e7eb; padding: 26px 22px; }
           .main { padding: 28px 28px; }
@@ -5499,14 +5562,14 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
         <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body { font-family: Georgia, "Times New Roman", serif; color: #111827; background: #ffffff; }
-          .page { max-width: 980px; margin: 14px auto; border: 1px solid #e5e7eb; }
+          .page { max-width: 980px; margin: 14px auto; }
           .top { display: grid; grid-template-columns: 150px 1fr; gap: 18px; padding: 22px 26px 14px; }
           .photo { width: 124px; height: 124px; border-radius: 999px; overflow: hidden; background: #e5e7eb; border: 4px solid #ffffff; box-shadow: 0 10px 22px rgba(0,0,0,0.10); }
           .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
           .name { font-size: 34px; font-weight: 900; }
           .role { margin-top: 4px; font-size: 14px; font-weight: 800; font-family: Arial, sans-serif; }
           .summary { margin-top: 8px; font-size: 12px; color: #374151; line-height: 1.5; font-family: Arial, sans-serif; }
-          .band { background: #f3f4f6; border-top: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; padding: 10px 26px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; font-family: Arial, sans-serif; font-size: 11px; }
+          .band { background: #f3f4f6; border-top: 1px solid #e5e7eb; border-bottom: none; padding: 10px 26px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; font-family: Arial, sans-serif; font-size: 11px; }
           .band span { display: inline-flex; gap: 8px; align-items: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
           .icon { width: 18px; height: 18px; border-radius: 6px; background: #111827; color: white; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; flex: 0 0 auto; }
           .grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 28px; padding: 18px 26px 26px; }
@@ -5517,8 +5580,8 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
           .meta { font-size: 10px; color: #6b7280; font-style: italic; margin: 2px 0 6px; font-family: Arial, sans-serif; }
           ul { padding-left: 18px; font-family: Arial, sans-serif; font-size: 11px; }
           li { margin: 4px 0; }
-          .chips { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; font-family: Arial, sans-serif; }
-          .chip { border: 1px solid #d1d5db; background: #f9fafb; border-radius: 6px; padding: 4px 8px; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+          .chips { display: flex; flex-wrap: wrap; gap: 6px; font-family: Arial, sans-serif; }
+          .chip { border: 1px solid #d1d5db; background: #f9fafb; border-radius: 6px; padding: 4px 8px; font-size: 11px; line-height: 1.25; white-space: normal; word-break: break-word; max-width: 100%; }
           .links { display: grid; gap: 6px; font-family: Arial, sans-serif; font-size: 11px; }
           .link { word-break: break-word; }
           .muted { font-family: Arial, sans-serif; font-size: 11px; color: #6b7280; }
@@ -5656,7 +5719,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
         <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body { background: #ffffff; color: #0f172a; font-family: Arial, sans-serif; }
-          .page { width: 100%; max-width: 980px; margin: 14px auto; border: 1px solid #e5e7eb; }
+          .page { width: 100%; max-width: 980px; margin: 14px auto; }
           .hero { position: relative; padding: 22px 26px 18px; overflow: hidden; }
           .hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(800px circle at 8% 0%, rgba(45,212,191,0.22), transparent 55%), radial-gradient(700px circle at 92% 10%, rgba(167,139,250,0.20), transparent 55%), linear-gradient(135deg, rgba(13,148,136,0.10), rgba(99,102,241,0.10)); }
           .hero-inner { position: relative; display: grid; grid-template-columns: 96px 1fr; gap: 16px; align-items: center; }
@@ -5666,7 +5729,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
           .role { margin-top: 2px; color: #0f766e; font-weight: 900; text-transform: uppercase; letter-spacing: 0.12em; font-size: 11px; }
           .meta { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; color: #334155; }
           .pill { padding: 4px 10px; border-radius: 999px; border: 1px solid #cbd5e1; background: rgba(255,255,255,0.78); }
-          .grid { display: grid; grid-template-columns: 1.25fr 0.95fr; gap: 22px; padding: 18px 26px 26px; }
+          .grid { display: grid; grid-template-columns: 1.25fr 0.95fr; gap: 22px; padding: 18px 26px 26px; align-items: start; }
           .section { margin-bottom: 14px; }
           .h { font-size: 12px; font-weight: 900; letter-spacing: 0.22em; text-transform: uppercase; margin: 0 0 10px; }
           .h span { background: linear-gradient(90deg, #0d9488, #6366f1); -webkit-background-clip: text; background-clip: text; color: transparent; }
@@ -5677,8 +5740,8 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
           .job-meta { color: #64748b; font-size: 10px; margin-top: 2px; font-style: italic; }
           .job ul { margin: 6px 0 0; padding-left: 18px; color: #0f172a; font-size: 11px; }
           .job li { margin: 4px 0; }
-          .skills { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-          .skill { border: 1px solid #d1d5db; background: #f8fafc; border-radius: 10px; padding: 7px 10px; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+          .skills { display: flex; flex-wrap: wrap; gap: 8px; }
+          .skill { border: 1px solid #d1d5db; background: #f8fafc; border-radius: 10px; padding: 7px 10px; font-size: 11px; line-height: 1.25; white-space: normal; word-break: break-word; max-width: 100%; }
           .links { display: grid; gap: 6px; font-size: 11px; color: #0f172a; }
           .link { word-break: break-word; }
           .muted { color: #64748b; font-size: 11px; }
@@ -5759,7 +5822,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
             * { margin: 0; padding: 0; box-sizing: border-box; } body { font-family: 'Times New Roman', serif; line-height: 1.5; color: #000; background: white; }
             .container { max-width: 800px; margin: 0 auto; padding: 40px; } .header { text-align: center; margin-bottom: 30px; }
             .header h1 { font-size: 2.2rem; font-weight: bold; margin-bottom: 15px; } .contact-info { font-size: 0.95rem; margin-bottom: 20px; }
-            .section { margin-bottom: 25px; } .section h2 { font-size: 1.1rem; font-weight: bold; margin-bottom: 15px; text-decoration: underline; text-transform: uppercase; }
+            .section { margin-bottom: 25px; } .section h2 { font-size: 1.1rem; font-weight: bold; margin-bottom: 15px; text-decoration: none; text-transform: uppercase; }
             .summary p { text-align: justify; margin-bottom: 10px; } .experience-item { margin-bottom: 20px; }
             .experience-item .title-row, .education-item .title-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
             .experience-item h3, .education-item h3 { font-weight: bold; font-size: 1rem; }
@@ -5825,7 +5888,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
             .resume-container { display: flex; max-width: 900px; margin: 20px auto; min-height: 100vh; box-shadow: 0 0 15px rgba(0,0,0,0.1); }
             .sidebar { background: #2C3E50; color: white; padding: 40px 30px; width: 300px; } .sidebar h1 { font-size: 1.8rem; font-weight: bold; text-align: center; margin-bottom: 10px; }
             .sidebar .title { font-size: 1rem; text-align: center; margin-bottom: 30px; color: #BDC3C7; text-transform: uppercase; }
-            .sidebar .section { margin-bottom: 30px; } .sidebar .section h3 { font-size: 1rem; font-weight: bold; margin-bottom: 15px; border-bottom: 2px solid #34495e; padding-bottom: 8px; text-transform: uppercase;}
+            .sidebar .section { margin-bottom: 30px; } .sidebar .section h3 { font-size: 1rem; font-weight: bold; margin-bottom: 15px; border-bottom: none; padding-bottom: 8px; text-transform: uppercase;}
             .sidebar .contact-item { margin-bottom: 12px; display: flex; align-items: flex-start; gap: 10px; font-size: 0.9rem; word-break: break-all; }
             .sidebar .skill-item { margin-bottom: 8px; font-size: 0.9rem; } .main-content { flex: 1; padding: 40px; background: white; }
             .main-content .section h2 { font-size: 1.3rem; font-weight: bold; color: #2C3E50; margin-bottom: 20px; text-transform: uppercase; }

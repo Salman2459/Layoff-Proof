@@ -25,7 +25,8 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { elevateLandingToolCards } from "./data.js";
 
-const PROFILE_COMPLETE_STEP = 8; // All 8 steps completed = profile ready for dashboard
+/** Must match auto-job-apply: TOTAL_STEPS (8) + 1 after Documents step is saved */
+const PROFILE_COMPLETE_STEP = 9;
 
 type ToolIcon = ComponentType<LucideProps>;
 

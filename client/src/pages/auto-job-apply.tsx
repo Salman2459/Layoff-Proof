@@ -1,5 +1,5 @@
 import { toast } from '@/hooks/use-toast';
-import React, { useState, useRef, useMemo, useEffect } from 'react';
+import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { useLocation } from 'wouter';
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -154,6 +154,13 @@ const STEP_CONFIG: { label: string; section: string }[] = [
 
 const TOTAL_STEPS = STEP_CONFIG.length;
 
+/**
+ * Value stored in `userJobProfiles.currentStep` after the final wizard step (Documents) is saved.
+ * Progress uses `min(0-based step index + 2, this)` so Achievements (index 6) stores 8 → unlock Documents (index 7);
+ * Documents (index 7) stores 9 → flow complete (must be > TOTAL_STEPS, not >=).
+ */
+const STORED_STEP_WHEN_WIZARD_COMPLETE = TOTAL_STEPS + 1;
+
 function toDateInputValue(value: unknown): string {
     if (!value) return "";
     if (value instanceof Date) {
@@ -288,6 +295,9 @@ function buildStepPayload(currentStep: number, values: FormData): { apiSection: 
     return { apiSection, payload };
 }
 
+/** Must match Yup message for education step (used to clear stale UI errors). */
+const EDUCATION_MIN_ENTRIES_MESSAGE = "Add at least one education entry";
+
 // Per-step Yup validation (only the current step's required fields)
 function getStepSchema(step: number): Yup.ObjectSchema<Partial<FormData>> {
     switch (step) {
@@ -316,7 +326,7 @@ function getStepSchema(step: number): Yup.ObjectSchema<Partial<FormData>> {
         case 3:
             return Yup.object({
                 education: Yup.object({
-                    education: Yup.array().min(1, 'Add at least one education entry'),
+                    education: Yup.array().min(1, EDUCATION_MIN_ENTRIES_MESSAGE),
                 }),
             }) as Yup.ObjectSchema<Partial<FormData>>;
         case 4:
@@ -347,6 +357,25 @@ function getStepSchema(step: number): Yup.ObjectSchema<Partial<FormData>> {
         default:
             return Yup.object({});
     }
+}
+
+/** Collect path → message from a thrown Yup ValidationError (handles empty `inner`). */
+function yupErrorsToMap(error: unknown): Record<string, string> {
+    const acc: Record<string, string> = {};
+    if (!error || !Yup.ValidationError.isError(error)) return acc;
+    const ye = error as Yup.ValidationError;
+    if (Array.isArray(ye.inner) && ye.inner.length > 0) {
+        for (const err of ye.inner) {
+            if (err.path && err.message) acc[err.path] = err.message;
+        }
+    }
+    if (Object.keys(acc).length === 0 && ye.path && ye.message) {
+        acc[ye.path] = ye.message;
+    }
+    if (Object.keys(acc).length === 0 && ye.errors?.length) {
+        acc._form = ye.errors[0];
+    }
+    return acc;
 }
 
 const defaultInitialValues: FormData = {
@@ -470,6 +499,16 @@ const AutoJobApply: React.FC = () => {
     const [initialValues, setInitialValues] = useState<FormData>(defaultInitialValues);
     const [profileLoaded, setProfileLoaded] = useState(false);
 
+    const clearEducationValidationErrors = useCallback(() => {
+        setFieldErrors((prev) => {
+            if (!prev["education.education"]) return prev;
+            const next = { ...prev };
+            delete next["education.education"];
+            return next;
+        });
+        setErrors((prev) => prev.filter((m) => m !== EDUCATION_MIN_ENTRIES_MESSAGE));
+    }, []);
+
     // Parse duration string (e.g. "2020 - 2022", "Jan 2019 - Present") to from/to years and months
     const parseDuration = (duration: string | undefined): { fromYear: string; fromMonth: string; toYear: string; toMonth: string; currentlyWorking: boolean } => {
         const result = { fromYear: '', fromMonth: '', toYear: '', toMonth: '', currentlyWorking: false };
@@ -567,6 +606,9 @@ const AutoJobApply: React.FC = () => {
         if (parsed.achievements?.length) achievementParts.push(...parsed.achievements.filter(Boolean).map(String));
         if (parsed.certifications?.length) achievementParts.push('Certifications: ' + parsed.certifications.filter(Boolean).join(', '));
         if (achievementParts.length) next.achievements = { achievements: achievementParts.join('\n\n') };
+        if (next.education.education.length > 0) {
+            clearEducationValidationErrors();
+        }
         latestFormValuesRef.current = next;
         setValues(next);
         return next;
@@ -974,6 +1016,7 @@ const AutoJobApply: React.FC = () => {
             return { ...prev, education: { ...prev.education, education: updated } };
         });
         resetEducationForm();
+        clearEducationValidationErrors();
     };
 
     const saveAndAddMoreEducation = (setValues: (fn: (prev: FormData) => FormData) => void) => {
@@ -989,6 +1032,7 @@ const AutoJobApply: React.FC = () => {
         });
         setEducationForm({ school: '', degree: '', fieldOfStudy: '', fromMonth: '', fromYear: '', toMonth: '', toYear: '', isCurrentlyStudying: false, description: '' });
         setEditingEducationIndex(null);
+        clearEducationValidationErrors();
     };
 
     const editEducation = (index: number, values: FormData) => {
@@ -1032,33 +1076,32 @@ const AutoJobApply: React.FC = () => {
                     // Use ref so we have the latest values (setValuesWithPrev updates ref synchronously; Formik state may be stale)
                     const latestValues = latestFormValuesRef.current;
                     const schema = getStepSchema(currentStep);
-                    let errs: Record<string, unknown> = {};
+                    let errs: Record<string, string> = {};
                     try {
                         await schema.validate(latestValues, { abortEarly: false });
                     } catch (e) {
-                        if (e && typeof e === 'object' && 'inner' in e) {
-                            const yupErr = e as { inner?: Array<{ path?: string; message?: string }> };
-                            errs = (yupErr.inner || []).reduce((acc, i) => {
-                                if (i.path) acc[i.path] = i.message;
-                                return acc;
-                            }, {} as Record<string, unknown>);
-                        } else if (e && typeof e === 'object' && 'path' in e) {
-                            const yupErr = e as { path?: string; message?: string };
-                            if (yupErr.path) errs[yupErr.path] = (yupErr as { message?: string }).message;
-                        }
+                        errs = yupErrorsToMap(e);
                     }
                     if (Object.keys(errs).length > 0) {
-                        const messages = Object.values(errs)
-                            .map((v) => (typeof v === 'string' ? v : null))
-                            .filter(Boolean) as string[];
-                        setErrors(messages.length ? messages : ['Please complete the required fields to continue.']);
-                        setFieldErrors(
-                            Object.fromEntries(
-                                Object.entries(errs)
-                                    .filter(([, v]) => typeof v === "string")
-                                    .map(([k, v]) => [k, String(v)]),
+                        const messages = Array.from(
+                            new Set(
+                                Object.values(errs).filter(
+                                    (v): v is string =>
+                                        typeof v === "string" && v.length > 0,
+                                ),
                             ),
                         );
+                        const summary =
+                            messages.length > 0
+                                ? messages
+                                : ["Please complete the required fields to continue."];
+                        setErrors(summary);
+                        setFieldErrors(errs);
+                        toast({
+                            title: "Cannot continue",
+                            description: summary.join(" · "),
+                            variant: "destructive",
+                        });
                         const { section } = STEP_CONFIG[currentStep];
                         const sectionKeys = (latestValues as unknown as Record<string, unknown>)[
                             section
@@ -1071,7 +1114,10 @@ const AutoJobApply: React.FC = () => {
                         return;
                     }
                     const { apiSection, payload } = buildStepPayload(currentStep, latestValues);
-                    const payloadStep = Math.min(currentStep + 2, TOTAL_STEPS);
+                    const payloadStep = Math.min(
+                        currentStep + 2,
+                        STORED_STEP_WHEN_WIZARD_COMPLETE,
+                    );
                     setSavingSection(apiSection);
                     updateMutation.mutate(
                         { section: apiSection, payload, currentStep: payloadStep },
@@ -1079,13 +1125,13 @@ const AutoJobApply: React.FC = () => {
                             onSuccess: (_, { currentStep: savedStep }) => {
                                 setErrors([]);
                                 setFieldErrors({});
-                                // savedStep is 1-based "currentStep" stored on the profile
+                                // savedStep matches payload sent above (see STORED_STEP_WHEN_WIZARD_COMPLETE)
                                 const unlockedIndex = Math.max(
                                     0,
                                     Math.min(savedStep - 1, TOTAL_STEPS - 1),
                                 );
                                 setMaxUnlockedStep((prev) => Math.max(prev, unlockedIndex));
-                                if (savedStep >= TOTAL_STEPS) {
+                                if (savedStep >= STORED_STEP_WHEN_WIZARD_COMPLETE) {
                                     setLocation('/tools/auto-job-apply-dashboard');
                                 } else {
                                     setCurrentStep(s => Math.min(s + 1, TOTAL_STEPS - 1));
@@ -1735,6 +1781,15 @@ const AutoJobApply: React.FC = () => {
             {currentStep === 3 && (
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
                 <h4 className="text-lg font-semibold text-gray-900 mb-4">Education</h4>
+                {values.education.education.length === 0 &&
+                    fieldErrors["education.education"] && (
+                    <div
+                        className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+                        role="status"
+                    >
+                        {fieldErrors["education.education"]}
+                    </div>
+                )}
                 <div className="space-y-4">
                     {values.education.education.length > 0 && (
                         <div className="space-y-3">
@@ -2132,6 +2187,8 @@ const AutoJobApply: React.FC = () => {
             </div>
             </>
             )}
+
+      
 
             {/* Back / Save & Next — Back only from step 2 onward */}
             <div className="flex justify-between items-center mt-8 pt-6 border-t border-border">

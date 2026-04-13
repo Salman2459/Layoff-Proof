@@ -522,6 +522,20 @@ export default function AutoJobApplyDashboard() {
             status: 'available',
             features: ['Quick apply flows', 'Form autofill + validation', 'Resume-aware field mapping', 'Application tracking'],
         },
+        {
+            name: 'Indeed',
+            icon: <Search className="w-6 h-6 text-white" />,
+            description: 'Soon: apply to Indeed listings with the same AI auto-apply engine and your saved job profile.',
+            gradient: 'bg-gradient-to-r from-sky-800 to-blue-700',
+            badgeColor: 'bg-sky-100 text-sky-800',
+            status: 'coming_soon',
+            features: [
+                'Indeed job search & match to your profile',
+                'Planned: one-click and quick-apply flows',
+                'Consistent answers from your saved data',
+                'Application activity in one place',
+            ],
+        },
     ];
 
     return (
@@ -715,7 +729,7 @@ export default function AutoJobApplyDashboard() {
                         <h2 className="text-xl font-bold text-gray-900">Auto-Apply Platforms</h2>
                         <p className="text-sm text-gray-500 mt-1">Choose a platform and let AI apply to hundreds of jobs for you.</p>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                         {platforms.map(p => (
                             <PlatformCard
                                 key={p.name}

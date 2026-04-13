@@ -2,6 +2,7 @@ import moment from "moment";
 import express from "express";
 import { scheduleJob } from "node-schedule";
 import Anthropic from "@anthropic-ai/sdk";
+import { anthropicMessagesCreateWithRetry } from "../anthropicRetry";
 import RssParser from "rss-parser";
 import { db } from "../db";
 import { layoffs } from "@shared/schema";
@@ -360,12 +361,20 @@ ${JSON.stringify(
                     )}`;
 
                     try {
-                        const msg = await anthropic.messages.create({
-                            model: "claude-sonnet-4-20250514",
-                            max_tokens: 8000,
-                            temperature: 0,
-                            messages: [{ role: "user", content: prompt }],
-                        });
+                        const msg = await anthropicMessagesCreateWithRetry(
+                            anthropic,
+                            {
+                                model: "claude-sonnet-4-20250514",
+                                max_tokens: 8000,
+                                temperature: 0,
+                                messages: [{ role: "user", content: prompt }],
+                            },
+                            {
+                                maxRetries: 6,
+                                baseDelayMs: 2000,
+                                label: `layoffs:${category}`,
+                            },
+                        );
 
                         let data = msg.content[0].text
                             .trim()
@@ -478,9 +487,14 @@ ${JSON.stringify(
 
 // Schedule job to run every hour
 function startScheduler() {
-    // Run immediately on startup
-    console.log("🚀 Starting initial fetch across all industries...");
-    fetchAndSaveLayoffs();
+    // Defer first run so dev uploads (resume, etc.) are less likely to race Anthropic with this heavy job
+    const initialDelayMs = 120_000;
+    console.log(
+        `🚀 Layoff fetch scheduled in ${initialDelayMs / 1000}s (avoids clashing with API traffic on boot)…`,
+    );
+    setTimeout(() => {
+        void fetchAndSaveLayoffs();
+    }, initialDelayMs);
 
     // Schedule to run every hour at minute 0
     scheduleJob("0 */6 * * *", async () => {

@@ -147,12 +147,12 @@ export default function CoverLetter() {
       if (data.generatedBy === 'ai') {
         toast({
           title: "Success!",
-          description: "Your cover letter has been generated using Claude AI.",
+          description: "Your cover letter is ready.",
         });
       } else {
         toast({
           title: "Generated!",
-          description: "Cover letter created using template (AI temporarily unavailable).",
+          description: "Cover letter created from a simple template (full generation was unavailable).",
         });
       }
     } catch (error: any) {
@@ -201,12 +201,12 @@ export default function CoverLetter() {
       if (data.generatedBy === 'ai') {
         toast({
           title: "Success!",
-          description: "Your cover letter has been generated using Claude AI.",
+          description: "Your cover letter is ready.",
         });
       } else {
         toast({
           title: "Generated!",
-          description: "Cover letter created using template (AI temporarily unavailable).",
+          description: "Cover letter created from a simple template (full generation was unavailable).",
         });
       }
     } catch (error: any) {
