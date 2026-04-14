@@ -39,6 +39,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import GlobalHeader from "@/components/GlobalHeader";
+import PhoneInput from "react-phone-input-2";
+import "react-phone-input-2/lib/style.css";
 
 // Mock types - replace with your actual types
 interface ParsedResumeData {
@@ -503,16 +505,24 @@ const ResumeEditorForm = ({
               </div>
               <div>
                 <Label htmlFor="phone">Phone Number</Label>
-                <Input
-                  id="phone"
-                  value={extractedData.phone}
-                  onChange={(e) =>
+                <PhoneInput
+                  country="us"
+                  value={extractedData.phone?.replace(/\D/g, "") ?? ""}
+                  onChange={(value) =>
                     setExtractedData({
                       ...extractedData,
-                      phone: e.target.value,
+                      phone: value ? `+${value}` : "",
                     })
                   }
-                  placeholder="+1 (555) 123-4567"
+                  inputProps={{
+                    id: "phone",
+                    name: "phone",
+                    autoComplete: "tel",
+                  }}
+                  containerClass="w-full"
+                  inputClass="!w-full !h-10  !py-2 !border !border-gray-300 !rounded-md !shadow-sm focus:!ring-primary focus:!border-primary"
+                  dropdownClass="!z-[60]"
+                  placeholder="Enter your phone number..."
                 />
               </div>
               <div>
