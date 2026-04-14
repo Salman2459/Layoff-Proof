@@ -10,6 +10,12 @@ import { Formik } from 'formik';
 import * as Yup from 'yup';
 import PhoneInput from "react-phone-input-2";
 import "react-phone-input-2/lib/style.css";
+import { GetCity, GetCountries, GetLanguages, GetState } from "react-country-state-city";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Check, ChevronsUpDown } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 
 // Types for form data
@@ -30,11 +36,16 @@ interface Residency {
     buildingNo: string;
     apartmentNo: string;
     country: string;
+    state: string;
     city: string;
     zip: string;
     authorizedCountries: string[];
     sponsorship: 'REQUIRED' | 'NOT_REQUIRED';
     relocate: 'YES' | 'NO';
+    // Used for dependent selects only; not sent to API (see SECTION_ALLOWED_FIELDS)
+    countryId: number | null;
+    stateId: number | null;
+    cityId: number | null;
 }
 
 interface EducationItem {
@@ -138,6 +149,76 @@ interface FormData {
     resumeUrl: string | null;
     recommendationLetters: FileList | null;
     certificates: FileList | null;
+}
+
+type Option = { id: number; name: string };
+type CountryOption = Option & { emoji?: string | null };
+type LanguageOption = { code: string; name: string; native?: string };
+
+function LanguageCombobox({
+    options,
+    value,
+    onChange,
+}: {
+    options: LanguageOption[];
+    value: string;
+    onChange: (next: string) => void;
+}) {
+    const [open, setOpen] = useState(false);
+    const selected = value?.trim()
+        ? options.find((o) => o.name === value) ?? null
+        : null;
+
+    return (
+        <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger asChild>
+                <Button
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={open}
+                    className="w-full justify-between px-3 py-2 h-auto border-gray-300"
+                >
+                    <span className="truncate">
+                        {selected ? `${selected.name}${selected.native ? ` (${selected.native})` : ""}` : "Select..."}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                <Command>
+                    <CommandInput placeholder="Search language..." />
+                    <CommandList>
+                        <CommandEmpty>No language found.</CommandEmpty>
+                        <CommandGroup>
+                            {options.map((l) => (
+                                <CommandItem
+                                    key={l.code}
+                                    value={`${l.name} ${l.native ?? ""}`.trim()}
+                                    onSelect={() => {
+                                        onChange(l.name);
+                                        setOpen(false);
+                                    }}
+                                >
+                                    <Check
+                                        className={cn(
+                                            "mr-2 h-4 w-4",
+                                            value === l.name ? "opacity-100" : "opacity-0"
+                                        )}
+                                    />
+                                    {l.name}
+                                    {l.native ? (
+                                        <span className="ml-2 text-xs text-muted-foreground">
+                                            {l.native}
+                                        </span>
+                                    ) : null}
+                                </CommandItem>
+                            ))}
+                        </CommandGroup>
+                    </CommandList>
+                </Command>
+            </PopoverContent>
+        </Popover>
+    );
 }
 
 // Multi-step form config: step index -> { label, section for API }
@@ -314,6 +395,7 @@ function getStepSchema(step: number): Yup.ObjectSchema<Partial<FormData>> {
             return Yup.object({
                 residency: Yup.object({
                     country: Yup.string().required('Country is required'),
+                    state: Yup.string().required('State is required'),
                     city: Yup.string().required('City is required'),
                 }),
             }) as Yup.ObjectSchema<Partial<FormData>>;
@@ -395,12 +477,16 @@ const defaultInitialValues: FormData = {
         street: '',
         buildingNo: '',
         apartmentNo: '',
-        country: 'Pakistan',
-        city: 'Faisalabad',
+        country: '',
+        state: '',
+        city: '',
         zip: '',
         authorizedCountries: [],
         sponsorship: 'NOT_REQUIRED',
         relocate: 'NO',
+        countryId: null,
+        stateId: null,
+        cityId: null,
     },
     experience: { totalExperience: '0', experiences: [] },
     education: { education: [] },
@@ -450,11 +536,15 @@ function buildInitialFromProfile(p: Record<string, unknown>): FormData {
             buildingNo: defStr(p.buildingNo) || defaultInitialValues.residency.buildingNo,
             apartmentNo: defStr(p.apartmentNo) || defaultInitialValues.residency.apartmentNo,
             country: defStr(p.country) || defaultInitialValues.residency.country,
+            state: defStr((p as any).state) || defaultInitialValues.residency.state,
             city: defStr(p.city) || defaultInitialValues.residency.city,
             zip: defStr(p.zip) || defaultInitialValues.residency.zip,
             authorizedCountries: Array.isArray(p.authorizedCountries) ? (p.authorizedCountries as string[]) : defaultInitialValues.residency.authorizedCountries,
             sponsorship: defStr(p.sponsorship) === 'REQUIRED' ? 'REQUIRED' : (defStr(p.sponsorship) === 'NOT_REQUIRED' ? 'NOT_REQUIRED' : defaultInitialValues.residency.sponsorship),
             relocate: defStr(p.relocate) === 'YES' ? 'YES' : (defStr(p.relocate) === 'NO' ? 'NO' : defaultInitialValues.residency.relocate),
+            countryId: null,
+            stateId: null,
+            cityId: null,
         },
         experience: {
             totalExperience: defStr(p.totalExperience) || defaultInitialValues.experience.totalExperience || '0',
@@ -499,6 +589,14 @@ const AutoJobApply: React.FC = () => {
     const [initialValues, setInitialValues] = useState<FormData>(defaultInitialValues);
     const [profileLoaded, setProfileLoaded] = useState(false);
 
+    const [countries, setCountries] = useState<CountryOption[]>([]);
+    const [states, setStates] = useState<Option[]>([]);
+    const [cities, setCities] = useState<Option[]>([]);
+    const [languageOptions, setLanguageOptions] = useState<LanguageOption[]>([]);
+    const [countryOpen, setCountryOpen] = useState(false);
+    const [stateOpen, setStateOpen] = useState(false);
+    const [cityOpen, setCityOpen] = useState(false);
+
     const clearEducationValidationErrors = useCallback(() => {
         setFieldErrors((prev) => {
             if (!prev["education.education"]) return prev;
@@ -508,6 +606,38 @@ const AutoJobApply: React.FC = () => {
         });
         setErrors((prev) => prev.filter((m) => m !== EDUCATION_MIN_ENTRIES_MESSAGE));
     }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+        GetCountries()
+            .then((list) => {
+                if (cancelled) return;
+                setCountries((list || []).map(({ id, name, emoji }: any) => ({ id, name, emoji: emoji ?? null })));
+            })
+            .catch(() => {
+                if (!cancelled) setCountries([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+        GetLanguages()
+            .then((list) => {
+                if (cancelled) return;
+                setLanguageOptions((list || []).map(({ code, name, native }: any) => ({ code, name, native })));
+            })
+            .catch(() => {
+                if (!cancelled) setLanguageOptions([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    // States/cities are fetched on selection inside the Residency step.
 
     // Parse duration string (e.g. "2020 - 2022", "Jan 2019 - Present") to from/to years and months
     const parseDuration = (duration: string | undefined): { fromYear: string; fromMonth: string; toYear: string; toMonth: string; currentlyWorking: boolean } => {
@@ -1421,9 +1551,63 @@ const AutoJobApply: React.FC = () => {
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Country <span className="text-red-500">*</span></label>
-                            <select value={values.residency.country} required onChange={(e) => handleUpdate('residency', 'country', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary">
-                                <option value="Pakistan">Pakistan</option><option value="USA">USA</option><option value="UK">UK</option>
-                            </select>
+                            <Popover open={countryOpen} onOpenChange={setCountryOpen}>
+                                <PopoverTrigger asChild>
+                                    <Button
+                                        variant="outline"
+                                        role="combobox"
+                                        aria-expanded={countryOpen}
+                                        className="w-full justify-between px-3 py-2 h-auto border-gray-300"
+                                    >
+                                        <span className="truncate">
+                                            {values.residency.countryId
+                                                ? `${countries.find((c) => c.id === values.residency.countryId)?.emoji ?? ""} ${values.residency.country}`.trim()
+                                                : "Select country..."}
+                                        </span>
+                                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                                    <Command>
+                                        <CommandInput placeholder="Search country..." />
+                                        <CommandList>
+                                            <CommandEmpty>No country found.</CommandEmpty>
+                                            <CommandGroup>
+                                                {countries.map((c) => (
+                                                    <CommandItem
+                                                        key={c.id}
+                                                        value={c.name}
+                                                        onSelect={() => {
+                                                            setCountryOpen(false);
+                                                            handleUpdate("residency", "countryId", c.id, setValuesWithPrev);
+                                                            handleUpdate("residency", "country", c.name, setValuesWithPrev);
+                                                            handleUpdate("residency", "stateId", null, setValuesWithPrev);
+                                                            handleUpdate("residency", "state", "", setValuesWithPrev);
+                                                            handleUpdate("residency", "cityId", null, setValuesWithPrev);
+                                                            handleUpdate("residency", "city", "", setValuesWithPrev);
+                                                            setStateOpen(false);
+                                                            setCityOpen(false);
+                                                            setCities([]);
+                                                            GetState(c.id)
+                                                                .then((list) => setStates((list || []).map(({ id, name }: any) => ({ id, name }))))
+                                                                .catch(() => setStates([]));
+                                                        }}
+                                                    >
+                                                        <Check
+                                                            className={cn(
+                                                                "mr-2 h-4 w-4",
+                                                                values.residency.countryId === c.id ? "opacity-100" : "opacity-0"
+                                                            )}
+                                                        />
+                                                        <span className="mr-2">{c.emoji ?? ""}</span>
+                                                        {c.name}
+                                                    </CommandItem>
+                                                ))}
+                                            </CommandGroup>
+                                        </CommandList>
+                                    </Command>
+                                </PopoverContent>
+                            </Popover>
                             {fieldErrors["residency.country"] && (
                                 <p className="mt-1 text-xs font-medium text-red-600">
                                     {fieldErrors["residency.country"]}
@@ -1431,10 +1615,115 @@ const AutoJobApply: React.FC = () => {
                             )}
                         </div>
                         <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">State <span className="text-red-500">*</span></label>
+                            <Popover open={stateOpen} onOpenChange={(open) => values.residency.countryId && setStateOpen(open)}>
+                                <PopoverTrigger asChild>
+                                    <Button
+                                        variant="outline"
+                                        role="combobox"
+                                        aria-expanded={stateOpen}
+                                        disabled={!values.residency.countryId}
+                                        className="w-full justify-between px-3 py-2 h-auto border-gray-300 disabled:bg-gray-50"
+                                    >
+                                        <span className="truncate">
+                                            {values.residency.state || (values.residency.countryId ? "Select state..." : "Select country first")}
+                                        </span>
+                                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                                    <Command>
+                                        <CommandInput placeholder="Search state..." />
+                                        <CommandList>
+                                            <CommandEmpty>No state found.</CommandEmpty>
+                                            <CommandGroup>
+                                                {states.map((s) => (
+                                                    <CommandItem
+                                                        key={s.id}
+                                                        value={s.name}
+                                                        onSelect={() => {
+                                                            setStateOpen(false);
+                                                            handleUpdate("residency", "stateId", s.id, setValuesWithPrev);
+                                                            handleUpdate("residency", "state", s.name, setValuesWithPrev);
+                                                            handleUpdate("residency", "cityId", null, setValuesWithPrev);
+                                                            handleUpdate("residency", "city", "", setValuesWithPrev);
+                                                            const countryId = values.residency.countryId;
+                                                            if (countryId) {
+                                                                GetCity(countryId, s.id)
+                                                                    .then((list) => setCities((list || []).map(({ id, name }: any) => ({ id, name }))))
+                                                                    .catch(() => setCities([]));
+                                                            } else {
+                                                                setCities([]);
+                                                            }
+                                                        }}
+                                                    >
+                                                        <Check
+                                                            className={cn(
+                                                                "mr-2 h-4 w-4",
+                                                                values.residency.stateId === s.id ? "opacity-100" : "opacity-0"
+                                                            )}
+                                                        />
+                                                        {s.name}
+                                                    </CommandItem>
+                                                ))}
+                                            </CommandGroup>
+                                        </CommandList>
+                                    </Command>
+                                </PopoverContent>
+                            </Popover>
+                            {fieldErrors["residency.state"] && (
+                                <p className="mt-1 text-xs font-medium text-red-600">
+                                    {fieldErrors["residency.state"]}
+                                </p>
+                            )}
+                        </div>
+                        <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">City <span className="text-red-500">*</span></label>
-                            <select value={values.residency.city} required onChange={(e) => handleUpdate('residency', 'city', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary">
-                                <option value="Faisalabad">Faisalabad</option><option value="Lahore">Lahore</option><option value="Karachi">Karachi</option>
-                            </select>
+                            <Popover open={cityOpen} onOpenChange={(open) => values.residency.countryId && values.residency.stateId && setCityOpen(open)}>
+                                <PopoverTrigger asChild>
+                                    <Button
+                                        variant="outline"
+                                        role="combobox"
+                                        aria-expanded={cityOpen}
+                                        disabled={!values.residency.countryId || !values.residency.stateId}
+                                        className="w-full justify-between px-3 py-2 h-auto border-gray-300 disabled:bg-gray-50"
+                                    >
+                                        <span className="truncate">
+                                            {values.residency.city || (values.residency.stateId ? "Select city..." : "Select state first")}
+                                        </span>
+                                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                                    <Command>
+                                        <CommandInput placeholder="Search city..." />
+                                        <CommandList>
+                                            <CommandEmpty>No city found.</CommandEmpty>
+                                            <CommandGroup>
+                                                {cities.map((c) => (
+                                                    <CommandItem
+                                                        key={c.id}
+                                                        value={c.name}
+                                                        onSelect={() => {
+                                                            setCityOpen(false);
+                                                            handleUpdate("residency", "cityId", c.id, setValuesWithPrev);
+                                                            handleUpdate("residency", "city", c.name, setValuesWithPrev);
+                                                        }}
+                                                    >
+                                                        <Check
+                                                            className={cn(
+                                                                "mr-2 h-4 w-4",
+                                                                values.residency.cityId === c.id ? "opacity-100" : "opacity-0"
+                                                            )}
+                                                        />
+                                                        {c.name}
+                                                    </CommandItem>
+                                                ))}
+                                            </CommandGroup>
+                                        </CommandList>
+                                    </Command>
+                                </PopoverContent>
+                            </Popover>
                             {fieldErrors["residency.city"] && (
                                 <p className="mt-1 text-xs font-medium text-red-600">
                                     {fieldErrors["residency.city"]}
@@ -1971,9 +2260,11 @@ const AutoJobApply: React.FC = () => {
                             <div key={idx} className="flex items-start gap-4 border-b pb-4 last:border-0 border-gray-100">
                                 <div className="flex-1">
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Language</label>
-                                    <select value={lang.language} onChange={(e) => updateLanguage(idx, 'language', e.target.value, values, setValuesWithPrev)} required className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary">
-                                        <option>Urdu</option><option>English</option><option>Punjabi</option><option>Arabic</option>
-                                    </select>
+                                    <LanguageCombobox
+                                        options={languageOptions}
+                                        value={lang.language}
+                                        onChange={(next) => updateLanguage(idx, "language", next, values, setValuesWithPrev)}
+                                    />
                                 </div>
                                 <div className="flex-1">
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Proficiency</label>
