@@ -8,7 +8,7 @@ import {
     User, Briefcase, FileText, MapPin, GraduationCap,
     Code2, Globe, ChevronRight, Linkedin, Search, CheckCircle2,
     Clock, AlertTriangle, Bot, Settings, Phone, Mail, Award,
-    X, Calendar, AlertCircle, Building2, Rocket
+    X, Calendar, AlertCircle, Building2, Rocket, DownloadCloud, ExternalLink
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -240,69 +240,59 @@ function LaunchFilterModal({ isOpen, onClose, onProceed, platformName }: LaunchF
 
                 <form onSubmit={handleSubmit} className="p-6 space-y-5">
                     <div className="space-y-4">
-                        <div>
-                            <label htmlFor="jobTitle" className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Job Title / Keywords</label>
-                            <div className="relative">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                                <input
-                                    type="text"
-                                    id="jobTitle"
-                                    value={jobTitle}
-                                    onChange={(e) => setJobTitle(e.target.value)}
-                                    placeholder="e.g., Software Engineer"
-                                    className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all outline-none text-sm"
-                                />
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label htmlFor="location" className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Location</label>
-                                <div className="relative">
-                                    <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                                    <input
-                                        type="text"
-                                        id="location"
-                                        value={location}
-                                        onChange={(e) => setLocation(e.target.value)}
-                                        placeholder="City / Country"
-                                        className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all outline-none text-sm"
-                                    />
+                        {['Monster', 'Indeed', 'Wellfound'].includes(platformName || '') ? (
+                            <div className="py-4 space-y-4">
+                                <div className="flex flex-col items-center text-center space-y-3 bg-indigo-50/50 rounded-2xl p-6 border border-indigo-100/50">
+                                    <div className="w-12 h-12 bg-white rounded-xl shadow-sm flex items-center justify-center mb-1">
+                                        <Search className="w-6 h-6 text-indigo-600" />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <h4 className="font-bold text-gray-900">Manual Search Instructions</h4>
+                                        <p className="text-gray-600 text-sm leading-relaxed">
+                                            On the platform <span className="font-extrabold text-indigo-700">{platformName}</span> please search on it manually.
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex items-start gap-3 bg-amber-50 p-4 rounded-xl border border-amber-100">
+                                    <AlertCircle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+                                    <p className="text-xs text-amber-800 leading-normal">
+                                        <strong>Pro Tip:</strong> Open the {platformName} search results page you want to target, then click proceed.
+                                    </p>
                                 </div>
                             </div>
-                            <div>
-                                <label htmlFor="jobType" className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Job Type</label>
-                                <div className="relative">
-                                    <Briefcase className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                                    <select
-                                        id="jobType"
-                                        value={jobType}
-                                        onChange={(e) => setJobType(e.target.value)}
-                                        className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm appearance-none"
-                                    >
-                                        <option value="full-time">Full-time</option>
-                                        <option value="part-time">Part-time</option>
-                                        <option value="contract">Contract</option>
-                                        <option value="internship">Internship</option>
-                                    </select>
+                        ) : (
+                            <>
+                                <div>
+                                    <label htmlFor="jobTitle" className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Job Title / Keywords</label>
+                                    <div className="relative">
+                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                        <input
+                                            type="text"
+                                            id="jobTitle"
+                                            value={jobTitle}
+                                            onChange={(e) => setJobTitle(e.target.value)}
+                                            placeholder="e.g., Software Engineer"
+                                            className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all outline-none text-sm"
+                                        />
+                                    </div>
                                 </div>
-                            </div>
-                        </div>
 
-                        <div>
-                            <label htmlFor="salaryMin" className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Min Salary (Annual)</label>
-                            <div className="relative">
-                                <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-gray-400 text-sm">$</span>
-                                <input
-                                    type="number"
-                                    id="salaryMin"
-                                    value={salaryMin}
-                                    onChange={(e) => setSalaryMin(e.target.value)}
-                                    placeholder="e.g. 80000"
-                                    className="w-full pl-8 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all outline-none text-sm"
-                                />
-                            </div>
-                        </div>
+                                <div>
+                                    <label htmlFor="location" className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Location</label>
+                                    <div className="relative">
+                                        <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                        <input
+                                            type="text"
+                                            id="location"
+                                            value={location}
+                                            onChange={(e) => setLocation(e.target.value)}
+                                            placeholder="City / Country"
+                                            className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all outline-none text-sm"
+                                        />
+                                    </div>
+                                </div>
+                            </>
+                        )}
                     </div>
 
                     <div className="flex gap-3 pt-2">
@@ -328,6 +318,82 @@ function LaunchFilterModal({ isOpen, onClose, onProceed, platformName }: LaunchF
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// InstallExtensionModal Component
+// ─────────────────────────────────────────────────────────────────────────────
+interface InstallExtensionModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+}
+
+function InstallExtensionModal({ isOpen, onClose }: InstallExtensionModalProps) {
+    if (!isOpen) return null;
+
+    const EXTENSION_URL = "https://chromewebstore.google.com/detail/pjjgjmpddhcimgndknogclblnfceoajb?utm_source=item-share-cb";
+
+    return (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <div
+                className="absolute inset-0 bg-black/60 backdrop-blur-md transition-opacity"
+                onClick={onClose}
+            />
+            <div className="relative bg-white w-full max-w-sm rounded-[2rem] shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-300 border border-white/20">
+                <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-purple-700 p-8 text-white text-center relative">
+                    <button
+                        onClick={onClose}
+                        className="absolute top-4 right-4 p-2 hover:bg-white/10 rounded-full transition-colors"
+                    >
+                        <X className="w-5 h-5" />
+                    </button>
+
+                    <div className="inline-flex items-center justify-center p-4 bg-white/10 rounded-2xl mb-4 backdrop-blur-sm border border-white/10">
+                        <DownloadCloud className="w-10 h-10 text-white" />
+                    </div>
+
+                    <h3 className="text-2xl font-bold mb-2">Extension Required</h3>
+                    <p className="text-purple-100 text-sm leading-relaxed">
+                        To use the AI Auto-Apply features, you need to install our browser extension.
+                    </p>
+                </div>
+
+                <div className="p-8 space-y-6">
+                    <div className="space-y-4">
+                        <div className="flex items-start gap-4">
+                            <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center shrink-0 font-bold text-indigo-600 text-sm">1</div>
+                            <p className="text-sm text-gray-600 leading-snug">Click the button below to go to the Chrome WebStore.</p>
+                        </div>
+                        <div className="flex items-start gap-4">
+                            <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center shrink-0 font-bold text-indigo-600 text-sm">2</div>
+                            <p className="text-sm text-gray-600 leading-snug">Click <strong>"Add to Chrome"</strong> and follow the prompts.</p>
+                        </div>
+                        <div className="flex items-start gap-4">
+                            <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center shrink-0 font-bold text-indigo-600 text-sm">3</div>
+                            <p className="text-sm text-gray-600 leading-snug">Refresh this page to start applying!</p>
+                        </div>
+                    </div>
+
+                    <a
+                        href={EXTENSION_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full flex items-center justify-center gap-3 px-6 py-4 rounded-2xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 group"
+                    >
+                        Install Extension
+                        <ExternalLink className="w-4 h-4 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                    </a>
+
+                    <button
+                        onClick={onClose}
+                        className="w-full text-sm text-gray-400 font-medium hover:text-gray-600 transition-colors"
+                    >
+                        Maybe later
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main Dashboard
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -346,7 +412,7 @@ export default function AutoJobApplyDashboard() {
     const [isExtensionInstalled, setIsExtensionInstalled] = React.useState<boolean | null>(null);
     const checkExtensionInstalled = React.useCallback(() => {
         return new Promise<boolean>((resolve) => {
-            const extensionId = "mlciepidkmndnddgnfajjjffnhpbapok";
+            const extensionId = "pjjgjmpddhcimgndknogclblnfceoajbs";
             // @ts-ignore
             if (typeof window !== 'undefined' && window.chrome && window.chrome.runtime) {
                 try {
@@ -393,16 +459,13 @@ export default function AutoJobApplyDashboard() {
 
     const [selectedPlatform, setSelectedPlatform] = React.useState<string | null>(null);
     const [isLaunchModalOpen, setIsLaunchModalOpen] = React.useState(false);
+    const [isInstallModalOpen, setIsInstallModalOpen] = React.useState(false);
 
     const handleLaunch = async (platform: string) => {
         const isInstalled = await checkExtensionInstalled();
 
         if (!isInstalled) {
-            toast({
-                title: "Extension Not Installed",
-                description: "Please install the extension to use this feature.",
-            });
-
+            setIsInstallModalOpen(true);
             return;
         }
         if (!user?.subscriptionEndDate) {
@@ -435,7 +498,7 @@ export default function AutoJobApplyDashboard() {
         console.log(`Launching ${selectedPlatform} with filters:`, filters);
 
         // Send message to extension
-        const extensionId = "mlciepidkmndnddgnfajjjffnhpbapok";
+        const extensionId = "pjjgjmpddhcimgndknogclblnfceoajb";
         // @ts-ignore
         if (typeof window !== 'undefined' && window.chrome && window.chrome.runtime) {
             try {
@@ -749,6 +812,11 @@ export default function AutoJobApplyDashboard() {
                 platformName={selectedPlatform}
                 onProceed={handleProceedLaunch}
 
+            />
+
+            <InstallExtensionModal
+                isOpen={isInstallModalOpen}
+                onClose={() => setIsInstallModalOpen(false)}
             />
         </div>
     );
