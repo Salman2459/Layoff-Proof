@@ -240,7 +240,7 @@ function LaunchFilterModal({ isOpen, onClose, onProceed, platformName }: LaunchF
 
                 <form onSubmit={handleSubmit} className="p-6 space-y-5">
                     <div className="space-y-4">
-                        {['Monster', 'Indeed', 'Wellfound'].includes(platformName || '') ? (
+                        {['Monster', 'Wellfound'].includes(platformName || '') ? (
                             <div className="py-4 space-y-4">
                                 <div className="flex flex-col items-center text-center space-y-3 bg-indigo-50/50 rounded-2xl p-6 border border-indigo-100/50">
                                     <div className="w-12 h-12 bg-white rounded-xl shadow-sm flex items-center justify-center mb-1">
@@ -412,7 +412,7 @@ export default function AutoJobApplyDashboard() {
     const [isExtensionInstalled, setIsExtensionInstalled] = React.useState<boolean | null>(null);
     const checkExtensionInstalled = React.useCallback(() => {
         return new Promise<boolean>((resolve) => {
-            const extensionId = "pjjgjmpddhcimgndknogclblnfceoajbs";
+            const extensionId = "pjjgjmpddhcimgndknogclblnfceoajb";
             // @ts-ignore
             if (typeof window !== 'undefined' && window.chrome && window.chrome.runtime) {
                 try {
@@ -591,7 +591,7 @@ export default function AutoJobApplyDashboard() {
             description: 'Soon: apply to Indeed listings with the same AI auto-apply engine and your saved job profile.',
             gradient: 'bg-gradient-to-r from-sky-800 to-blue-700',
             badgeColor: 'bg-sky-100 text-sky-800',
-            status: 'coming_soon',
+            status: 'available',
             features: [
                 'Indeed job search & match to your profile',
                 'Planned: one-click and quick-apply flows',
