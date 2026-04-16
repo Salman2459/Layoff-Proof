@@ -37,6 +37,7 @@ const AutoJobApply = lazy(() => import("@/pages/auto-job-apply"));
 const AutoJobApplyDashboard = lazy(
   () => import("@/pages/auto-job-apply-dashboard")
 );
+const PrivacyPolicyPage = lazy(() => import("@/pages/privacy-policy"));
 
 function Router() {
   return (
@@ -155,6 +156,8 @@ function Router() {
           <AutoJobApplyDashboard />
         </ProtectedRoute>
       </Route>
+
+      <Route path="/privacy-policy" component={PrivacyPolicyPage} />
 
       {/* Main homepage - accessible to all users */}
       <Route path="/" component={ElevateLanding} />
