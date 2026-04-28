@@ -4,6 +4,28 @@ import type { Express } from "express";
 import { storage } from "./storage";
 import session from "express-session";
 
+function getSafeRedirectPath(redirect: unknown): string | null {
+  if (!redirect || typeof redirect !== "string") return null;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(redirect.trim());
+  } catch {
+    return null;
+  }
+  if (!decoded.startsWith("/")) return null;
+  if (decoded.startsWith("//")) return null;
+  if (decoded.includes("://")) return null;
+  return decoded;
+}
+
+function hasActiveSubscription(user: any): boolean {
+  const status = (user?.subscriptionStatus ?? "").toString().toLowerCase();
+  if (status === "active") return true;
+  const end = user?.subscriptionEndDate ? new Date(user.subscriptionEndDate) : null;
+  if (!end || Number.isNaN(end.getTime())) return false;
+  return end > new Date();
+}
+
 export function setupGoogleAuth(app: Express) {
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
     console.warn("Google OAuth credentials not found. Google authentication disabled.");
@@ -105,7 +127,14 @@ export function setupGoogleAuth(app: Express) {
   app.use(passport.session());
 
   // Start OAuth flow
-  app.get("/api/auth/google", passport.authenticate("google", { scope: ["profile", "email"] }));
+  app.get("/api/auth/google", (req: any, _res, next) => {
+    // Preserve where the user wanted to go (only allow safe same-origin paths)
+    const safe = getSafeRedirectPath(req.query?.redirect);
+    if (req.session) {
+      req.session.oauthRedirect = safe ?? null;
+    }
+    next();
+  }, passport.authenticate("google", { scope: ["profile", "email"] }));
 
   // OAuth callback
   app.get(
@@ -145,8 +174,13 @@ export function setupGoogleAuth(app: Express) {
           });
         });
 
-        console.log("Google OAuth successful, redirecting to pricing");
-        res.redirect("/pricing");
+        const requested = getSafeRedirectPath(req.session?.oauthRedirect);
+        if (req.session) req.session.oauthRedirect = null;
+
+        const fallback = hasActiveSubscription(req.user) ? "/" : "/pricing";
+        const dest = requested ?? fallback;
+        console.log("Google OAuth successful, redirecting to", dest);
+        res.redirect(dest);
       } catch (error) {
         console.error("Error in Google OAuth callback:", error);
         res.redirect("/login?error=oauth_failed");

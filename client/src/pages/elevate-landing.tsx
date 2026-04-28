@@ -22,6 +22,7 @@ import {
 import GlobalHeader from "@/components/GlobalHeader";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
+import { hasActiveSubscription } from "@/lib/subscription";
 import { cn } from "@/lib/utils";
 import { elevateLandingToolCards } from "./data.js";
 
@@ -204,21 +205,10 @@ export default function ElevateLanding() {
       return;
     }
 
-    if (!user?.subscriptionEndDate) {
+    if (!hasActiveSubscription(user)) {
       toast({
         title: "Subscription Required",
         description: "Please upgrade to access this tool.",
-        variant: "destructive",
-      });
-      window.location.href = "/pricing";
-      return;
-    }
-
-    if (new Date(user.subscriptionEndDate) < new Date()) {
-      toast({
-        title: "Subscription Ended",
-        description:
-          "Your subscription has ended. Please upgrade to access this tool.",
         variant: "destructive",
       });
       window.location.href = "/pricing";
@@ -235,20 +225,10 @@ export default function ElevateLanding() {
       return;
     }
 
-    if (!user?.subscriptionEndDate) {
+    if (!hasActiveSubscription(user)) {
       toast({
         title: "Subscription Required",
         description: "Please upgrade to access this tool.",
-        variant: "destructive",
-      });
-      window.location.href = "/pricing";
-      return;
-    }
-    if (new Date(user.subscriptionEndDate) < new Date()) {
-      toast({
-        title: "Subscription Ended",
-        description:
-          "Your subscription has ended. Please upgrade to access this tool.",
         variant: "destructive",
       });
       window.location.href = "/pricing";

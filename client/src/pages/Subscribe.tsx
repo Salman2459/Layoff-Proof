@@ -20,11 +20,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Check, Loader2, CreditCard, XCircle, CheckCircle, Tag } from "lucide-react";
+import { Check, Loader2, CreditCard, CheckCircle, Tag ,X, XCircle} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getApiErrorMessage } from "@/lib/queryClient";
 import GlobalHeader from "@/components/GlobalHeader";
 import GlobalFooter from "@/components/GlobalFooter";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useAuth } from "@/hooks/useAuth";
 
 if (!import.meta.env.VITE_STRIPE_PUBLIC_KEY) {
   throw new Error("Missing required Stripe key: VITE_STRIPE_PUBLIC_KEY");
@@ -39,7 +41,17 @@ interface PriceBreakdown {
   discountPercentage?: number;
 }
 
-// Price Display Component
+type StripeCatalogProduct = {
+  id: string; 
+  name: string;
+  description?: string | null;
+  default_price?: {
+    unit_amount?: number | null;
+    recurring?: { interval?: string | null } | null;
+  } | null;
+  metadata?: Record<string, string>;
+};
+
 const PriceBreakdown = ({ breakdown }: { breakdown: PriceBreakdown | null }) => {
   if (!breakdown) return null;
 
@@ -357,95 +369,101 @@ const CheckoutForm = ({
 };
 
 // Plan Selection Cards
-const PlanSelection = ({ onPlanSelect }:any) => {
-  const [isLoading, setIsLoading] = useState<"weekly" | "monthly" | null>(null);
+const PlanSelection = ({
+  onPlanSelect,
+}: {
+  onPlanSelect: (plan: StripeCatalogProduct) => Promise<void> | void;
+}) => {
+const {user} = useAuth();
 
-  const handleSelect = async (planId: "weekly" | "monthly") => {
-    setIsLoading(planId);
-    await onPlanSelect(planId);
+  const [isLoading, setIsLoading] = useState<"loading" | string | null>(null);
+  const [plans, setPlans] = useState<StripeCatalogProduct[]>([]);
+
+  const handleSelect = async (plan: StripeCatalogProduct) => {
+    setIsLoading(plan.id);
+    await onPlanSelect(plan);
     setIsLoading(null);
   };
 
-  const features = [
-    "AI-powered Resume Builder",
-    "Unlimited resume downloads",
-    "Smart Cover Letter Generator",
-    "AI Interview Preparation",
-    "LinkedIn Profile Optimizer",
-    "Real-time Layoff Tracker",
-    "Priority support",
-  ];
+ 
+useEffect(() => {
+  setIsLoading("loading");
+    const fetchPlan = async () => {
+      try {
+        const response = await apiRequest("GET", "/api/stripe/catalog");
+        setPlans(Array.isArray(response) ? response : []);
+        
+      } catch (error) {
+        console.error("Error fetching plans:", error);
+      }finally{
+        setIsLoading(null);
+      }
+    };
+    fetchPlan();
+  }, []);
+
+
 
   return (
-    <div className="grid md:grid-cols-2 gap-8">
-      <Card  className="flex flex-col justify-between">
-        <CardHeader className="text-center">
-          <CardTitle className="text-2xl">Weekly Pro</CardTitle>
-          <div className="text-3xl font-bold text-blue-600">
-            $19<span className="text-lg font-normal text-gray-500">/week</span>
-          </div>
-          <CardDescription>Perfect for a short-term job search.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ul className="space-y-2">
-            {features.map((feature, idx) => (
+    <div className="grid md:grid-cols-3 gap-8">
+ {
+  isLoading === "loading" ? (
+    <>
+      {Array.from({ length: 3 }).map((_, idx) => (
+        <Skeleton key={idx} className="h-[500px] w-full rounded-xl animate-pulse" />
+      ))}
+    </>
+  ) : (
+  <>
+  {plans?.slice()?.reverse()?.map((plan: StripeCatalogProduct,planIdx: number) => (
+       <Card
+       key={plan.id}
+       className={`flex flex-col justify-between ${
+        user?.subscriptionStatus ==="active"  && plan.id === user?.subscriptionPlan ? "border-blue-500 ring-2 ring-blue-500 shadow-xl" :                           // default grey
+        user?.subscriptionStatus !== "active" && plan.name === "Layoff Proof AI - Pro" ? "border-blue-500 ring-2 ring-blue-500 shadow-xl" :
+        "border-gray-200"
+      }`}
+      >
+       <CardHeader className="text-center">
+         <CardTitle className="text-lg">{plan?.name}</CardTitle>
+         <div className="text-3xl font-bold text-blue-600">
+           ${((plan?.default_price?.unit_amount ?? 0) / 100).toFixed(2)}
+           <span className="text-lg font-normal text-gray-500">
+             /{plan?.default_price?.recurring?.interval ?? "mo"}
+           </span>
+         </div>
+         <CardDescription>{plan?.description}</CardDescription>
+       </CardHeader>
+       <CardContent>
+         <ul className="space-y-2">
+          {Object.entries(plan?.metadata ?? {}).map(([key, value], idx: number) => (
               <li key={idx} className="flex items-center space-x-2">
-                <Check className="w-4 h-4 text-green-500 flex-shrink-0" />
-                <span className="text-sm text-gray-700 dark:text-gray-300">{feature}</span>
+                { planIdx === 0 && value.startsWith("Layoff Radar") ?  <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" /> : planIdx !== 0 ?  <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" /> : <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />}
+                <span className="text-sm text-gray-700 dark:text-gray-300">{value}</span>
               </li>
             ))}
-          </ul>
-        </CardContent>
-        <CardFooter>
-          <Button
-            className="w-full"
-            onClick={() => handleSelect('weekly')}
-            disabled={!!isLoading}
-          >
-            {isLoading === 'weekly' ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Setting up...</>
-            ) : (
-              "Choose Weekly"
-            )}
-          </Button>
-        </CardFooter>
-      </Card>
+         </ul>
+       </CardContent>
+       <CardFooter>
+         <Button
+           className={`w-full ${plan.name==="Layoff Proof AI - Pro" ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}`}
+           onClick={() => handleSelect(plan)}
+           disabled={!!isLoading && isLoading === plan.id  || user?.subscriptionStatus ==="active" && plan.id === user?.subscriptionPlan}
+         >
+           {isLoading === plan.id ? (
+             <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Setting up...</>
+           ) : (
+             `Choose ${plan.name}`
+           )}
+         </Button>
+       </CardFooter>
+     </Card>
+  ))}
 
-      <Card className="border-blue-500 ring-2 ring-blue-500 shadow-xl flex flex-col justify-between">
-        <CardHeader className="text-center">
-          <div className="flex justify-center mb-2">
-            <Badge className="bg-blue-600 text-white">Best Value</Badge>
-          </div>
-          <CardTitle className="text-2xl">Monthly Pro</CardTitle>
-          <div className="text-3xl font-bold text-blue-600">
-            $29<span className="text-lg font-normal text-gray-500">/month</span>
-          </div>
-          <CardDescription>Get full access and save.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ul className="space-y-2">
-            {features.map((feature, idx) => (
-              <li key={idx} className="flex items-center space-x-2">
-                <Check className="w-4 h-4 text-green-500 flex-shrink-0" />
-                <span className="text-sm text-gray-700 dark:text-gray-300">{feature}</span>
-              </li>
-            ))}
-          </ul>
-        </CardContent>
-        <CardFooter>
-          <Button
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-            onClick={() => handleSelect('monthly')}
-            disabled={!!isLoading}
-          >
-            {isLoading === 'monthly' ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Setting up...</>
-            ) : (
-              "Choose Monthly"
-            )}
-          </Button>
-        </CardFooter>
-      </Card>
+  </>
+  
+  )
+}
     </div>
   );
 };
@@ -458,11 +476,11 @@ export default function Subscribe() {
   const [coupon, setCoupon] = useState("");
 
 
-  const handlePlanSelect = async (planId: "weekly" | "monthly") => {
+  const handlePlanSelect = async (plan: StripeCatalogProduct) => {
     try {
-      console.log("🚀 Creating subscription for plan:", planId);
+      console.log("🚀 Creating subscription for plan:", plan.id);
       const response = await apiRequest("POST", "/api/stripe/create-subscription", {
-        planId,
+        planId: plan.id,
         coupon: coupon.trim() || undefined
       });
       const data = response
@@ -472,8 +490,8 @@ export default function Subscribe() {
       if (data.clientSecret) {
         setClientSecret(data.clientSecret);
         setSelectedPlan({
-          id: planId,
-          name: planId === 'weekly' ? 'Weekly Pro' : 'Monthly Pro'
+          id: plan.id,
+          name: plan.name
         });
         console.log("✅ Client secret received");
       } else {
@@ -493,17 +511,15 @@ export default function Subscribe() {
   };
 
   const handleRefreshPayment = async () => {
-    if (selectedPlan) {
-      console.log("🔄 Refreshing payment for expired client secret...");
-      await handlePlanSelect(selectedPlan.id as "weekly" | "monthly");
-    }
+    // Refresh logic depends on having the full plan object; keeping this as a no-op for now.
+    // If you want refresh, store the selected Stripe product id + name and re-call create-subscription.
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
       <GlobalHeader />
       <div className="container mx-auto px-4 py-16">
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-7xl mx-auto">
           {!clientSecret ? (
             <>
               <div className="text-center mb-12">

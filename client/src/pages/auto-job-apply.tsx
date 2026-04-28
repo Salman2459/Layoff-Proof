@@ -366,6 +366,28 @@ function pickPayloadFields<T extends Record<string, unknown>>(data: T, allowedFi
     ) as Record<string, unknown>;
 }
 
+function isNonEmptyString(v: unknown): v is string {
+    return typeof v === "string" && v.trim().length > 0;
+}
+
+function sanitizeExperiences(experiences: unknown): ExperienceItem[] {
+    if (!Array.isArray(experiences)) return [];
+    return experiences
+        .filter((exp) => exp && typeof exp === "object")
+        .map((exp) => exp as Record<string, unknown>)
+        .map((exp) => ({
+            company: isNonEmptyString(exp.company) ? exp.company.trim() : "",
+            title: isNonEmptyString(exp.title) ? exp.title.trim() : "",
+            fromMonth: isNonEmptyString(exp.fromMonth) ? exp.fromMonth.trim() : "",
+            fromYear: isNonEmptyString(exp.fromYear) ? exp.fromYear.trim() : "",
+            toMonth: isNonEmptyString(exp.toMonth) ? exp.toMonth.trim() : "",
+            toYear: isNonEmptyString(exp.toYear) ? exp.toYear.trim() : "",
+            currentlyWorking: Boolean(exp.currentlyWorking),
+            description: isNonEmptyString(exp.description) ? exp.description : "",
+        }))
+        .filter((exp) => exp.company && exp.title && exp.fromMonth && exp.fromYear);
+}
+
 /** Build the exact payload for the current step: only section data with allowed fields. */
 function buildStepPayload(currentStep: number, values: FormData): { apiSection: string; payload: Record<string, unknown> } {
     const { section } = STEP_CONFIG[currentStep];
@@ -373,6 +395,10 @@ function buildStepPayload(currentStep: number, values: FormData): { apiSection: 
     const raw = section === 'documents' ? values.general : (values as unknown as Record<string, unknown>)[section];
     const allowed = SECTION_ALLOWED_FIELDS[apiSection];
     const payload = allowed ? pickPayloadFields((raw ?? {}) as Record<string, unknown>, allowed) : (raw as Record<string, unknown>) ?? {};
+    if (apiSection === "experience") {
+        const exp = payload as any;
+        exp.experiences = sanitizeExperiences(exp.experiences);
+    }
     return { apiSection, payload };
 }
 
@@ -762,79 +788,7 @@ const AutoJobApply: React.FC = () => {
             }
             const parsedData = json.parsedData as ParsedResumeFromApi;
             if (parsedData) {
-                const nextValues = applyParsedResumeToForm(parsedData, setValues);
-
-                // Persist parsed values + resume upload so refresh doesn't wipe them.
-                try {
-                    setSavingSection("personal");
-
-                    // 1) Upload resume to profile (Cloudinary + DB) immediately
-                    const uploadFd = new FormData();
-                    uploadFd.append("file", file);
-                    const uploadRes = await apiRequest(
-                        "POST",
-                        `/api/profile/documentupdate/${id}?documentType=resume`,
-                        uploadFd,
-                    );
-                    const uploadedUrl =
-                        uploadRes && typeof uploadRes === "object" && "url" in uploadRes
-                            ? String((uploadRes as any).url || "")
-                            : "";
-
-                    if (uploadedUrl) {
-                        latestFormValuesRef.current = {
-                            ...latestFormValuesRef.current,
-                            resumeUrl: uploadedUrl,
-                        };
-                        setValues({
-                            ...latestFormValuesRef.current,
-                            resumeUrl: uploadedUrl,
-                        });
-                    }
-
-                    // 2) Save parsed sections to DB
-                    const sectionsToSave: Array<
-                        keyof Pick<
-                            FormData,
-                            | "personal"
-                            | "residency"
-                            | "experience"
-                            | "education"
-                            | "skillAndLanguages"
-                            | "achievements"
-                        >
-                    > = [
-                        "personal",
-                        "residency",
-                        "experience",
-                        "education",
-                        "skillAndLanguages",
-                        "achievements",
-                    ];
-
-                    await Promise.all(
-                        sectionsToSave.map(async (section) => {
-                            const allowed = SECTION_ALLOWED_FIELDS[section];
-                            const raw = (nextValues as any)[section] ?? {};
-                            const payload = allowed
-                                ? pickPayloadFields(raw as Record<string, unknown>, allowed)
-                                : (raw as Record<string, unknown>);
-                            // For step 0 parse, store 1-based step index 2 (next step) so it unlocks properly.
-                            return await apiRequest(
-                                "POST",
-                                `/api/profile/${section}/${id}`,
-                                { [section]: payload, currentStep: 2 },
-                            );
-                        }),
-                    );
-
-                    queryClient.invalidateQueries({ queryKey: ["userJobProfile", id] });
-                } catch (e) {
-                    // Don't block UX if persistence fails; user can still manually Save & Next.
-                    console.warn("Auto-save after resume parse failed:", e);
-                } finally {
-                    setSavingSection(null);
-                }
+                applyParsedResumeToForm(parsedData, setValues);
             }
             toast({ title: 'Resume parsed', description: 'Form fields have been filled from your resume.' });
         } catch (e) {

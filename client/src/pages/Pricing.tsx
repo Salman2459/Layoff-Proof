@@ -19,7 +19,7 @@ const plan = {
   description: "Complete career resilience platform with 7-day free trial",
   trialDays: 7,
   features: [
-    "AI-powered Resume Builder with 4 premium templates",
+    "AI-powered Resume Builder with 6 premium templates",
     "Unlimited resume downloads and exports",
     "Smart Cover Letter Generator",
     "AI Interview Question Generator & Scorer",

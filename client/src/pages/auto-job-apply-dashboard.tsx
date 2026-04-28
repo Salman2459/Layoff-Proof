@@ -4,6 +4,7 @@ import { Link } from 'wouter';
 import { useAuth } from '@/hooks/useAuth';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
+import { hasActiveSubscription } from '@/lib/subscription';
 import {
     User, Briefcase, FileText, MapPin, GraduationCap,
     Code2, Globe, ChevronRight, Linkedin, Search, CheckCircle2,
@@ -412,33 +413,65 @@ export default function AutoJobApplyDashboard() {
     const [isExtensionInstalled, setIsExtensionInstalled] = React.useState<boolean | null>(null);
     const checkExtensionInstalled = React.useCallback(() => {
         return new Promise<boolean>((resolve) => {
-            const extensionId = "pjjgjmpddhcimgndknogclblnfceoajbs";
-            // @ts-ignore
-            if (typeof window !== 'undefined' && window.chrome && window.chrome.runtime) {
+            const extensionId = "pjjgjmpddhcimgndknogclblnfceoajb";
+            if (typeof window === "undefined") {
+                setIsExtensionInstalled(false);
+                resolve(false);
+                return;
+            }
+
+            // Best-practice for web pages: handshake with the extension content script via postMessage.
+            // (chrome.runtime.sendMessage is not reliably available from normal web pages.)
+            const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+            const timeoutMs = 900;
+
+            const onMessage = (event: MessageEvent) => {
+                if (event.source !== window) return;
+                const data = event.data;
+                if (!data || typeof data !== "object") return;
+                if (data?.source !== "LP_EXTENSION") return;
+                if (data?.type !== "PONG") return;
+                if (data?.nonce !== nonce) return;
+
+                window.removeEventListener("message", onMessage);
+                clearTimeout(timer);
+                setIsExtensionInstalled(true);
+                resolve(true);
+            };
+
+            const timer = window.setTimeout(() => {
+                window.removeEventListener("message", onMessage);
+
+                // Fallback: only try chrome.runtime if it's truly available.
+                const sendMessage = (window as any)?.chrome?.runtime?.sendMessage;
+                if (typeof sendMessage !== "function") {
+                    setIsExtensionInstalled(false);
+                    resolve(false);
+                    return;
+                }
+
                 try {
-                    // @ts-ignore
-                    window.chrome.runtime.sendMessage(
-                        extensionId,
-                        { action: "Check Extension" },
-                        (response: any) => {
-                            // @ts-ignore
-                            if (window.chrome.runtime.lastError) {
-                                setIsExtensionInstalled(false);
-                                resolve(false);
-                            } else {
-                                setIsExtensionInstalled(true);
-                                resolve(true);
-                            }
+                    sendMessage(extensionId, { action: "PING" }, () => {
+                        const lastError = (window as any)?.chrome?.runtime?.lastError;
+                        if (lastError) {
+                            setIsExtensionInstalled(false);
+                            resolve(false);
+                        } else {
+                            setIsExtensionInstalled(true);
+                            resolve(true);
                         }
-                    );
-                } catch (e) {
+                    });
+                } catch {
                     setIsExtensionInstalled(false);
                     resolve(false);
                 }
-            } else {
-                setIsExtensionInstalled(false);
-                resolve(false);
-            }
+            }, timeoutMs);
+
+            window.addEventListener("message", onMessage);
+            window.postMessage(
+                { source: "LP_WEBAPP", type: "PING", nonce, extensionId },
+                window.location.origin,
+            );
         });
     }, []);
 
@@ -468,21 +501,10 @@ export default function AutoJobApplyDashboard() {
             setIsInstallModalOpen(true);
             return;
         }
-        if (!user?.subscriptionEndDate) {
+        if (!hasActiveSubscription(user)) {
             toast({
                 title: "Subscription Required",
-                description: " Please upgrade to access this tool.",
-                variant: "destructive"
-            });
-            window.location.href = '/pricing';
-            return;
-        }
-
-
-        if (user?.subscriptionEndDate && new Date(user?.subscriptionEndDate) < new Date()) {
-            toast({
-                title: "Subscription Ended",
-                description: "Your subscription has ended. Please upgrade to access this tool.",
+                description: "Please upgrade to access this tool.",
                 variant: "destructive"
             });
             window.location.href = '/pricing';

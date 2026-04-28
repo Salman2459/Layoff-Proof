@@ -45,6 +45,7 @@ import {
 } from "./stripe";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import { cloudinary } from "./cloudinary";
+import { AnyAaaaRecord } from "dns";
 
 const rssParser = new Parser();
 
@@ -358,27 +359,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Stripe payment endpoints
-  // Backend API - Without Webhooks
-
-  const PLANS = {
-    weekly: {
-      productId: "prod_T01G5WddBK8Dv0",
-      name: "Layoff Proof Pro (Weekly)",
-      description: "Weekly premium access to all Layoff Proof career tools",
-      unit_amount: 1900,
-      interval: "week",
-      days: 7,
-    },
-    monthly: {
-      productId: "prod_T01HPr0qbDOq3L",
-      name: "Layoff Proof Pro (Monthly)",
-      description: "Monthly premium access to all Layoff Proof career tools",
-      unit_amount: 2900,
-      interval: "month",
-      days: 30,
-    },
-  };
 
   // Helper: Calculate subscription end date
   const calculateSubscriptionEndDate = (user, days) => {
@@ -393,53 +373,103 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return startDate;
   };
 
-  // Helper: Get or create price
-  async function getOrCreatePrice(planConfig) {
-    try {
-      let product;
-      try {
-        product = await stripe.products.retrieve(planConfig.productId);
-        console.log(`✅ Found product: ${product.id}`);
-      } catch (error) {
-        if (error.code === "resource_missing") {
-          throw new Error(
-            `Configured Stripe Product ID not found: ${planConfig.productId}`,
-          );
-        }
-        throw error;
-      }
-
-      const prices = await stripe.prices.list({
-        product: product.id,
-        active: true,
-      });
-      const correctPrice = prices.data.find(
-        (p) =>
-          p.unit_amount === planConfig.unit_amount &&
-          p.currency === "usd" &&
-          p.recurring?.interval === planConfig.interval,
-      );
-
-      if (correctPrice) {
-        console.log(`✅ Using existing price: ${correctPrice.id}`);
-        return correctPrice.id;
-      }
-
-      console.warn(
-        `⚠️ No correct price found for ${product.id}. Creating a new one.`,
-      );
-      const newPrice = await stripe.prices.create({
-        unit_amount: planConfig.unit_amount,
-        currency: "usd",
-        recurring: { interval: planConfig.interval },
-        product: product.id,
-      });
-      console.log(`✅ Created new price: ${newPrice.id}`);
-      return newPrice.id;
-    } catch (err) {
-      console.error("❌ Error in getOrCreatePrice:", err);
-      throw new Error("Failed to set up product pricing.");
+  function getDaysForPrice(price: any) {
+    const recurring = price?.recurring;
+    if (!recurring?.interval) return null;
+    const count = recurring.interval_count ?? 1;
+    switch (recurring.interval) {
+      case "day":
+        return 1 * count;
+      case "week":
+        return 7 * count;
+      case "month":
+        return 30 * count;
+      case "year":
+        return 365 * count;
+      default:
+        return null;
     }
+  }
+
+  async function resolvePriceFromId(id: string) {
+    if (typeof id !== "string" || !id.trim()) {
+      throw new Error("Missing Stripe id.");
+    }
+
+    const normalized = id.trim();
+
+    if (normalized.startsWith("price_")) {
+      const price = await stripe.prices.retrieve(normalized);
+      return {
+        priceId: price.id,
+        unitAmount: price.unit_amount ?? null,
+        days: getDaysForPrice(price),
+      };
+    }
+
+    if (normalized.startsWith("prod_")) {
+      const product = await stripe.products.retrieve(normalized, {
+        expand: ["default_price"],
+      });
+
+      let priceId: string | null = null;
+
+      const defaultPrice: any = (product as any).default_price;
+      if (typeof defaultPrice === "string") {
+        priceId = defaultPrice;
+      } else if (defaultPrice?.id) {
+        priceId = defaultPrice.id;
+      }
+
+      if (!priceId) {
+        const prices = await stripe.prices.list({
+          product: product.id,
+          active: true,
+          limit: 10,
+        });
+        priceId = prices.data[0]?.id ?? null;
+      }
+
+      if (!priceId) {
+        throw new Error(`No active price found for product ${product.id}`);
+      }
+
+      const price = await stripe.prices.retrieve(priceId);
+      return {
+        priceId: price.id,
+        unitAmount: price.unit_amount ?? null,
+        days: getDaysForPrice(price),
+      };
+    }
+
+    throw new Error("Invalid Stripe id. Pass a price_... or prod_... id.");
+  }
+
+  async function resolveCouponOrPromotionCode(code: string) {
+    const normalized = code.trim();
+    if (!normalized) throw new Error("Coupon code is required.");
+
+    // First try direct coupon id (or "coupon code" if you're using ids as codes)
+    try {
+      const coupon = await stripe.coupons.retrieve(normalized);
+      if (!coupon.valid) throw new Error("Invalid coupon");
+      return { coupon, promotionCodeId: null as string | null };
+    } catch (err: any) {
+      // If it isn't a coupon id, it might be a Promotion Code (the common UX case)
+      if (err?.code !== "resource_missing") throw err;
+    }
+
+    const promos = await stripe.promotionCodes.list({
+      code: normalized,
+      active: true,
+      limit: 1,
+      expand: ["data.coupon"],
+    });
+    const promo: any = promos.data[0];
+    if (!promo?.coupon?.valid) {
+      throw new Error("Invalid promotion code");
+    }
+    return { coupon: promo.coupon, promotionCodeId: promo.id as string };
   }
 
   // Create subscription
@@ -449,15 +479,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     async (req, res) => {
       try {
         const { planId, coupon } = req.body;
-        const selectedPlan = PLANS[planId];
 
-        if (!selectedPlan) {
+        if (!planId) {
           return res
             .status(400)
             .json({ message: "Invalid subscription plan selected." });
         }
 
-        const user = req.user;
+        const user:any = req.user;
         let stripeCustomerId = user.stripeCustomerId;
 
         if (!stripeCustomerId) {
@@ -469,19 +498,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await storage.updateUser(user.id, { stripeCustomerId });
         }
 
-        const priceId = await getOrCreatePrice(selectedPlan);
+        const { priceId } = await resolvePriceFromId(planId);
 
-        const subscription = await stripe.subscriptions.create({
-          customer: stripeCustomerId,
-          items: [{ price: priceId }],
-          coupon: coupon?.trim() || undefined, // ✅ APPLY COUPON HERE
-          payment_behavior: "default_incomplete",
-          payment_settings: { save_default_payment_method: "on_subscription" },
-          expand: [
-            "latest_invoice.payment_intent",
-            "latest_invoice.total_discount_amounts",
-          ],
-        });
+        const createSubscription = async (customerId: string) =>
+          stripe.subscriptions.create({
+            customer: customerId,
+            items: [{ price: priceId }],
+            coupon: coupon?.trim() || undefined,
+            payment_behavior: "default_incomplete",
+            payment_settings: { save_default_payment_method: "on_subscription" },
+            expand: [
+              "latest_invoice.payment_intent",
+              "latest_invoice.total_discount_amounts",
+            ],
+          });
+
+        let subscription;
+        try {
+          subscription = await createSubscription(stripeCustomerId);
+        } catch (err: any) {
+          // If the stored customerId was created in a different Stripe mode/account,
+          // Stripe returns resource_missing on param=customer. Auto-heal by recreating.
+          if (err?.code === "resource_missing" && err?.param === "customer") {
+            const customer = await stripe.customers.create({
+              email: user.email,
+              name: user.name,
+            });
+            stripeCustomerId = customer.id;
+            await storage.updateUser(user.id, { stripeCustomerId });
+            subscription = await createSubscription(stripeCustomerId);
+          } else {
+            throw err;
+          }
+        }
 
         await storage.updateUser(user.id, {
           subscriptionPlan: planId,
@@ -501,6 +550,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     },
   );
+
+
+
+  app.get("/api/stripe/catalog", async (req, res) => {
+    const products = await stripe.products.list({
+      active: true,
+      expand: ["data.default_price"], // 👈 expands default price only
+    });
+  
+    res.json(products.data);
+  });
 
   // Get price breakdown (for preview)
   app.post(
@@ -538,7 +598,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         if (coupon && coupon.trim()) {
           try {
-            const couponObj = await stripe.coupons.retrieve(coupon.trim());
+          const { coupon: couponObj } = await resolveCouponOrPromotionCode(
+            coupon,
+          );
 
             if (!couponObj.valid) {
               return res
@@ -572,8 +634,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               `📊 Price breakdown for coupon '${coupon}':`,
               breakdown,
             );
-          } catch (couponError) {
-            console.log(`❌ Invalid coupon '${coupon}':`, couponError.message);
+        } catch (couponError: any) {
+          console.log(`❌ Invalid coupon '${coupon}':`, couponError?.message);
             return res
               .status(400)
               .json({ message: "This coupon code is not valid." });
@@ -603,17 +665,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Coupon code is required." });
       }
 
-      // 1. Validate the plan
-      const selectedPlan = PLANS[planId as keyof typeof PLANS];
-      if (!selectedPlan) {
-        return res.status(400).json({ message: "Invalid plan ID." });
-      }
+      // 1. Resolve price from Stripe id (prod_... or price_...)
+      const { priceId, unitAmount, days } = await resolvePriceFromId(planId);
 
       // 2. Validate the coupon first (Before cancelling anything)
-      let validatedCoupon;
+      let validatedCoupon: any;
+      let promotionCodeId: string | null = null;
       try {
-        validatedCoupon = await stripe.coupons.retrieve(coupon.trim());
-        if (!validatedCoupon.valid) throw new Error("Invalid coupon");
+        const resolved = await resolveCouponOrPromotionCode(coupon);
+        validatedCoupon = resolved.coupon;
+        promotionCodeId = resolved.promotionCodeId;
       } catch (err) {
         return res
           .status(400)
@@ -636,14 +697,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // 4. Get the Price ID (Reusing your helper function)
-      const priceId = await getOrCreatePrice(selectedPlan);
-
       // 5. Create a NEW subscription with the coupon applied immediately
       const subscription = await stripe.subscriptions.create({
         customer: user.stripeCustomerId,
         items: [{ price: priceId }],
-        coupon: coupon.trim(), // ✅ Applied at creation = Applies to first invoice
+        ...(promotionCodeId
+          ? { promotion_code: promotionCodeId }
+          : { coupon: coupon.trim() }), // ✅ Applied at creation = Applies to first invoice
         payment_behavior: "default_incomplete",
         payment_settings: { save_default_payment_method: "on_subscription" },
         expand: [
@@ -655,7 +715,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const invoice :any= subscription.latest_invoice;
       const finalAmount = invoice.total;
-      const originalAmount = selectedPlan.unit_amount;
+      const originalAmount = unitAmount ?? invoice.subtotal ?? 0;
       const discountAmount = invoice.total_discount_amounts.reduce(
         (sum:any, d:any) => sum + d.amount,
         0,
@@ -672,8 +732,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // 7. Handle 100% Discount (Free)
       if (finalAmount === 0) {
-        const days = selectedPlan.days;
-        const subscriptionEndDate = calculateSubscriptionEndDate(user, days);
+        const inferredDays = days ?? 30;
+        const subscriptionEndDate = calculateSubscriptionEndDate(
+          user,
+          inferredDays,
+        );
 
         // Update user with new subscription ID and set to active
         await storage.updateUser(user.id, {
@@ -720,7 +783,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     isAuthenticatedAny,
     async (req, res) => {
       try {
-        const { planId } = req.body;
         const user = req.user;
 
         const subscriptionId = user.stripeSubscriptionId;
@@ -743,11 +805,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await stripe.subscriptions.retrieve(subscriptionId);
 
         if (subscription.status === "active") {
-          // Determine days based on plan
-          const selectedPlan = PLANS[planId] || PLANS.monthly;
-          const days = selectedPlan.days;
-
-          const subscriptionEndDate = calculateSubscriptionEndDate(user, days);
+          // Prefer Stripe's period end when available
+          const stripePeriodEndMs = (subscription as any).current_period_end
+            ? (subscription as any).current_period_end * 1000
+            : null;
+          const subscriptionEndDate = stripePeriodEndMs
+            ? new Date(stripePeriodEndMs)
+            : calculateSubscriptionEndDate(user, 30);
 
           await storage.updateUser(user.id, {
             subscriptionStatus: "active",
