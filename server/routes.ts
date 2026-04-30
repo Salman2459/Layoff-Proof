@@ -163,8 +163,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/auth/user", isAuthenticatedAny, async (req: any, res) => {
     try {
-      const user = req.user;
-      res.json(user);
+      const sessionUser = req.user;
+      const userId =
+        sessionUser?.id ??
+        sessionUser?.claims?.sub ??
+        sessionUser?.userId ??
+        sessionUser?.sub ??
+        null;
+
+      if (!userId) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+
+      const dbUser = await storage.getUser(String(userId));
+      // Always prefer DB as source of truth for subscription fields.
+      res.json({ ...(sessionUser ?? {}), ...(dbUser ?? {}) });
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
@@ -552,6 +565,194 @@ export async function registerRoutes(app: Express): Promise<Server> {
   );
 
 
+
+  app.post(
+    "/api/stripe/preview-plan-change",
+    isAuthenticatedAny,
+    async (req, res) => {
+      try {
+        const user: any = req.user;
+        const { newPlanId } = req.body as { newPlanId?: string };
+
+        if (!user?.stripeSubscriptionId) {
+          return res.status(400).json({ message: "No active subscription found." });
+        }
+        if (!newPlanId) {
+          return res.status(400).json({ message: "newPlanId is required." });
+        }
+
+        const subscription = await stripe.subscriptions.retrieve(
+          user.stripeSubscriptionId,
+          { expand: ["items.data", "items.data.price"] },
+        );
+
+        const currentItem = subscription.items.data[0];
+        if (!currentItem) {
+          return res.status(400).json({ message: "Subscription has no items." });
+        }
+
+        const { priceId: newPriceId, unitAmount: newUnitAmount } =
+          await resolvePriceFromId(newPlanId);
+
+        // Guard against subscriptions accidentally having multiple recurring items.
+        // If we preview only updating one item while another remains, Stripe can show/charge
+        // more than one month’s worth of recurring charges.
+        const nextItems = subscription.items.data.map((item: any, idx: number) =>
+          idx === 0
+            ? { id: item.id, price: newPriceId, quantity: 1 }
+            : { id: item.id, deleted: true },
+        );
+
+        const currentUnitAmount = (currentItem as any)?.price?.unit_amount ?? null;
+        const isDowngrade =
+          typeof currentUnitAmount === "number" &&
+          typeof newUnitAmount === "number" &&
+          newUnitAmount < currentUnitAmount;
+
+        const prorationDate = Math.floor(Date.now() / 1000);
+        const upcoming = await (stripe.invoices as any).createPreview({
+          customer: subscription.customer as string,
+          subscription: subscription.id,
+          subscription_details: {
+            items: nextItems,
+            proration_behavior: isDowngrade ? "none" : "create_prorations",
+            ...(isDowngrade ? {} : { proration_date: prorationDate }),
+          },
+          expand: ["lines.data.price"],
+        });
+
+        const lines = Array.isArray(upcoming?.lines?.data) ? upcoming.lines.data : [];
+        const payToday = lines
+          .filter((l: any) => l?.proration === true)
+          .reduce((sum: number, l: any) => sum + (typeof l.amount === "number" ? l.amount : 0), 0);
+
+        res.json({
+          subscriptionId: subscription.id,
+          currency: upcoming.currency,
+          amountDue: upcoming.amount_due,
+          subtotal: upcoming.subtotal,
+          total: upcoming.total,
+          renewalDate: (subscription as any).current_period_end
+            ? new Date((subscription as any).current_period_end * 1000).toISOString()
+            : null,
+          prorationDate,
+          payToday,
+          isDowngrade,
+          lines: lines.map((l: any) => ({
+            id: l.id,
+            amount: l.amount,
+            description: l.description,
+            proration: l.proration ?? false,
+            quantity: l.quantity ?? null,
+            price: l.price
+              ? {
+                  id: l.price.id,
+                  unit_amount: l.price.unit_amount ?? null,
+                  recurring: l.price.recurring ?? null,
+                }
+              : null,
+          })),
+        });
+      } catch (error) {
+        console.error("❌ Error previewing plan change:", error);
+        res.status(500).json({ message: "Failed to preview plan change." });
+      }
+    },
+  );
+
+  app.post(
+    "/api/stripe/change-plan",
+    isAuthenticatedAny,
+    async (req, res) => {
+      try {
+        const user: any = req.user;
+        const { newPlanId, prorationDate } = req.body as {
+          newPlanId?: string;
+          prorationDate?: number;
+        };
+
+        if (!user?.stripeSubscriptionId) {
+          return res.status(400).json({ message: "No active subscription found." });
+        }
+        if (!newPlanId) {
+          return res.status(400).json({ message: "newPlanId is required." });
+        }
+
+        const subscription = await stripe.subscriptions.retrieve(
+          user.stripeSubscriptionId,
+          { expand: ["items.data", "items.data.price"] },
+        );
+        const currentItem = subscription.items.data[0];
+        if (!currentItem) {
+          return res.status(400).json({ message: "Subscription has no items." });
+        }
+
+        const { priceId: newPriceId, unitAmount: newUnitAmount } =
+          await resolvePriceFromId(newPlanId);
+
+        const nextItems = subscription.items.data.map((item: any, idx: number) =>
+          idx === 0
+            ? { id: item.id, price: newPriceId, quantity: 1 }
+            : { id: item.id, deleted: true },
+        );
+
+        const currentUnitAmount = (currentItem as any)?.price?.unit_amount ?? null;
+        const isDowngrade =
+          typeof currentUnitAmount === "number" &&
+          typeof newUnitAmount === "number" &&
+          newUnitAmount < currentUnitAmount;
+
+        const updated = await stripe.subscriptions.update(subscription.id, isDowngrade
+          ? {
+              items: nextItems,
+              // Downgrade: no proration credit, no immediate invoice/payment.
+              proration_behavior: "none",
+              expand: ["latest_invoice.payment_intent"],
+            }
+          : {
+              items: nextItems,
+              // Upgrade: charge the prorated difference immediately (credit unused time + charge remaining time)
+              proration_behavior: "always_invoice",
+              proration_date:
+                typeof prorationDate === "number" && Number.isFinite(prorationDate)
+                  ? Math.floor(prorationDate)
+                  : Math.floor(Date.now() / 1000),
+              // Only apply the plan change if the invoice can be paid (SCA/etc).
+              payment_behavior: "pending_if_incomplete",
+              expand: ["latest_invoice.payment_intent"],
+            });
+
+        const latestInvoice: any = updated.latest_invoice;
+        const paymentIntent = latestInvoice?.payment_intent ?? null;
+        const clientSecret = paymentIntent?.client_secret ?? null;
+
+        // If payment fails / requires action, Stripe will keep the change in `pending_update`.
+        // Don't update our DB plan until the invoice is paid.
+        const hasPendingUpdate = Boolean((updated as any).pending_update);
+        if (!hasPendingUpdate) {
+          await storage.updateUser(user.id, {
+            subscriptionPlan: newPlanId,
+            stripeSubscriptionId: updated.id,
+            subscriptionStatus:
+              updated.status === "active" ? "active" : user.subscriptionStatus,
+            updatedAt: new Date(),
+          });
+        }
+
+        res.json({
+          success: true,
+          subscriptionId: updated.id,
+          status: updated.status,
+          clientSecret,
+          applied: !hasPendingUpdate,
+          isDowngrade,
+        });
+      } catch (error) {
+        console.error("❌ Error changing plan:", error);
+        res.status(500).json({ message: "Failed to change plan." });
+      }
+    },
+  );
 
   app.get("/api/stripe/catalog", async (req, res) => {
     const products = await stripe.products.list({

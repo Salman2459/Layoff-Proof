@@ -60,8 +60,8 @@ function GlobalHeader() {
             <Link href="/" className={navLink("/")}>
               Home
             </Link>
-            <Link href="/pricing" className={navLink("/pricing")}>
-              Pricing
+            <Link href="/subscribe" className={navLink("/subscribe")}>
+              Subscribe
             </Link>
           </nav>
 
@@ -138,8 +138,8 @@ function GlobalHeader() {
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
-                    <Link href="/pricing" className="w-full">
-                      Pricing
+                    <Link href="/subscribe" className="w-full">
+                      Subscribe
                     </Link>
                   </DropdownMenuItem>
                 </DropdownMenuContent>

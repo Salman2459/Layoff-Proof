@@ -211,7 +211,7 @@ export default function ElevateLanding() {
         description: "Please upgrade to access this tool.",
         variant: "destructive",
       });
-      window.location.href = "/pricing";
+      window.location.href = "/subscribe";
       return;
     }
 
@@ -231,7 +231,7 @@ export default function ElevateLanding() {
         description: "Please upgrade to access this tool.",
         variant: "destructive",
       });
-      window.location.href = "/pricing";
+      window.location.href = "/subscribe";
       return;
     }
 
@@ -599,7 +599,7 @@ export default function ElevateLanding() {
                 </li>
                 <li>
                   <Link
-                    href="/pricing"
+                    href="/subscribe"
                     className="transition-colors hover:text-primary"
                   >
                     Pricing

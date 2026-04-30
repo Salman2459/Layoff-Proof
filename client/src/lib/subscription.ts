@@ -6,12 +6,12 @@ type SubscriptionUser = {
 export function hasActiveSubscription(user?: SubscriptionUser): boolean {
   if (!user) return false;
 
-  // Prefer the explicit status when present.
-  if ((user.subscriptionStatus ?? "").toLowerCase() === "active") return true;
+  const status = (user?.subscriptionStatus ?? "").toString().toLowerCase();
+  if (status === "active" || status === "trialing") return true;
+  if (status === "incomplete" || status === "incomplete_expired") return false;
 
-  // Back-compat: some flows rely on an end date.
-  if (!user.subscriptionEndDate) return false;
-  const end = new Date(user.subscriptionEndDate);
+  if (!user?.subscriptionEndDate) return false;
+  const end = new Date(user?.subscriptionEndDate);
   if (Number.isNaN(end.getTime())) return false;
   return end > new Date();
 }

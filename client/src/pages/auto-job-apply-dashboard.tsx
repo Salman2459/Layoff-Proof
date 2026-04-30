@@ -329,7 +329,7 @@ interface InstallExtensionModalProps {
 function InstallExtensionModal({ isOpen, onClose }: InstallExtensionModalProps) {
     if (!isOpen) return null;
 
-    const EXTENSION_URL = "https://chromewebstore.google.com/detail/pjjgjmpddhcimgndknogclblnfceoajb?utm_source=item-share-cb";
+    const EXTENSION_URL = `https://chromewebstore.google.com/detail/${import.meta.env.Vite_EXTENSION_ID}?utm_source=item-share-cb`;
 
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -413,7 +413,7 @@ export default function AutoJobApplyDashboard() {
     const [isExtensionInstalled, setIsExtensionInstalled] = React.useState<boolean | null>(null);
     const checkExtensionInstalled = React.useCallback(() => {
         return new Promise<boolean>((resolve) => {
-            const extensionId = "pjjgjmpddhcimgndknogclblnfceoajb";
+            const extensionId = import.meta.env.Vite_EXTENSION_ID;
             if (typeof window === "undefined") {
                 setIsExtensionInstalled(false);
                 resolve(false);
@@ -432,6 +432,9 @@ export default function AutoJobApplyDashboard() {
                 if (data?.source !== "LP_EXTENSION") return;
                 if (data?.type !== "PONG") return;
                 if (data?.nonce !== nonce) return;
+                // Require background reachability to avoid false positives
+                // (a stale content script can sometimes remain alive until tab refresh).
+                if (data?.backgroundOk !== true) return;
 
                 window.removeEventListener("message", onMessage);
                 clearTimeout(timer);
@@ -507,7 +510,7 @@ export default function AutoJobApplyDashboard() {
                 description: "Please upgrade to access this tool.",
                 variant: "destructive"
             });
-            window.location.href = '/pricing';
+            window.location.href = '/subscribe';
             return;
         }
 
@@ -516,30 +519,91 @@ export default function AutoJobApplyDashboard() {
         setIsLaunchModalOpen(true);
     };
 
+    const buildPlatformUrl = (platformName: string | null, filters: any): string => {
+        const p = String(platformName || '').toLowerCase();
+        const keywords = String(filters?.keywords ?? filters?.jobTitle ?? '').trim();
+        const location = String(filters?.location ?? '').trim();
+
+        if (p.includes('linkedin')) {
+            const u = new URL('https://www.linkedin.com/jobs/search/');
+            u.searchParams.set('f_AL', 'true'); // Easy Apply
+            if (keywords) u.searchParams.set('keywords', keywords);
+            if (location) u.searchParams.set('location', location);
+            return u.toString();
+        }
+
+        if (p.includes('glassdoor')) {
+            const u = new URL('https://www.glassdoor.com/Job/index.htm');
+            u.searchParams.set('applicationType', '1'); // Easy Apply
+            u.searchParams.set('fromAge', '3');
+            if (keywords) u.searchParams.set('sc.keyword', keywords);
+            if (location) u.searchParams.set('sc.location', location);
+            return u.toString();
+        }
+
+        if (p.includes('indeed')) {
+            const u = new URL('https://www.indeed.com/jobs');
+            if (keywords) u.searchParams.set('q', keywords);
+            if (location) u.searchParams.set('l', location);
+            u.searchParams.set('radius', '35');
+            return u.toString();
+        }
+
+        if (p.includes('wellfound')) return 'https://wellfound.com/jobs';
+        if (p.includes('monster')) return 'https://www.monster.com/';
+
+        // Safe fallback (won't break sendMessage)
+        return '';
+    };
+
     const handleProceedLaunch = async (filters: any) => {
         console.log(`Launching ${selectedPlatform} with filters:`, filters);
 
-        // Send message to extension
-        const extensionId = "pjjgjmpddhcimgndknogclblnfceoajb";
-        // @ts-ignore
-        if (typeof window !== 'undefined' && window.chrome && window.chrome.runtime) {
-            try {
-                // @ts-ignore
-                window.chrome.runtime.sendMessage(
+        const url = buildPlatformUrl(selectedPlatform, filters);
+
+        // Send message to extension (recommended: postMessage → content script → background)
+        const extensionId = import.meta.env.Vite_EXTENSION_ID;
+        const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+        if (typeof window !== 'undefined') {
+            // This is handled by the extension content script via AutomationManager.
+            window.postMessage(
+                {
+                    source: 'auto-job-apply-dashboard',
+                    action: 'START_AUTO_APPLY',
+                    platform: selectedPlatform,
+                    url,
+                    filters,
+                    userId: id,
+                    subscription: hasSubscription,
                     extensionId,
-                    {
-                        action: "START_AUTO_APPLY",
-                        platform: selectedPlatform,
-                        filters: filters,
-                        userId: id,
-                        subscription: hasSubscription
-                    },
-                    (response: any) => {
-                        console.log("Extension response:", response);
-                    }
-                );
-            } catch (e) {
-                console.error("Failed to send message to extension:", e);
+                    nonce
+                },
+                window.location.origin
+            );
+
+            // Fallback: if chrome.runtime is actually available on this page, also send directly.
+            // @ts-ignore
+            const sendMessage = (window as any)?.chrome?.runtime?.sendMessage;
+            if (typeof sendMessage === 'function') {
+                try {
+                    sendMessage(
+                        extensionId,
+                        {
+                            action: "START_AUTO_APPLY",
+                            platform: selectedPlatform,
+                            url,
+                            filters,
+                            userId: id,
+                            subscription: hasSubscription
+                        },
+                        (response: any) => {
+                            console.log("Extension response:", response);
+                        }
+                    );
+                } catch (e) {
+                    console.error("Failed to send message to extension via chrome.runtime:", e);
+                }
             }
         }
 

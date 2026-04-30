@@ -1,6 +1,7 @@
 // Filename: src/pages/Subscribe.tsx
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { loadStripe } from "@stripe/stripe-js";
 import {
   Elements,
@@ -27,11 +28,95 @@ import GlobalHeader from "@/components/GlobalHeader";
 import GlobalFooter from "@/components/GlobalFooter";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
+import { cn } from "@/lib/utils";
+import { hasActiveSubscription } from "@/lib/subscription";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 if (!import.meta.env.VITE_STRIPE_PUBLIC_KEY) {
   throw new Error("Missing required Stripe key: VITE_STRIPE_PUBLIC_KEY");
 }
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY);
+
+const showcase = [
+  {
+    title: "AI Resume Builder",
+    body: "Create professional resumes with our intelligent builder",
+    icon: (
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+      />
+    ),
+    tile: "bg-teal-500/15 text-teal-700 dark:text-teal-300",
+  },
+  {
+    title: "Interview Prep",
+    body: "Practice with AI-generated questions and get scored feedback",
+    icon: (
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+      />
+    ),
+    tile: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
+  },
+  {
+    title: "Layoff Tracker",
+    body: "Stay informed about industry layoffs and company health",
+    icon: (
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M13 10V3L4 14h7v7l9-11h-7z"
+      />
+    ),
+    tile: "bg-cyan-500/15 text-cyan-700 dark:text-cyan-300",
+  },
+  {
+    title: "LinkedIn Optimizer",
+    body: "Optimize your LinkedIn profile for maximum visibility",
+    icon: (
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2-2v2m8 0V6a2 2 0 012 2v6a2 2 0 01-2 2H8a2 2 0 01-2-2V8a2 2 0 012-2V6"
+      />
+    ),
+    tile: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  },
+] as const;
+
+const faqs = [
+  {
+    q: "How does the 7-day free trial work?",
+    a: "Start your free trial with no credit card required. You'll have access to basic features for 7 days. After the trial, continue with full access until you choose to cancel or your account will be paused until you choose to subscribe.",
+  },
+  {
+    q: "Can I cancel anytime?",
+    a: "Yes, you can cancel your subscription at any time. Your access will continue until the end of your current billing period, and no future charges will be made.",
+  },
+  {
+    q: "What's included in the subscription?",
+    a: "Full access to all our AI-powered career tools: Resume Builder with 4 templates, unlimited downloads, Cover Letter Generator, Interview Prep, LinkedIn Optimizer, Recruiter Outreach scripts, and real-time Layoff Tracker with company monitoring.",
+  },
+  {
+    q: "Do you offer refunds?",
+    a: "We offer a 30-day money-back guarantee. If you're not satisfied with Layoff Proof within the first 30 days of your paid subscription, we'll provide a full refund.",
+  },
+] as const;
 
 interface PriceBreakdown {
   originalAmount: number;
@@ -50,6 +135,42 @@ type StripeCatalogProduct = {
     recurring?: { interval?: string | null } | null;
   } | null;
   metadata?: Record<string, string>;
+};
+
+type PlanChangePreview = {
+  currency: string;
+  renewalDate: string | null;
+  prorationDate: number;
+  payToday: number;
+  isDowngrade?: boolean;
+  lines: Array<{
+    id: string;
+    amount: number;
+    description: string | null;
+    proration: boolean;
+  }>;
+};
+
+const formatMoney = (amount: number, currency: string) => {
+  const value = (amount ?? 0) / 100;
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: (currency || "usd").toUpperCase(),
+    }).format(value);
+  } catch {
+    return `$${value.toFixed(2)}`;
+  }
+};
+
+const formatDate = (iso: string) => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+  }).format(d);
 };
 
 const PriceBreakdown = ({ breakdown }: { breakdown: PriceBreakdown | null }) => {
@@ -375,9 +496,15 @@ const PlanSelection = ({
   onPlanSelect: (plan: StripeCatalogProduct) => Promise<void> | void;
 }) => {
 const {user} = useAuth();
+const hasSub = hasActiveSubscription(user as any);
+const purchasedPlanId = (user as any)?.subscriptionPlan as string | undefined;
 
   const [isLoading, setIsLoading] = useState<"loading" | string | null>(null);
   const [plans, setPlans] = useState<StripeCatalogProduct[]>([]);
+  const purchasedPlan = useMemo(() => {
+    if (!purchasedPlanId) return undefined;
+    return plans.find((p) => p.id === purchasedPlanId);
+  }, [plans, purchasedPlanId]);
 
   const handleSelect = async (plan: StripeCatalogProduct) => {
     setIsLoading(plan.id);
@@ -415,50 +542,77 @@ useEffect(() => {
     </>
   ) : (
   <>
-  {plans?.slice()?.reverse()?.map((plan: StripeCatalogProduct,planIdx: number) => (
-       <Card
-       key={plan.id}
-       className={`flex flex-col justify-between ${
-        user?.subscriptionStatus ==="active"  && plan.id === user?.subscriptionPlan ? "border-blue-500 ring-2 ring-blue-500 shadow-xl" :                           // default grey
-        user?.subscriptionStatus !== "active" && plan.name === "Layoff Proof AI - Pro" ? "border-blue-500 ring-2 ring-blue-500 shadow-xl" :
-        "border-gray-200"
-      }`}
+  {plans?.slice()?.reverse()?.map((plan: StripeCatalogProduct, planIdx: number) => {
+    const isCurrent = hasSub && purchasedPlanId === plan.id;
+    const priceCents = plan.default_price?.unit_amount ?? 0;
+
+    const currentPrice =
+      purchasedPlan?.default_price?.unit_amount ?? 0;
+    const isUpgrade = hasSub && priceCents > currentPrice;
+
+    const actionLabel = isCurrent
+      ? "Current plan"
+      : !hasSub
+        ? "Subscribe"
+        : isUpgrade
+          ? "Upgrade"
+          : "Downgrade";
+
+    return (
+      <Card
+        key={plan.id}
+        className={`flex flex-col justify-between ${
+          isCurrent
+            ? "border-blue-500 ring-2 ring-blue-500 shadow-xl"
+            : !hasSub && plan.name === "Layoff Proof AI - Pro"
+              ? "border-blue-500 ring-2 ring-blue-500 shadow-xl"
+              : "border-gray-200"
+        }`}
       >
-       <CardHeader className="text-center">
-         <CardTitle className="text-lg">{plan?.name}</CardTitle>
-         <div className="text-3xl font-bold text-blue-600">
-           ${((plan?.default_price?.unit_amount ?? 0) / 100).toFixed(2)}
-           <span className="text-lg font-normal text-gray-500">
-             /{plan?.default_price?.recurring?.interval ?? "mo"}
-           </span>
-         </div>
-         <CardDescription>{plan?.description}</CardDescription>
-       </CardHeader>
-       <CardContent>
-         <ul className="space-y-2">
-          {Object.entries(plan?.metadata ?? {}).map(([key, value], idx: number) => (
+        <CardHeader className="text-center">
+          <CardTitle className="text-lg">{plan?.name}</CardTitle>
+          <div className="text-3xl font-bold text-blue-600">
+            ${((plan?.default_price?.unit_amount ?? 0) / 100).toFixed(2)}
+            <span className="text-lg font-normal text-gray-500">
+              /{plan?.default_price?.recurring?.interval ?? "mo"}
+            </span>
+          </div>
+          <CardDescription>{plan?.description}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ul className="space-y-2">
+            {Object.entries(plan?.metadata ?? {}).map(([key, value], idx: number) => (
               <li key={idx} className="flex items-center space-x-2">
-                { planIdx === 0 && value.startsWith("Layoff Radar") ?  <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" /> : planIdx !== 0 ?  <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" /> : <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />}
+                {planIdx === 0 && value.startsWith("Layoff Radar") ? (
+                  <CheckCircle className="h-4 w-4 flex-shrink-0 text-green-500" />
+                ) : planIdx !== 0 ? (
+                  <CheckCircle className="h-4 w-4 flex-shrink-0 text-green-500" />
+                ) : (
+                  <XCircle className="h-4 w-4 flex-shrink-0 text-red-500" />
+                )}
                 <span className="text-sm text-gray-700 dark:text-gray-300">{value}</span>
               </li>
             ))}
-         </ul>
-       </CardContent>
-       <CardFooter>
-         <Button
-           className={`w-full ${plan.name==="Layoff Proof AI - Pro" ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}`}
-           onClick={() => handleSelect(plan)}
-           disabled={!!isLoading && isLoading === plan.id  || user?.subscriptionStatus ==="active" && plan.id === user?.subscriptionPlan}
-         >
-           {isLoading === plan.id ? (
-             <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Setting up...</>
-           ) : (
-             `Choose ${plan.name}`
-           )}
-         </Button>
-       </CardFooter>
-     </Card>
-  ))}
+          </ul>
+        </CardContent>
+        <CardFooter>
+          <Button
+            className={`w-full ${plan.name === "Layoff Proof AI - Pro" ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}`}
+            onClick={() => handleSelect(plan)}
+            disabled={(!!isLoading && isLoading === plan.id) || isCurrent}
+          >
+            {isLoading === plan.id ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Setting up...
+              </>
+            ) : (
+              actionLabel
+            )}
+          </Button>
+        </CardFooter>
+      </Card>
+    );
+  })}
 
   </>
   
@@ -474,9 +628,85 @@ export default function Subscribe() {
   const [selectedPlan, setSelectedPlan] = useState<{ id: string; name: string } | null>(null);
   const { toast } = useToast();
   const [coupon, setCoupon] = useState("");
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    // Ensure we have the latest user payload (includes subscription fields).
+    queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+  }, [queryClient]);
+
+  const hasActiveSub = hasActiveSubscription(user as any);
+
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewTarget, setPreviewTarget] = useState<StripeCatalogProduct | null>(null);
+  const [preview, setPreview] = useState<PlanChangePreview | null>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const [isApplyingChange, setIsApplyingChange] = useState(false);
+
+  const openPreview = async (plan: StripeCatalogProduct) => {
+    setPreviewTarget(plan);
+    setPreview(null);
+    setIsPreviewOpen(true);
+    setIsLoadingPreview(true);
+    try {
+      const data = await apiRequest("POST", "/api/stripe/preview-plan-change", {
+        newPlanId: plan.id,
+      });
+      setPreview({
+        currency: data.currency,
+        renewalDate: typeof data.renewalDate === "string" ? data.renewalDate : null,
+        prorationDate: data.prorationDate,
+        payToday: typeof data.payToday === "number" ? data.payToday : 0,
+        isDowngrade: typeof data.isDowngrade === "boolean" ? data.isDowngrade : undefined,
+        lines: Array.isArray(data.lines) ? data.lines : [],
+      });
+    } catch (error) {
+      setIsPreviewOpen(false);
+      toast({
+        title: "Preview failed",
+        description: getApiErrorMessage(error, "Failed to preview plan change."),
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingPreview(false);
+    }
+  };
+
+  const applyPlanChange = async () => {
+    if (!previewTarget || !preview) return;
+    setIsApplyingChange(true);
+    try {
+      const data = await apiRequest("POST", "/api/stripe/change-plan", {
+        newPlanId: previewTarget.id,
+        prorationDate: preview.prorationDate,
+      });
+
+      if (data?.clientSecret) {
+        const stripe = await stripePromise;
+        if (!stripe) throw new Error("Stripe failed to initialize.");
+        const result = await stripe.confirmCardPayment(data.clientSecret);
+        if (result.error) throw result.error;
+      }
+
+      window.location.href = `${window.location.origin}/`;
+    } catch (error) {
+      toast({
+        title: "Plan change failed",
+        description: getApiErrorMessage(error, "Failed to change plan."),
+        variant: "destructive",
+      });
+    } finally {
+      setIsApplyingChange(false);
+    }
+  };
 
 
   const handlePlanSelect = async (plan: StripeCatalogProduct) => {
+    if (hasActiveSub) {
+      await openPreview(plan);
+      return;
+    }
     try {
       console.log("🚀 Creating subscription for plan:", plan.id);
       const response = await apiRequest("POST", "/api/stripe/create-subscription", {
@@ -531,6 +761,78 @@ export default function Subscribe() {
                 </p>
               </div>
               <PlanSelection onPlanSelect={handlePlanSelect} />
+
+              {/* Feature highlights */}
+              <section className="mt-16 border-y border-border/60 bg-card/60 py-20 backdrop-blur-sm">
+                <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+                  <h2 className="mb-4 text-center text-3xl font-bold text-foreground md:text-4xl">
+                    Everything You Need to{" "}
+                    <span className="lp-gradient-text">Succeed</span>
+                  </h2>
+                  <p className="mx-auto mb-14 max-w-2xl text-center text-muted-foreground">
+                    One subscription connects every tool in your career stack.
+                  </p>
+
+                  <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+                    {showcase.map((item) => (
+                      <div
+                        key={item.title}
+                        className="group rounded-2xl border border-border/80 bg-card p-6 text-center shadow-sm transition hover:border-primary/20 hover:shadow-md"
+                      >
+                        <div
+                          className={cn(
+                            "mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl",
+                            item.tile,
+                          )}
+                        >
+                          <svg
+                            className="h-8 w-8"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                            aria-hidden
+                          >
+                            {item.icon}
+                          </svg>
+                        </div>
+                        <h3 className="mb-2 text-lg font-semibold text-card-foreground">
+                          {item.title}
+                        </h3>
+                        <p className="text-sm text-muted-foreground">{item.body}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              {/* FAQ */}
+              <section className="px-4 py-20 sm:px-6 lg:px-8">
+                <div className="container mx-auto max-w-3xl">
+                  <h2 className="mb-4 text-center text-3xl font-bold text-foreground md:text-4xl">
+                    Frequently Asked{" "}
+                    <span className="lp-gradient-text">Questions</span>
+                  </h2>
+                  <p className="mb-12 text-center text-muted-foreground">
+                    Straight answers about trials, billing, and what you get.
+                  </p>
+
+                  <div className="space-y-4">
+                    {faqs.map((item) => (
+                      <div
+                        key={item.q}
+                        className="rounded-xl border border-border/80 bg-card p-6 shadow-sm transition hover:border-primary/15 hover:shadow-md"
+                      >
+                        <h3 className="mb-2 text-lg font-semibold text-card-foreground">
+                          {item.q}
+                        </h3>
+                        <p className="text-sm leading-relaxed text-muted-foreground">
+                          {item.a}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
             </>
           ) : (
             <div className="max-w-md mx-auto">
@@ -552,6 +854,106 @@ export default function Subscribe() {
           )}
         </div>
       </div>
+      <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Plan change preview</DialogTitle>
+            <DialogDescription>
+              {previewTarget ? `Switch to ${previewTarget.name}.` : "Review your changes."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {isLoadingPreview ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading preview…
+            </div>
+          ) : preview ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border p-4">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Due now</span>
+                  <span className="font-semibold">
+                    {formatMoney(preview.payToday, preview.currency)}
+                  </span>
+                </div>
+                <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                  {preview.lines
+                    .filter((l) => l.amount !== 0 && l.proration)
+                    .slice(0, 6)
+                    .map((l) => (
+                      <div key={l.id} className="flex items-start justify-between gap-3">
+                        <span className="line-clamp-2">
+                          {l.proration ? "Proration: " : ""}
+                          {l.description ?? "Line item"}
+                        </span>
+                        <span className="shrink-0">
+                          {formatMoney(l.amount, preview.currency)}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+
+              {preview.renewalDate ? (
+                <div className="text-xs text-muted-foreground">
+                  Next renewal on{" "}
+                  <span className="font-medium text-foreground">
+                    {formatDate(preview.renewalDate)}
+                  </span>
+                  .
+                </div>
+              ) : null}
+
+              {preview.lines.some((l) => !l.proration && l.amount !== 0) ? (
+                <div className="rounded-lg border p-4">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Next renewal</span>
+                    <span className="font-semibold">
+                      {formatMoney(
+                        preview.lines
+                          .filter((l) => !l.proration)
+                          .reduce((sum, l) => sum + (l.amount ?? 0), 0),
+                        preview.currency,
+                      )}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+
+              <p className="text-xs text-muted-foreground">
+                Due now is the prorated difference for the current billing period. Next renewal is shown separately.
+              </p>
+            </div>
+          ) : (
+            <div className="text-sm text-muted-foreground">No preview available.</div>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              type="button"
+              onClick={() => setIsPreviewOpen(false)}
+              disabled={isApplyingChange}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={applyPlanChange}
+              disabled={!previewTarget || !preview || isApplyingChange}
+            >
+              {isApplyingChange ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Applying…
+                </>
+              ) : (
+                "Confirm change"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <GlobalFooter />
     </div>
   );

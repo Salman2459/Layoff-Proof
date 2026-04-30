@@ -26,13 +26,13 @@ export default function Subscription() {
   });
 
   // Fetch available companies
-  const { data: companies = [], isLoading: companiesLoading } = useQuery({
+  const { data: companies = []as any, isLoading: companiesLoading } = useQuery({
     queryKey: ["/api/companies"],
     enabled: !authLoading && !!user,
   });
 
   // Fetch user's current subscriptions
-  const { data: userSubscriptions = [], isLoading: subscriptionsLoading } = useQuery({
+  const { data: userSubscriptions = [] as any, isLoading: subscriptionsLoading } = useQuery({
     queryKey: ["/api/user/subscriptions"],
     enabled: !authLoading && !!user,
   });
@@ -321,7 +321,7 @@ export default function Subscription() {
                 <div className="mt-4 p-4 bg-muted rounded-lg">
                   <p className="text-sm text-muted-foreground">
                     Free plan allows tracking 1 company. 
-                    <Button variant="link" className="p-0 h-auto ml-1" onClick={() => window.location.href = '/pricing'}>
+                    <Button variant="link" className="p-0 h-auto ml-1" onClick={() => window.location.href = '/subscribe'}>
                       Upgrade to Pro
                     </Button> 
                     to track up to 5 companies with SMS notifications.

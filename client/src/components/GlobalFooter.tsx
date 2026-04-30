@@ -87,10 +87,10 @@ export default function GlobalFooter() {
             <ul className="space-y-2 text-muted-foreground">
               <li>
                 <Link
-                  href="/pricing"
+                  href="/subscribe"
                   className="transition-colors hover:text-primary"
                 >
-                  Pricing
+                  Subscribe
                 </Link>
               </li>
               <li>

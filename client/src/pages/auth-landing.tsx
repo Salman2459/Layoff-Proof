@@ -371,7 +371,7 @@ export default function AuthLanding() {
               <h4 className="font-semibold mb-3">Product</h4>
               <ul className="space-y-2 text-sm">
                 <li><a href="/enhanced" className="text-gray-400 hover:text-white">Browse Data</a></li>
-                <li><a href="/pricing" className="text-gray-400 hover:text-white">Pricing</a></li>
+                <li><a href="/subscribe" className="text-gray-400 hover:text-white">Subscribe</a></li>
                 <li><a href="/api/login" className="text-gray-400 hover:text-white">Sign Up</a></li>
               </ul>
             </div>

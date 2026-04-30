@@ -24,7 +24,7 @@ const navigation = [
   { name: "Dashboard", href: "/", icon: Home },
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
   { name: "Subscription", href: "/subscription", icon: Bell },
-  { name: "Pricing", href: "/pricing", icon: CreditCard },
+  { name: "Subscribe", href: "/subscribe", icon: CreditCard },
 ];
 
 export function Header() {

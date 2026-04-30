@@ -35,8 +35,7 @@ export default function Signup() {
         title: "Account Created",
         description: "Welcome to Layoff Proof! You can now access all features.",
       });
-      // Redirect to pricing page for new users
-      window.location.href = "/pricing";
+      window.location.href = "/subscribe";
     },
     onError: (error: any) => {
       const errorMessage = error.message || "Failed to create account";

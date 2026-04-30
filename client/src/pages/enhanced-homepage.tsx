@@ -66,7 +66,7 @@ function Header({ user }: { user: any }) {
                   <a href="/analytics" className="text-gray-600 hover:text-gray-900">Analytics</a>
                 </>
               ) : null}
-              <a href="/pricing" className="text-gray-600 hover:text-gray-900">Pricing</a>
+              <a href="/subscribe" className="text-gray-600 hover:text-gray-900">Subscribe</a>
             </nav>
           </div>
           <div className="flex items-center space-x-4">
@@ -705,7 +705,7 @@ export default function EnhancedHomepage() {
           </p>
           <div className="flex justify-center gap-4">
             <Button size="lg" variant="secondary">
-              <a href="/pricing">View Pricing Plans</a>
+              <a href="/subscribe">View Plans</a>
             </Button>
             <LoginDialog>
               <Button size="lg" variant="outline" className="bg-transparent border-white text-white hover:bg-white hover:text-blue-600">
