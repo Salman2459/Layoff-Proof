@@ -14,8 +14,10 @@ import {
   insertCompanySchema,
   updateUserProfileSchema,
   ParsedResumeData,
+  insertJobBoardSchema,
   userJobProfiles,
   userDocuments,
+  insertNotifyMeSchema,
 } from "@shared/schema";
 import multer from "multer";
 import fs from "fs";
@@ -131,18 +133,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return false;
     }
 
-    if (!user?.subscriptionEndDate) {
-      return false;
+    // Allow if Stripe says the subscription is active, even if our cached end date is stale.
+    if (user.subscriptionStatus === "active") {
+      return user;
     }
 
-    if (
-      user?.subscriptionEndDate &&
-      new Date(user?.subscriptionEndDate) < new Date()
-    ) {
-      return false;
+    // Otherwise fall back to stored end dates / trials.
+    const now = new Date();
+    if (user.subscriptionEndDate && new Date(user.subscriptionEndDate) >= now) {
+      return user;
+    }
+    if (user.trialEndDate && new Date(user.trialEndDate) >= now) {
+      return user;
     }
 
-    return user;
+    return false;
   }
 
   async function DetuctCredits(user: any) {
@@ -404,7 +409,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
-  async function resolvePriceFromId(id: string) {
+  /** True if coupon applies to this Stripe product (no / empty `applies_to.products` = all products). */
+  function couponAppliesToProduct(couponObj: any, productId: string | null): boolean {
+    const list = couponObj?.applies_to?.products;
+    if (!Array.isArray(list) || list.length === 0) return true;
+    if (!productId) return false;
+    return list.includes(productId);
+  }
+
+  async function resolvePriceFromId(id: string): Promise<{
+    priceId: string;
+    unitAmount: number | null;
+    days: ReturnType<typeof getDaysForPrice>;
+    /** Catalog product ID for coupon.applies_to checks */
+    productId: string | null;
+  }> {
     if (typeof id !== "string" || !id.trim()) {
       throw new Error("Missing Stripe id.");
     }
@@ -412,11 +431,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const normalized = id.trim();
 
     if (normalized.startsWith("price_")) {
-      const price = await stripe.prices.retrieve(normalized);
+      const price = await stripe.prices.retrieve(normalized, {
+        expand: ["product"],
+      });
+      let productId: string | null = null;
+      const pr: any = price.product;
+      if (typeof pr === "string") productId = pr;
+      else if (pr && typeof pr === "object" && !pr.deleted) {
+        productId = pr.id ?? null;
+      }
+
       return {
         priceId: price.id,
         unitAmount: price.unit_amount ?? null,
         days: getDaysForPrice(price),
+        productId,
       };
     }
 
@@ -452,6 +481,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         priceId: price.id,
         unitAmount: price.unit_amount ?? null,
         days: getDaysForPrice(price),
+        productId: product.id,
       };
     }
 
@@ -511,7 +541,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await storage.updateUser(user.id, { stripeCustomerId });
         }
 
-        const { priceId } = await resolvePriceFromId(planId);
+        const { priceId, productId } = await resolvePriceFromId(planId);
+
+        if (coupon?.trim()) {
+          try {
+            const resolved = await resolveCouponOrPromotionCode(coupon.trim());
+            if (!couponAppliesToProduct(resolved.coupon, productId)) {
+              return res.status(400).json({
+                message:
+                  "This promo code isn't valid for the plan you selected. Choose the eligible plan or a different code.",
+              });
+            }
+          } catch {
+            // Stripe will reject invalid promotion codes during create — keep going
+          }
+        }
 
         const createSubscription = async (customerId: string) =>
           stripe.subscriptions.create({
@@ -547,7 +591,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         await storage.updateUser(user.id, {
           subscriptionPlan: planId,
-          subscriptionStatus: "incomplete",
+          subscriptionStatus: "inactive",
           stripeSubscriptionId: subscription.id,
           updatedAt: new Date(),
         });
@@ -734,7 +778,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             subscriptionPlan: newPlanId,
             stripeSubscriptionId: updated.id,
             subscriptionStatus:
-              updated.status === "active" ? "active" : user.subscriptionStatus,
+              updated.status === "active" || updated.status === "trialing"
+                ? "active"
+                : "inactive",
             updatedAt: new Date(),
           });
         }
@@ -773,7 +819,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const user = req.user;
 
         const subscriptionId = user?.stripeSubscriptionId;
-        if (!subscriptionId || user?.subscriptionStatus !== "incomplete") {
+        if (!subscriptionId) {
           return res
             .status(400)
             .json({ message: "No active subscription draft found." });
@@ -782,11 +828,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const subscription = await stripe.subscriptions.retrieve(
           subscriptionId,
           {
-            expand: ["items.data.price", "latest_invoice"],
+            expand: ["items.data.price.product", "latest_invoice"],
           },
         );
 
+        if (subscription.status !== "incomplete") {
+          return res
+            .status(400)
+            .json({ message: "No active subscription draft found." });
+        }
+
         const priceItem = subscription.items.data[0];
+        const priceAny: any = priceItem?.price;
+        let lineProductId: string | null = null;
+        const prodRef = priceAny?.product;
+        if (typeof prodRef === "string") lineProductId = prodRef;
+        else if (prodRef && typeof prodRef === "object" && prodRef.id) {
+          lineProductId = prodRef.id;
+        }
         const originalAmount = priceItem.price.unit_amount;
 
         let breakdown = {
@@ -807,6 +866,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
               return res
                 .status(400)
                 .json({ message: "This coupon is not valid or has expired." });
+            }
+
+            if (!couponAppliesToProduct(couponObj, lineProductId)) {
+              return res.status(400).json({
+                message:
+                  "This promo code doesn't apply to this subscription plan.",
+              });
             }
 
             let discountAmount = 0;
@@ -856,6 +922,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   );
 
+  /**
+   * Validates a promotion/coupon against Stripe without an incomplete subscription on the user.
+   * Used for live feedback while typing on checkout; optionally computes discount from catalog unit amount (cents).
+   */
+  app.post("/api/stripe/verify-coupon", isAuthenticatedAny, async (req, res) => {
+    try {
+      const { code, unitAmountCents, planId } = req.body ?? {};
+      const trimmed = typeof code === "string" ? code.trim() : "";
+      if (!trimmed) {
+        return res.status(400).json({ message: "Coupon code is required." });
+      }
+
+      let originalAmount: number | null =
+        typeof unitAmountCents === "number" &&
+        Number.isFinite(unitAmountCents) &&
+        unitAmountCents > 0
+          ? Math.round(unitAmountCents)
+          : null;
+
+      let couponObj: any;
+      try {
+        const resolved = await resolveCouponOrPromotionCode(trimmed);
+        couponObj = resolved.coupon;
+      } catch (e: any) {
+        return res.status(400).json({
+          message: "This coupon code is not valid.",
+        });
+      }
+
+      if (!couponObj?.valid) {
+        return res
+          .status(400)
+          .json({ message: "This coupon is not valid or has expired." });
+      }
+
+      let targetProductId: string | null = null;
+      if (typeof planId === "string" && planId.trim()) {
+        try {
+          targetProductId = (await resolvePriceFromId(planId.trim())).productId;
+        } catch {
+          targetProductId = null;
+        }
+      }
+
+      if (!couponAppliesToProduct(couponObj, targetProductId)) {
+        return res.status(400).json({
+          message:
+            "This promo code doesn't apply to the plan you selected.",
+        });
+      }
+
+      let discountAmount = 0;
+      let discountPercentage: number | null = null;
+      const pctOff =
+        typeof couponObj.percent_off === "number" ? couponObj.percent_off : null;
+      const amtOff =
+        typeof couponObj.amount_off === "number" ? couponObj.amount_off : null;
+
+      if (originalAmount != null) {
+        if (pctOff != null) {
+          discountPercentage = pctOff;
+          discountAmount = Math.round((originalAmount * pctOff) / 100);
+        } else if (amtOff != null && amtOff > 0) {
+          discountAmount = amtOff;
+        }
+        discountAmount = Math.min(discountAmount, originalAmount);
+      } else if (pctOff != null) {
+        discountPercentage = pctOff;
+      }
+
+      const meta = {
+        couponName: (couponObj.name as string | null) || trimmed,
+        discountPercentage,
+        amountOffCents: amtOff,
+      };
+
+      let breakdown:
+        | {
+            originalAmount: number;
+            discountAmount: number;
+            finalAmount: number;
+            couponName?: string | null;
+            discountPercentage?: number | null;
+          }
+        | null =
+        originalAmount != null
+          ? {
+              originalAmount,
+              discountAmount,
+              finalAmount: originalAmount - discountAmount,
+              couponName: meta.couponName,
+              discountPercentage,
+            }
+          : null;
+
+      res.json({
+        valid: true,
+        breakdown,
+        meta,
+      });
+    } catch (error) {
+      console.error("❌ Error verifying coupon:", error);
+      res.status(500).json({ message: "Failed to verify coupon." });
+    }
+  });
+
   // Apply coupon
   app.post("/api/stripe/apply-coupon", isAuthenticatedAny, async (req, res) => {
     try {
@@ -867,7 +1039,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // 1. Resolve price from Stripe id (prod_... or price_...)
-      const { priceId, unitAmount, days } = await resolvePriceFromId(planId);
+      const { priceId, unitAmount, days, productId } =
+        await resolvePriceFromId(planId);
 
       // 2. Validate the coupon first (Before cancelling anything)
       let validatedCoupon: any;
@@ -880,6 +1053,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res
           .status(400)
           .json({ message: "This coupon is invalid or expired." });
+      }
+
+      if (!validatedCoupon.valid) {
+        return res
+          .status(400)
+          .json({ message: "This coupon is invalid or expired." });
+      }
+
+      if (!couponAppliesToProduct(validatedCoupon, productId)) {
+        return res.status(400).json({
+          message:
+            "This promo code doesn't apply to the plan you selected.",
+        });
       }
 
       console.log(
@@ -960,7 +1146,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // 8. Handle Discounted Payment (Update DB with new ID)
       await storage.updateUser(user.id, {
         subscriptionPlan: planId,
-        subscriptionStatus: "incomplete",
+        subscriptionStatus: "inactive",
         stripeSubscriptionId: subscription.id,
         updatedAt: new Date(),
       });
@@ -988,24 +1174,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const subscriptionId = user.stripeSubscriptionId;
 
-        if (!subscriptionId || user.subscriptionStatus !== "incomplete") {
-          if (user.subscriptionStatus === "active") {
-            return res.json({
-              success: true,
-              status: "active",
-              message: "Subscription is already active.",
-            });
-          }
+        if (!subscriptionId) {
           return res
             .status(400)
-            .json({ message: "No incomplete subscription found to confirm." });
+            .json({ message: "No subscription found to confirm." });
         }
 
         // Retrieve subscription from Stripe to check its actual status
         const subscription =
           await stripe.subscriptions.retrieve(subscriptionId);
 
-        if (subscription.status === "active") {
+        if (user.subscriptionStatus === "active") {
+          return res.json({
+            success: true,
+            status: "active",
+            message: "Subscription is already active.",
+          });
+        }
+
+        if (subscription.status === "active" || subscription.status === "trialing") {
           // Prefer Stripe's period end when available
           const stripePeriodEndMs = (subscription as any).current_period_end
             ? (subscription as any).current_period_end * 1000
@@ -1058,7 +1245,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
 
         await storage.updateUser(user.id, {
-          subscriptionStatus: "canceled",
+          subscriptionStatus: "inactive",
+          stripeSubscriptionId: null,
           updatedAt: new Date(),
         });
 
@@ -1086,13 +1274,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
             hasSubscription: false,
             status: user.subscriptionStatus,
             plan: user.subscriptionPlan,
+            currentProductId: null,
             subscriptionEndDate: user.subscriptionEndDate,
           });
         }
 
         const subscription = await stripe.subscriptions.retrieve(
           user.stripeSubscriptionId,
+          { expand: ["items.data.price.product"] },
         );
+
+        let currentProductId: string | null = null;
+        const pri: any = subscription.items.data[0]?.price;
+        if (pri && typeof pri === "object" && pri.product) {
+          currentProductId =
+            typeof pri.product === "string"
+              ? pri.product
+              : pri.product?.id ?? null;
+        } else if (typeof pri === "string") {
+          const price = await stripe.prices.retrieve(pri, {
+            expand: ["product"],
+          });
+          const prod: any = price.product;
+          currentProductId =
+            typeof prod === "string" ? prod : prod?.id ?? null;
+        }
 
         res.json({
           hasSubscription: true,
@@ -1103,6 +1309,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ),
           currentPeriodEnd: new Date(subscription.current_period_end * 1000),
           plan: user.subscriptionPlan,
+          currentProductId,
           subscriptionEndDate: user.subscriptionEndDate,
         });
       } catch (error) {
@@ -2109,7 +2316,7 @@ Requirements:
       }
 
       // Validate user subscription/trial and credits
-      const user = await GetUserScscriptionTrialValidation(id);
+      const user = await GetUserScscriptionTrialValidation(typeof id === "string" ? id : "");
       const anthropic = new Anthropic({
         apiKey: process.env.ANTHROPIC_API_KEY,
       });
@@ -2460,7 +2667,7 @@ Now, provide the complete, improved cover letter below.
     console.log("LinkedIn profile import request for:", profileUrl);
 
     try {
-      const user = await GetUserScscriptionTrialValidation(id);
+      const user = await GetUserScscriptionTrialValidation(typeof id === "string" ? id : "");
 
       if (!user) {
         return res
@@ -2544,6 +2751,180 @@ Now, provide the complete, improved cover letter below.
       return res
         .status(500)
         .json({ error: `Failed to import profile: ${error.message}` });
+    }
+  });
+
+  // LinkedIn PDF import endpoint (uploads LinkedIn profile as PDF instead of URL)
+  app.post("/api/import-linkedin-resume-pdf", async (req, res) => {
+    try {
+      const form = new Formidable({
+        maxFileSize: 5 * 1024 * 1024, // 5MB
+        multiples: false,
+      });
+
+      const anthropic = new Anthropic({
+        apiKey: process.env.ANTHROPIC_API_KEY,
+      });
+
+      const [fields, files] = await form.parse(req);
+      const id = fields?.id?.[0];
+      const pdfFile =
+        files.file?.[0] ?? files.profile?.[0] ?? files.resume?.[0] ?? null;
+
+      const user = await GetUserScscriptionTrialValidation(
+        typeof id === "string" ? id : "",
+      );
+
+      if (!user) {
+        return res.status(400).json({
+          error: "Subscription has expired, or you have not subscribed",
+        });
+      }
+
+      if (!pdfFile) {
+        return res.status(400).json({
+          error: "No PDF uploaded. Please attach your LinkedIn profile PDF.",
+        });
+      }
+
+      const filePath = pdfFile.filepath;
+      const fileExt = path
+        .extname(pdfFile.originalFilename || "")
+        .toLowerCase();
+
+      if (fileExt !== ".pdf") {
+        try {
+          fs.unlinkSync(filePath);
+        } catch {}
+        return res.status(400).json({
+          error: "Unsupported file type. Please upload a PDF file.",
+        });
+      }
+
+      const dataBuffer = fs.readFileSync(filePath);
+      const data = await pdf(dataBuffer);
+      const rawText = (data?.text ?? "").trim();
+
+      // Clean up the temporary file
+      try {
+        fs.unlinkSync(filePath);
+      } catch {}
+
+      if (!rawText) {
+        return res.status(400).json({
+          error:
+            "Could not extract any text from the PDF. If it’s a scanned/image PDF, export a text-based PDF from LinkedIn.",
+        });
+      }
+
+      // Parse into resume JSON (same structure as /api/upload-resume)
+      const prompt = `
+You are an expert LinkedIn profile PDF parser. Convert the text extracted from a LinkedIn profile PDF into a structured JSON object.
+
+The output MUST be a valid JSON object ONLY. Do not include introductions, explanations, or markdown like \`\`\`json.
+Strictly follow this structure: ${resumeJsonStructure}.
+
+- Prefer LinkedIn-style section headers (About, Experience, Education, Skills) when mapping.
+- For arrays, if no information is found, return [].
+- For strings, if no information is found, return "".
+
+Here is the extracted text to parse:
+---
+${rawText}
+---
+`;
+
+      const aiResult = await anthropicMessagesCreateWithRetry(
+        anthropic,
+        {
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 2000,
+          temperature: 0.1,
+          messages: [{ role: "user", content: prompt }],
+        },
+        { maxRetries: 6, baseDelayMs: 2000, label: "import-linkedin-resume-pdf" },
+      );
+
+      if (!aiResult.ok) {
+        return res.status(503).json({
+          error: "Failed to parse LinkedIn PDF with AI.",
+          details: aiResult.error,
+        });
+      }
+
+      const responseText = aiResult.message.content[0].text;
+      let parsedData: any;
+      try {
+        parsedData = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error(
+          "Failed to parse JSON from AI response (linkedin pdf):",
+          responseText,
+        );
+        return res.status(502).json({
+          error: "AI returned an invalid response. Please try again.",
+        });
+      }
+
+      // Map to the frontend LinkedIn Optimizer expected shape
+      const resumeData = {
+        name: parsedData?.name || "Name (Please Edit)",
+        profession: parsedData?.profession || "Professional (Please Edit)",
+        summary: parsedData?.summary || "Summary (Please Edit)",
+        location: parsedData?.location || "",
+        linkedin: parsedData?.linkedin || "",
+        experience: Array.isArray(parsedData?.experience)
+          ? parsedData.experience.map((exp: any) => ({
+              title: exp?.title || "Job Title (Please Edit)",
+              company: exp?.company || "Company Name (Please Edit)",
+              duration: exp?.duration || "",
+              description:
+                exp?.description ||
+                "Describe your key responsibilities and achievements in this role.",
+              responsibilities: Array.isArray(exp?.responsibilities)
+                ? exp.responsibilities
+                : [],
+            }))
+          : [],
+        education: Array.isArray(parsedData?.education)
+          ? parsedData.education.map((edu: any) => ({
+              degree: edu?.degree || "Degree Name (Please Edit)",
+              school: edu?.institution || "",
+              duration: edu?.duration || "",
+              details: "",
+            }))
+          : [],
+        skills: Array.isArray(parsedData?.skills)
+          ? parsedData.skills
+          : ["Skill 1 (Please Edit)", "Skill 2", "Skill 3"],
+        languages: Array.isArray(parsedData?.languages) ? parsedData.languages : [],
+        email: parsedData?.email || "",
+        phone: parsedData?.phone || "",
+        github: parsedData?.github || "",
+        website: parsedData?.website || "",
+        certifications: Array.isArray(parsedData?.certifications)
+          ? parsedData.certifications
+          : [],
+        achievements: Array.isArray(parsedData?.achievements)
+          ? parsedData.achievements
+          : [],
+        projects: Array.isArray(parsedData?.projects) ? parsedData.projects : [],
+      };
+
+      await DetuctCredits(user);
+
+      return res.json({
+        success: true,
+        resumeData,
+        source: "linkedin-import-pdf",
+        note: "Data parsed from your uploaded LinkedIn PDF. Please review and complete any missing details.",
+      });
+    } catch (error: any) {
+      console.error("Critical error in /api/import-linkedin-resume-pdf:", error);
+      return res.status(500).json({
+        error: "Failed to import LinkedIn PDF.",
+        details: error.message,
+      });
     }
   });
 
@@ -2962,7 +3343,7 @@ ${yourName}`;
       let user;
       if (method === "manual") {
         console.log(id);
-        user = await GetUserScscriptionTrialValidation(id);
+        user = await GetUserScscriptionTrialValidation(typeof id === "string" ? id : "");
 
         if (!user) {
           return res
@@ -3156,34 +3537,211 @@ ${applicantInfo.name}
       });
 
       const prompt = `
-      You are an expert career coach and LinkedIn optimization AI. Your task is to perform a comprehensive analysis of a user's profile and simultaneously generate improved content.
-
-      **Context:**
-      - Target Job Title: ${targetJobTitle}
-      - User's Profile Data: ${JSON.stringify(profileData, null, 2)}
-
-      **Your TWO-PART Task:**
-      1.  **ANALYSIS:** Analyze the profile against the target job title. Provide a score, a summary, and detailed feedback across categories (Basic Info, Experience, Skills, etc.).
-      2.  **IMPROVEMENT:** Rewrite key sections of the profile to be more impactful and optimized for the target role. This includes a new headline, a new summary, improved bullet points for each experience, and suggested skills.
-
-      **CRITICAL OUTPUT FORMAT:**
-      You MUST respond with ONLY a single valid JSON object. This object must contain two top-level keys: "analysisReport" and "improvedContent". Follow the structure below precisely.
-
+      You are a brutally honest, data-driven LinkedIn optimization expert. Your job is to analyze a REAL profile and generate PERSONALIZED improvements — not generic advice.
+      
+      ═══════════════════════════════════════════
+      REAL PROFILE DATA (your analysis MUST be grounded ONLY in this data):
+      ═══════════════════════════════════════════
+      Target Job Title: "${targetJobTitle}"
+      
+      Name: ${profileData.name ?? 'Not provided'}
+      Current Headline: ${profileData.headline ?? 'Missing'}
+      Location: ${profileData.location ?? 'Not provided'}
+      Connections/Followers: ${profileData.followers ?? 'Unknown'}
+      
+      ABOUT SECTION:
+      ${profileData.about ?? 'EMPTY — user has no About section'}
+      
+      EXPERIENCE (${profileData.experience?.length ?? 0} entries):
+      ${profileData.experience?.length
+        ? profileData.experience.map((exp, i) =>
+            `[${i + 1}] Title: ${exp.title ?? 'Unknown'}
+             Company: ${exp.company ?? 'Unknown'}
+             Duration: ${exp.duration ?? 'Unknown'}
+             Description: ${exp.description ?? 'NO DESCRIPTION PROVIDED'}`
+          ).join('\n\n')
+        : 'NO EXPERIENCE LISTED'}
+      
+      EDUCATION (${profileData.education?.length ?? 0} entries):
+      ${profileData.education?.length
+        ? profileData.education.map(e =>
+            `${e.degree ?? 'Unknown degree'} @ ${e.school ?? 'Unknown school'} (${e.years ?? 'Unknown years'})`
+          ).join('\n')
+        : 'NO EDUCATION LISTED'}
+      
+      CURRENT SKILLS (${profileData.skills?.length ?? 0}):
+      ${profileData.skills?.join(', ') || 'NO SKILLS LISTED'}
+      
+      CERTIFICATIONS:
+      ${profileData.certifications?.map(c => c.name).join(', ') || 'None'}
+      
+      LANGUAGES:
+      ${profileData.languages?.map(l => `${l.language} (${l.proficiency})`).join(', ') || 'Not specified'}
+      
+      ═══════════════════════════════════════════
+      YOUR TASK
+      ═══════════════════════════════════════════
+      
+      Perform TWO tasks simultaneously:
+      
+      **TASK 1 — DEEP ANALYSIS**
+      Score and critique this SPECIFIC profile for the target role "${targetJobTitle}".
+      - Reference ACTUAL content from the profile (quote their real headline, real job titles, real skills)
+      - Identify what is LITERALLY MISSING (e.g., "Your About section is empty", "No metrics in any job description")
+      - Do NOT give generic advice that applies to anyone — every piece of feedback must reference something specific in THIS profile
+      - Score harshly if sections are empty or weak
+      
+      **TASK 2 — PERSONALIZED REWRITE**
+      Rewrite content based ONLY on what exists in the profile:
+      - NEVER invent companies, job titles, or roles that aren't in the profile
+      - NEVER fabricate metrics (no "40% improvement" unless it appears in their data)
+      - If a section has no description, write improvements based on the job title + company name only, and flag it
+      - The new headline MUST incorporate their ACTUAL current role and skills, repositioned for "${targetJobTitle}"
+      - The new summary MUST reference their REAL experience timeline and REAL skills
+      - Improved bullet points must be grounded in their ACTUAL job titles — use action verbs + plausible scope, but never invent numbers
+      
+      ═══════════════════════════════════════════
+      SCORING RUBRIC (be strict)
+      ═══════════════════════════════════════════
+      - Headline optimized for target role: /15
+      - About section exists and is compelling: /20  
+      - Experience has descriptions with impact: /25
+      - Skills match target role keywords: /20
+      - Profile completeness (photo, location, education): /10
+      - Certifications & social proof: /10
+      
+      Deduct heavily for: empty About, no metrics anywhere, skills mismatch, generic headline.
+      
+      ═══════════════════════════════════════════
+      CRITICAL RULES
+      ═══════════════════════════════════════════
+      1. Output ONLY valid JSON — no markdown, no backticks, no explanation outside JSON
+      2. Every "feedback" item MUST quote or reference actual profile content
+      3. "suggestion" fields must be actionable and specific to THIS person
+      4. experienceImprovements must match EXACTLY the companies/titles in the profile data
+      5. suggestedSkills must be role-relevant AND not already in their skills list
+      6. If the profile is missing a section entirely, give it a score of 0 and explain why
+      
+      ═══════════════════════════════════════════
+      OUTPUT SCHEMA (follow exactly)
+      ═══════════════════════════════════════════
+      
       {
         "analysisReport": {
-          "score": 85,
-          "needsImprovement": 3,
-          "wellDone": 8,
+          "score": <0-100 integer, calculated from rubric above>,
+          "summary": "<2-3 sentence honest assessment referencing their ACTUAL profile — mention their name, real role, real gaps>",
+          "needsImprovement": <count of negative/warning items>,
+          "wellDone": <count of positive items>,
+          "topPriorities": [
+            "<Most impactful single change they should make>",
+            "<Second most impactful change>",
+            "<Third most impactful change>"
+          ],
           "categories": [
             {
               "id": "basicInfo",
               "title": "Basic Information & Headline",
+              "score": <0-15>,
               "items": [
                 {
-                  "id": "headlineClarity",
-                  "title": "Headline Clarity and Keywords",
-                  "feedback": [
-                    { "text": "The headline is good but could be more specific.", "status": "positive", "suggestion": "Add a key skill like 'Specializing in React & Node.js'." }
+                  "id": "headlineOptimization",
+                  "title": "Headline Optimization",
+                  "items": [
+                    {
+                      "text": "<Reference their ACTUAL current headline here>",
+                      "status": "positive" | "negative" | "warning",
+                      "suggestion": "<Specific rewrite or action, not generic advice>"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "about",
+              "title": "About / Summary Section",
+              "score": <0-20>,
+              "items": [
+                {
+                  "id": "aboutPresence",
+                  "title": "About Section Presence & Quality",
+                  "items": [
+                    {
+                      "text": "<State what their About actually contains, or that it is empty>",
+                      "status": "positive" | "negative" | "warning",
+                      "suggestion": "<Specific guidance>"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "experience",
+              "title": "Work Experience",
+              "score": <0-25>,
+              "items": [
+                {
+                  "id": "experienceDepth",
+                  "title": "Experience Descriptions & Impact",
+                  "items": [
+                    {
+                      "text": "<Mention their ACTUAL job titles and whether descriptions exist>",
+                      "status": "positive" | "negative" | "warning",
+                      "suggestion": "<Specific guidance per role>"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "skills",
+              "title": "Skills & Endorsements",
+              "score": <0-20>,
+              "items": [
+                {
+                  "id": "skillsRelevance",
+                  "title": "Skills Relevance to Target Role",
+                  "items": [
+                    {
+                      "text": "<List which of their skills ARE relevant to ${targetJobTitle} and which are not>",
+                      "status": "positive" | "negative" | "warning",
+                      "suggestion": "<Name specific skills they should add for this role>"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "completeness",
+              "title": "Profile Completeness",
+              "score": <0-10>,
+              "items": [
+                {
+                  "id": "missingFields",
+                  "title": "Missing or Incomplete Fields",
+                  "items": [
+                    {
+                      "text": "<List what IS and ISN'T present in their profile>",
+                      "status": "positive" | "negative" | "warning",
+                      "suggestion": "<What to add>"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "socialProof",
+              "title": "Certifications & Social Proof",
+              "score": <0-10>,
+              "items": [
+                {
+                  "id": "certifications",
+                  "title": "Certifications & Credentials",
+                  "items": [
+                    {
+                      "text": "<Reference their actual certifications or state none exist>",
+                      "status": "positive" | "negative" | "warning",
+                      "suggestion": "<Suggest specific certifications relevant to ${targetJobTitle}>"
+                    }
                   ]
                 }
               ]
@@ -3191,27 +3749,42 @@ ${applicantInfo.name}
           ]
         },
         "improvedContent": {
-          "headline": "Software Engineer | Full-Stack JavaScript Specialist (React, Node.js) | Building Scalable Web Applications",
-          "summary": "As a results-driven Software Engineer with over 8 years of experience, I specialize in architecting and developing robust, high-performance web applications using the MERN stack...",
+          "headline": "<New headline using their REAL current role, repositioned for ${targetJobTitle} — max 220 chars>",
+          "summary": "<New 3-paragraph About section. Para 1: Who they are based on their real background. Para 2: What they've done, referencing their actual companies/roles. Para 3: What they're seeking — aligned with ${targetJobTitle}>",
           "experienceImprovements": [
-            {
-              "title": "Software Engineer",
-              "company": "Tech Solutions Inc.",
+            ${profileData.experience?.map(exp => `{
+              "title": "${exp.title ?? 'Role'}",
+              "company": "${exp.company ?? 'Company'}",
+              "duration": "${exp.duration ?? ''}",
+              "hadDescription": ${!!exp.description},
+              "flag": "<null if description existed, or 'No original description — improvements based on role title only' if empty>",
               "improvedPoints": [
-                "Spearheaded the development of a new real-time analytics dashboard, reducing data processing time by 40% and improving user engagement by 25%.",
-                "Engineered and deployed a scalable microservices architecture on AWS, resulting in a 99.9% uptime and a 50% reduction in server costs."
+                "<Strong bullet point using action verb + realistic scope for this role at this company — NO fabricated percentages>",
+                "<Second bullet point>",
+                "<Third bullet point>"
               ]
-            }
+            }`).join(',\n') ?? ''}
           ],
-          "suggestedSkills": ["TypeScript", "GraphQL", "Docker", "Kubernetes", "CI/CD"]
+          "suggestedSkills": [
+            "<Skill relevant to ${targetJobTitle} NOT already in their profile>",
+            "<Another missing skill>",
+            "<Another missing skill>",
+            "<Another missing skill>",
+            "<Another missing skill>"
+          ],
+          "quickWins": [
+            "<Fastest thing they can do today to improve their profile>",
+            "<Second quick win>",
+            "<Third quick win>"
+          ]
         }
       }
-    `;
+      `;
 
       const response = await anthropic.messages.create({
         model: "claude-sonnet-4-20250514",
-        max_tokens: 2000,
-        temperature: 0.1,
+        max_tokens: 2500,
+        temperature: 0.7,
         messages: [{ role: "user", content: prompt }],
       });
 
@@ -3669,6 +4242,67 @@ Return ONLY the JSON object, no additional text or formatting.`;
       }
     },
   );
+
+  // Job Board API Routes
+  app.get("/api/job-board", isAuthenticatedAny, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const limitRaw = req.query?.limit;
+      const pageRaw = req.query?.page;
+      const limit = Math.min(
+        50,
+        Math.max(1, parseInt(typeof limitRaw === "string" ? limitRaw : "10", 10) || 10),
+      );
+      const page = Math.max(1, parseInt(typeof pageRaw === "string" ? pageRaw : "1", 10) || 1);
+      const searchRaw = req.query?.search;
+      const search = typeof searchRaw === "string" ? searchRaw : "";
+
+      const [items, total] = await Promise.all([
+        storage.getJobBoardPosts(userId, limit, page, search),
+        storage.getJobBoardPostsCount(userId, search),
+      ]);
+
+      res.json({ items, page, limit, total, search });
+    } catch (error) {
+      console.error("Error fetching job board posts:", error);
+      res.status(500).json({ error: "Failed to fetch job board posts" });
+    }
+  });
+
+  app.post("/api/job-board", isAuthenticatedAny, async (req: any, res) => {
+    try {
+      const userId = req.user.id;
+      const parsed = insertJobBoardSchema.parse(req.body || {});
+      const created = await storage.createJobBoardPost(userId, parsed);
+      res.json(created);
+    } catch (error: any) {
+      if (error?.name === "ZodError") {
+        return res.status(400).json({ error: "Invalid request body", details: error.errors });
+      }
+      console.error("Error creating job board post:", error);
+      res.status(500).json({ error: "Failed to create job board post" });
+    }
+  });
+
+
+app.post("/api/notify-me", isAuthenticatedAny, async (req: any, res) => {
+  try {
+    const userId = req.user.id;
+    const parsed = insertNotifyMeSchema.parse(req.body || {});
+    const created = await storage.createNotifyMe(userId, parsed);
+    res.json(created);
+  } catch (error: any) {
+    if (error?.name === "ZodError") {
+      return res.status(400).json({ error: "Invalid request body", details: error.errors });
+    }
+    if (error?.code === "DUPLICATE_NOTIFY_EMAIL") {
+      return res.status(409).json({ error: error.message });
+    }
+    console.error("Error creating notify me:", error);
+    res.status(500).json({ error: "Failed to create notify me" });
+  }
+});
+
 
   // Salary Negotiator API Routes
   app.get("/api/salary-research", isAuthenticatedAny, async (req: any, res) => {
@@ -4298,7 +4932,7 @@ Requirements:
       const resumeFile = files.resume?.[0];
       const id = fields?.id?.[0];
       console.log("Received fields:", fields, id);
-      const user = await GetUserScscriptionTrialValidation(id);
+      const user = await GetUserScscriptionTrialValidation(typeof id === "string" ? id : "");
 
       if (!user) {
         return res
@@ -4578,7 +5212,7 @@ Requirements:
           .json({ error: "Your name and message type are required." });
       }
 
-      const user = await GetUserScscriptionTrialValidation(id);
+      const user = await GetUserScscriptionTrialValidation(typeof id === "string" ? id : "");
 
       if (!user) {
         return res
@@ -4760,7 +5394,7 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
 
   // Layoff Data
 
-  app.get("/api/layoffs", async (req, res) => {
+  app.get("/api/layoffs", isAuthenticatedAny, async (req: any, res) => {
     try {
       const {
         page = "1",
@@ -4768,11 +5402,11 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
         category = "all",
         year,
         search,
-        id,
       } = req.query;
 
-      const user = await GetUserScscriptionTrialValidation(id);
-      console.log(user, id);
+      const userId = String(req.user?.id ?? req.user?.claims?.sub ?? req.user?.userId ?? "");
+      const user = await GetUserScscriptionTrialValidation(userId);
+      console.log(user, userId);
 
       if (!user) {
         return res
@@ -4893,11 +5527,12 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
   });
 
   // GET /api/layoffs/stats - Get overall statistics
-  app.get("/api/layoffs/stats", async (req, res) => {
+  app.get("/api/layoffs/stats", isAuthenticatedAny, async (req: any, res) => {
     try {
-      const { category = "all", id } = req.query;
+      const { category = "all" } = req.query;
 
-      const user = await GetUserScscriptionTrialValidation(id);
+      const userId = String(req.user?.id ?? req.user?.claims?.sub ?? req.user?.userId ?? "");
+      const user = await GetUserScscriptionTrialValidation(userId);
 
       if (!user) {
         return res
@@ -5014,7 +5649,7 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
         console.log("section.................", section);
         const data = req.body[section];
         console.log("personal data_________", data);
-        const user = await GetUserScscriptionTrialValidation(id);
+        const user = await GetUserScscriptionTrialValidation(typeof id === "string" ? id : "");
         if (!user) {
           return resp.status(400).json({
             success: false,
@@ -5349,9 +5984,18 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
                 ? "image"
                 : "raw";
 
+            const baseName = path.parse(req.file.originalname || "document").name;
+            const slug = baseName
+              .toLowerCase()
+              .trim()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-+|-+$/g, "");
+            const publicId = `${docType}-${slug || "document"}-${Date.now()}`;
+
             const result = await cloudinary.uploader.upload(req.file.path, {
               resource_type: resourceType,
               folder: "job-profiles/documents",
+              public_id: slug,
               access_mode: "public",
             });
 

@@ -4,8 +4,10 @@ import './types'; // Import session and request type extensions
 import { destroyUserSession } from './sessionLogout';
 import { storage } from './storage';
 import { signupSchema, loginSchema, SignupRequest, LoginRequest } from '@shared/schema';
+import { signJwt, verifyJwt } from "./jwt";
 
 const SALT_ROUNDS = 10;
+const JWT_EXPIRES_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
 export function setupPasswordAuth(app: Express) {
   // Email/Password signup
@@ -43,9 +45,9 @@ export function setupPasswordAuth(app: Express) {
       // Create session
       req.session.user = {
         id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
+        email: user.email ?? email,
+        firstName: user.firstName ?? firstName,
+        lastName: user.lastName ?? lastName,
         authProvider: 'email'
       };
 
@@ -56,8 +58,19 @@ export function setupPasswordAuth(app: Express) {
         });
       });
 
+      const jwtSecret =
+        process.env.JWT_SECRET ||
+        process.env.SESSION_SECRET ||
+        "layoff-proof-dev-secret-key-2024";
+      const token = signJwt(
+        { sub: user.id, email: user.email ?? email, authProvider: "email" },
+        jwtSecret,
+        JWT_EXPIRES_SECONDS
+      );
+
       res.status(201).json({
         success: true,
+        token,
         user: {
           id: user.id,
           email: user.email,
@@ -102,9 +115,9 @@ export function setupPasswordAuth(app: Express) {
       // Create session
       req.session.user = {
         id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
+        email: user.email ?? email,
+        firstName: user.firstName ?? "",
+        lastName: user.lastName ?? "",
         authProvider: 'email'
       };
 
@@ -115,9 +128,20 @@ export function setupPasswordAuth(app: Express) {
         });
       });
 
+      const jwtSecret =
+        process.env.JWT_SECRET ||
+        process.env.SESSION_SECRET ||
+        "layoff-proof-dev-secret-key-2024";
+      const token = signJwt(
+        { sub: user.id, email: user.email ?? email, authProvider: "email" },
+        jwtSecret,
+        JWT_EXPIRES_SECONDS
+      );
+
       res.json({
         success: true,
         redirectTo: '/pricing',
+        token,
         user: {
           id: user.id,
           email: user.email,
@@ -192,7 +216,28 @@ export const isEmailAuthenticated: RequestHandler = async (req, res, next) => {
 
 // Combined middleware that accepts both Replit and email authentication
 export const isAuthenticatedAny: RequestHandler = async (req, res, next) => {
-  // Try email authentication first
+  const authHeader = req.headers.authorization || (req.headers as any).Authorization;
+  if (typeof authHeader === "string" && authHeader.toLowerCase().startsWith("bearer ")) {
+    const token = authHeader.slice("bearer ".length).trim();
+    const jwtSecret =
+      process.env.JWT_SECRET ||
+      process.env.SESSION_SECRET ||
+      "layoff-proof-dev-secret-key-2024";
+    const payload = verifyJwt(token, jwtSecret);
+    const userId = typeof payload?.sub === "string" ? payload.sub : null;
+    if (userId) {
+      try {
+        const user = await storage.getUser(userId);
+        if (user) {
+          (req as any).user = user;
+          return next();
+        }
+      } catch (error) {
+        console.error("JWT auth check error:", error);
+      }
+    }
+  }
+
   const sessionUser = (req.session as any)?.user;
   if (sessionUser && sessionUser.id) {
     try {

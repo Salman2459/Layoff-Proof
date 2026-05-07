@@ -19,6 +19,7 @@ import {
   Bell
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { logoutViaFullPageNavigate } from "@/lib/logoutStorage";
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: Home },
@@ -93,11 +94,15 @@ export function Header() {
                       <span>Subscription</span>
                     </Link>
                   </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <a href="/api/logout" className="flex items-center">
-                      <LogOut className="mr-2 h-4 w-4" />
-                      <span>Log out</span>
-                    </a>
+                  <DropdownMenuItem
+                    className="flex items-center cursor-pointer"
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      logoutViaFullPageNavigate();
+                    }}
+                  >
+                    <LogOut className="mr-2 h-4 w-4" />
+                    <span>Log out</span>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

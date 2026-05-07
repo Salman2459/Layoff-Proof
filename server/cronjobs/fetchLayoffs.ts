@@ -5,8 +5,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { anthropicMessagesCreateWithRetry } from "../anthropicRetry";
 import RssParser from "rss-parser";
 import { db } from "../db";
-import { layoffs } from "@shared/schema";
+import { layoffs, notifyMe } from "@shared/schema";
 import { and, eq } from "drizzle-orm";
+import { renderNotifyMeLayoffAlertEmail } from "server/emailTemplates/notifyMeLayoffAlert";
+import { sendEmail } from "server/emailService";
 
 const router = express.Router();
 const rssParser = new RssParser();
@@ -21,8 +23,30 @@ interface LayoffData {
     source: string;
     location: string | null;
     industry: string;
+    role?: string | null;
     details: string;
     is_upcoming?: boolean; // NEW: Flag for upcoming layoffs
+}
+
+function normalizeCompanyName(input: string) {
+    return String(input || "")
+        .toLowerCase()
+        .replace(/&/g, "and")
+        .replace(/[^a-z0-9]+/g, " ")
+        .replace(/\b(inc|incorporated|corp|corporation|co|company|llc|ltd|limited|plc|gmbh|sarl|sa)\b/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function companyNameMatches(detectedCompany: string, selectedCompany: string) {
+
+console.log("detectedCompany", detectedCompany, selectedCompany);
+
+    const a = normalizeCompanyName(detectedCompany);
+    const b = normalizeCompanyName(selectedCompany);
+    if (!a || !b) return false;
+    if (a === b) return true;
+    return a.startsWith(b) || b.startsWith(a) || a.includes(b) || b.includes(a);
 }
 
 // Main function to fetch and save layoff data
@@ -31,6 +55,9 @@ async function fetchAndSaveLayoffs() {
         console.log("Previous job still running, skipping...");
         return;
     }
+
+    const pendingNotifyMe = await db.select().from(notifyMe).where(eq(notifyMe.status, "pending"));
+    console.log("pendingNotifyMe", pendingNotifyMe);
 
     isRunning = true;
     console.log(`[${new Date().toISOString()}] Starting layoff data fetch...`);
@@ -184,8 +211,6 @@ async function fetchAndSaveLayoffs() {
             };
 
             const selectedFeeds = categoryFeeds[category] || categoryFeeds.other;
-
-            // UPDATED: Include keywords for upcoming/planned layoffs
             const keywords = [
                 "layoff",
                 "laid off",
@@ -264,6 +289,9 @@ async function fetchAndSaveLayoffs() {
             const articlesToScrape = uniqueArticles.slice(0, 15);
             const scrapedArticles: any[] = [];
 
+
+          
+
             for (let i = 0; i < articlesToScrape.length; i += BATCH_SIZE) {
                 const batch = articlesToScrape.slice(i, i + BATCH_SIZE);
 
@@ -284,6 +312,7 @@ async function fetchAndSaveLayoffs() {
                                     .replace(/\s+/g, " ")
                                     .trim()
                                     .substring(0, 4000);
+
 
                                 scrapedArticles.push({
                                     title: article.title,
@@ -317,7 +346,7 @@ async function fetchAndSaveLayoffs() {
 Extract ALL confirmed AND upcoming/planned layoff events from 2024, 2025, and 2026 from the articles below.
 
 CRITICAL RULES FOR UPCOMING LAYOFFS:
-1. If article mentions "plans to lay off", "will cut", "announcing layoffs", "expected to cut" - these are UPCOMING layoffs
+1. If article mentions "plans to lay ANTHROPIC_API_KEY=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", "will cut", "announcing layoffs", "expected to cut" - these are UPCOMING layoffs
 2. For upcoming layoffs where no specific date is mentioned:
    - If article mentions "Q1", "Q2", etc., use the middle of that quarter
    - If article mentions "by end of year", use December 31 of that year
@@ -338,6 +367,7 @@ OUTPUT: Valid JSON array only. No markdown, no explanations.
 [
   {
     "company": "Company Name",
+    "role": "Role impacted (e.g., Software Engineers) or null",
     "date": "YYYY-MM-DD",
     "employees_laid_off": number or null,
     "source": "url",
@@ -385,7 +415,17 @@ ${JSON.stringify(
                             continue;
                         }
 
-                        let data = aiResult.message.content[0].text
+                        const contentBlock = aiResult.message.content[0];
+                        const contentText =
+                            contentBlock && (contentBlock as any).type === "text"
+                                ? (contentBlock as any).text
+                                : undefined;
+                        if (!contentText) {
+                            console.error(`Claude returned non-text content (${category})`);
+                            continue;
+                        }
+
+                        let data = contentText
                             .trim()
                             .replace(/```json\n?/g, "")
                             .replace(/```\n?/g, "")
@@ -395,7 +435,7 @@ ${JSON.stringify(
                         if (jsonMatch) {
                             const extractedLayoffs = JSON.parse(jsonMatch[0]);
                             if (Array.isArray(extractedLayoffs)) {
-                                allLayoffs.push(...extractedLayoffs);
+                                allLayoffs.push(...(extractedLayoffs as LayoffData[]));
                                 console.log(`✓ Extracted ${extractedLayoffs.length} layoffs from ${category}`);
                             }
                         }
@@ -407,7 +447,7 @@ ${JSON.stringify(
         }
 
         // ✅ 5. FILTER AND DEDUPLICATE - UPDATED to allow future dates
-        let filteredLayoffs = allLayoffs.filter((layoff) => {
+        let filteredLayoffs = allLayoffs.filter((layoff: LayoffData) => {
             if (!layoff.date) return false;
             const layoffDate = new Date(layoff.date);
             const year = layoffDate.getFullYear();
@@ -451,6 +491,23 @@ ${JSON.stringify(
         let skippedCount = 0;
 
         for (const layoff of uniqueLayoffs) {
+console.log("layoff", layoff);
+for (const notifyUser of pendingNotifyMe) {
+    const layoffDate = new Date(layoff.date);
+    if (companyNameMatches(layoff.company, notifyUser.company)) {
+        const { subject, html, text } = renderNotifyMeLayoffAlertEmail({
+            selectedCompanyName: notifyUser.company,
+            detectedCompanyName: layoff.company,
+            date: layoffDate,
+            details: layoff.details,
+            sourceUrl: layoff.source,
+        });
+        await sendEmail({ to: notifyUser.email, subject, html, text });
+       const updatedNotifyMe = await db.update(notifyMe).set({ status: "active" }).where(eq(notifyMe.id, notifyUser.id));
+       console.log("updatedNotifyMe", updatedNotifyMe);
+    }
+}
+
             try {
                 // Check if layoff already exists in database
                 const existing = await db
@@ -473,12 +530,17 @@ ${JSON.stringify(
                         source: layoff.source,
                         location: layoff.location,
                         industry: layoff.industry,
+                        role: layoff.role || null,
                         details: layoff.details,
                         // Add is_upcoming to your schema if not present
                         // isUpcoming: layoff.is_upcoming || false,
                     });
+
                     newCount++;
                 } else {
+
+
+
                     skippedCount++;
                 }
             } catch (err: any) {
@@ -510,6 +572,11 @@ function startScheduler() {
         console.log(`\n⏰ [${new Date().toISOString()}] Hourly job triggered`);
         await fetchAndSaveLayoffs();
     });
+
+    // scheduleJob("* * * * *", async () => {
+    //     console.log(`⏰ [${new Date().toISOString()}] Job triggered every minute`);
+    //     await fetchAndSaveLayoffs();
+    // });
 
     console.log("✅ Scheduler initialized - will run every hour");
 }

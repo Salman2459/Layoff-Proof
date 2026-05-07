@@ -1,7 +1,7 @@
 // Filename: src/pages/Subscribe.tsx
 
-import { useState, useEffect, useMemo } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { loadStripe } from "@stripe/stripe-js";
 import {
   Elements,
@@ -21,15 +21,24 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Check, Loader2, CreditCard, CheckCircle, Tag ,X, XCircle} from "lucide-react";
+import {
+  Check,
+  Loader2,
+  CreditCard,
+  CheckCircle,
+  Tag,
+  X,
+  XCircle,
+  Plus,
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, getApiErrorMessage } from "@/lib/queryClient";
+import { apiRequest, getApiErrorMessage, getQueryFn } from "@/lib/queryClient";
 import GlobalHeader from "@/components/GlobalHeader";
 import GlobalFooter from "@/components/GlobalFooter";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
-import { hasActiveSubscription } from "@/lib/subscription";
+import { hasSubscriberAccess } from "@/lib/subscription";
 import {
   Dialog,
   DialogContent,
@@ -38,11 +47,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { CustomSliderCard } from "@/components/customSliderCard";
 
 if (!import.meta.env.VITE_STRIPE_PUBLIC_KEY) {
   throw new Error("Missing required Stripe key: VITE_STRIPE_PUBLIC_KEY");
 }
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY);
+
+/** Entitlement / plan-management UI is driven by DB `subscriptionStatus === "active"`, not Stripe heuristics alone. */
+function isDbSubscriptionStatusActive(
+  user: { subscriptionStatus?: unknown } | null | undefined,
+): boolean {
+  return ((user as { subscriptionStatus?: unknown })?.subscriptionStatus ?? "")
+    .toString()
+    .toLowerCase()
+    .trim() === "active";
+}
 
 const showcase = [
   {
@@ -126,7 +146,51 @@ interface PriceBreakdown {
   discountPercentage?: number;
 }
 
+function defaultBreakdownFromPlanCents(cents: number | null | undefined): PriceBreakdown | null {
+  if (cents == null || !Number.isFinite(cents) || cents <= 0) return null;
+  return {
+    originalAmount: cents,
+    discountAmount: 0,
+    finalAmount: cents,
+  };
+}
+
+/** User-facing summary when verification returns usable discount amounts */
+function couponSuccessSummary(b: Pick<PriceBreakdown, "discountAmount" | "discountPercentage">): string | null {
+  const offCents = Math.max(0, b.discountAmount ?? 0);
+  if (offCents <= 0) return null;
+  const dollars = (offCents / 100).toFixed(2);
+  if (typeof b.discountPercentage === "number" && Number.isFinite(b.discountPercentage)) {
+    return `${b.discountPercentage}% discount · save $${dollars}`;
+  }
+  return `Save $${dollars} with this code`;
+}
+
+function couponSuccessHintFromMeta(meta: {
+  discountPercentage?: number | null;
+  amountOffCents?: number | null;
+}): string {
+  const pct =
+    typeof meta.discountPercentage === "number" && Number.isFinite(meta.discountPercentage)
+      ? meta.discountPercentage
+      : null;
+  const fixed =
+    typeof meta.amountOffCents === "number" && meta.amountOffCents > 0
+      ? meta.amountOffCents
+      : null;
+  if (pct != null) return `${pct}% off with this code`;
+  if (fixed != null) return `Save $${(fixed / 100).toFixed(2)} with this code`;
+  return "Coupon is valid.";
+}
+
+async function fetchSubscriptionBreakdownBody(coupon: string) {
+  return apiRequest("POST", "/api/stripe/get-price-breakdown", {
+    coupon: coupon || "",
+  });
+}
+
 type StripeCatalogProduct = {
+  isResumeEngine?: boolean;
   id: string; 
   name: string;
   description?: string | null;
@@ -173,16 +237,25 @@ const formatDate = (iso: string) => {
   }).format(d);
 };
 
-const PriceBreakdown = ({ breakdown }: { breakdown: PriceBreakdown | null }) => {
+const PriceBreakdown = ({
+  breakdown,
+  isUpdating,
+}: {
+  breakdown: PriceBreakdown | null;
+  isUpdating?: boolean;
+}) => {
   if (!breakdown) return null;
 
   const formatPrice = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
   return (
     <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 mb-4 border">
-      <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center">
-        <Tag className="w-4 h-4 mr-2" />
+      <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
+        <Tag className="w-4 h-4" />
         Price Breakdown
+        {/* {isUpdating ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden />
+        ) : null} */}
       </h3>
 
       <div className="space-y-2 text-sm">
@@ -231,7 +304,9 @@ const CheckoutForm = ({
   clientSecret: initialClientSecret,
   onRefreshPayment,
   coupon,
-  setCoupon
+  setCoupon,
+  subscriptionDraftReady,
+  defaultPriceCents,
 }: {
   planId: string;
   planName: string;
@@ -239,58 +314,160 @@ const CheckoutForm = ({
   onRefreshPayment: () => Promise<void>;
   coupon: string;
   setCoupon: (v: string) => void;
+  /** Breakdown APIs need a Stripe subscription in `incomplete` (pending first payment). */
+  subscriptionDraftReady: boolean;
+  /** Catalog/list price — shows Price Breakdown immediately before API returns */
+  defaultPriceCents: number | null;
 }) => {
   const stripe = useStripe();
   const elements = useElements();
   const { toast } = useToast();
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentClientSecret, setCurrentClientSecret] = useState(initialClientSecret);
-  const [priceBreakdown, setPriceBreakdown] = useState<PriceBreakdown | null>(null);
+  const [priceBreakdown, setPriceBreakdown] = useState<PriceBreakdown | null>(() =>
+    defaultBreakdownFromPlanCents(defaultPriceCents),
+  );
+  const [breakdownLoading, setBreakdownLoading] = useState(false);
   const [isCheckingCoupon, setIsCheckingCoupon] = useState(false);
   const [isCouponApplied, setIsCouponApplied] = useState(false);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [couponSuccessHint, setCouponSuccessHint] = useState<string | null>(null);
+  /** Stale-async guard so rapid typing doesn't leave loaders stuck */
+  const couponBreakdownSeq = useRef(0);
 
   useEffect(() => {
-    fetchPriceBreakdown();
-  }, []);
-
-  const fetchPriceBreakdown = async (couponCode?: string) => {
-    try {
-      const data = await apiRequest("POST", "/api/stripe/get-price-breakdown", {
-        coupon: couponCode || "",
-      });
-      if (data?.breakdown) {
-        setPriceBreakdown(data.breakdown);
-      }
-    } catch (error) {
-      console.error("Error fetching price breakdown:", error);
-      toast({
-        title: "Price update",
-        description: getApiErrorMessage(error),
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleCouponCheck = async () => {
-    if (!coupon.trim()) {
-      setPriceBreakdown(null);
-      await fetchPriceBreakdown();
-      setIsCouponApplied(false);
-      return;
-    }
-
-    setIsCheckingCoupon(true);
-    await fetchPriceBreakdown(coupon.trim());
-    setIsCheckingCoupon(false);
-  };
+    const d = defaultBreakdownFromPlanCents(defaultPriceCents);
+    if (d) setPriceBreakdown(d);
+  }, [defaultPriceCents]);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      handleCouponCheck();
-    }, 500);
+    const seq = ++couponBreakdownSeq.current;
+    const stillCurrent = () => seq === couponBreakdownSeq.current;
+    const trimmed = coupon.trim();
+    const debounceMs = trimmed ? 500 : 0;
+
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        if (!stillCurrent()) return;
+
+        if (!trimmed) {
+          setIsCheckingCoupon(false);
+          setCouponError(null);
+          setCouponSuccessHint(null);
+          if (subscriptionDraftReady) {
+            setBreakdownLoading(true);
+            try {
+              const data = await fetchSubscriptionBreakdownBody("");
+              if (!stillCurrent()) return;
+              if (data?.breakdown) setPriceBreakdown(data.breakdown as PriceBreakdown);
+            } catch (error) {
+              if (!stillCurrent()) return;
+              const msg = getApiErrorMessage(error);
+              if (msg.includes("No active subscription draft")) {
+                const d = defaultBreakdownFromPlanCents(defaultPriceCents);
+                if (d) setPriceBreakdown(d);
+                return;
+              }
+              console.error("Error fetching price breakdown:", error);
+              toast({
+                title: "Price update",
+                description: msg,
+                variant: "destructive",
+              });
+            } finally {
+              if (stillCurrent()) setBreakdownLoading(false);
+            }
+          } else {
+            const d = defaultBreakdownFromPlanCents(defaultPriceCents);
+            if (d) setPriceBreakdown(d);
+          }
+          return;
+        }
+
+        setIsCheckingCoupon(true);
+        setCouponError(null);
+        setCouponSuccessHint(null);
+        setBreakdownLoading(true);
+
+        try {
+          const body: {
+            code: string;
+            unitAmountCents?: number;
+            planId?: string;
+          } = { code: trimmed };
+          if (planId.trim()) {
+            body.planId = planId.trim();
+          }
+          if (
+            typeof defaultPriceCents === "number" &&
+            Number.isFinite(defaultPriceCents) &&
+            defaultPriceCents > 0
+          ) {
+            body.unitAmountCents = Math.round(defaultPriceCents);
+          }
+
+          const data = (await apiRequest("POST", "/api/stripe/verify-coupon", body)) as {
+            breakdown?: PriceBreakdown | null;
+            meta?: {
+              couponName?: string;
+              discountPercentage?: number | null;
+              amountOffCents?: number | null;
+            };
+          };
+
+          if (!stillCurrent()) return;
+
+          if (data?.breakdown) {
+            setPriceBreakdown(data.breakdown);
+            const summary = couponSuccessSummary(data.breakdown);
+            setCouponSuccessHint(summary ?? "This coupon is valid.");
+          } else if (data?.meta) {
+            setCouponSuccessHint(couponSuccessHintFromMeta(data.meta));
+          } else {
+            setCouponSuccessHint("This coupon is valid.");
+          }
+          setCouponError(null);
+
+          if (subscriptionDraftReady) {
+            try {
+              const sub = await fetchSubscriptionBreakdownBody(trimmed);
+              if (!stillCurrent()) return;
+              if (sub?.breakdown) setPriceBreakdown(sub.breakdown as PriceBreakdown);
+            } catch {
+              /* keep verify-coupon preview totals */
+            }
+          }
+        } catch (error) {
+          if (!stillCurrent()) return;
+          const msg = getApiErrorMessage(error);
+
+          setCouponSuccessHint(null);
+          setCouponError(msg || "This coupon code is not valid.");
+
+          if (subscriptionDraftReady) {
+            try {
+              const base = await fetchSubscriptionBreakdownBody("");
+              if (!stillCurrent()) return;
+              if (base?.breakdown) setPriceBreakdown(base.breakdown as PriceBreakdown);
+            } catch {
+              const d = defaultBreakdownFromPlanCents(defaultPriceCents);
+              if (d) setPriceBreakdown(d);
+            }
+          } else {
+            const d = defaultBreakdownFromPlanCents(defaultPriceCents);
+            if (d) setPriceBreakdown(d);
+          }
+        } finally {
+          if (stillCurrent()) {
+            setIsCheckingCoupon(false);
+            setBreakdownLoading(false);
+          }
+        }
+      })();
+    }, debounceMs);
 
     return () => clearTimeout(timer);
-  }, [coupon]);
+  }, [coupon, subscriptionDraftReady, defaultPriceCents, planId]);
 
   const stripeElementOptions = {
     style: {
@@ -449,7 +626,7 @@ const CheckoutForm = ({
         </div>
       </div>
 
-      <div>
+      {/* <div>
         <label htmlFor="coupon" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
           Coupon code (optional)
         </label>
@@ -458,18 +635,36 @@ const CheckoutForm = ({
             id="coupon"
             type="text"
             value={coupon}
-            onChange={(e) => setCoupon(e.target.value)}
+            onChange={(e) => {
+              setCoupon(e.target.value);
+            }}
             placeholder="Enter coupon if you have one"
-            className="w-full p-3 border rounded-md dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            disabled={isCouponApplied}
+            aria-invalid={Boolean(couponError)}
+            aria-describedby={couponError ? "coupon-error" : couponSuccessHint ? "coupon-success" : undefined}
+            className={cn(
+              "w-full p-3 pr-11 border rounded-md dark:bg-gray-700 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500",
+              couponError
+                ? "border-red-500 dark:border-red-500"
+                : couponSuccessHint
+                  ? "border-green-600 dark:border-green-500"
+                  : "dark:border-gray-600",
+            )}
+            disabled={isCouponApplied || isProcessing}
           />
-          {isCheckingCoupon && (
-            <Loader2 className="absolute right-3 top-3 h-5 w-5 animate-spin text-gray-400" />
-          )}
+          {isCheckingCoupon ? (
+            <Loader2 className="absolute right-3 top-3 h-5 w-5 animate-spin text-gray-400" aria-hidden />
+          ) : couponSuccessHint && coupon.trim() && !couponError ? (
+            <CheckCircle className="absolute right-3 top-3 h-5 w-5 text-green-600" aria-hidden />
+          ) : null}
         </div>
-      </div>
+        {couponError && (
+          <p id="coupon-error" role="alert" className="mt-1.5 text-sm text-red-600 dark:text-red-400">
+            {couponError}
+          </p>
+        ) }
+      </div> */}
 
-      <PriceBreakdown breakdown={priceBreakdown} />
+      <PriceBreakdown breakdown={priceBreakdown} isUpdating={breakdownLoading || isCheckingCoupon} />
 
       <Button
         type="submit"
@@ -489,22 +684,68 @@ const CheckoutForm = ({
   );
 };
 
+type SubscriptionStatusPayload = {
+  hasSubscription?: boolean;
+  status?: string;
+  plan?: string | null;
+  currentProductId?: string | null;
+};
+
 // Plan Selection Cards
 const PlanSelection = ({
   onPlanSelect,
 }: {
   onPlanSelect: (plan: StripeCatalogProduct) => Promise<void> | void;
 }) => {
-const {user} = useAuth();
-const hasSub = hasActiveSubscription(user as any);
-const purchasedPlanId = (user as any)?.subscriptionPlan as string | undefined;
+  const { user } = useAuth();
+  const purchasedPlanId = (user as any)?.subscriptionPlan as string | undefined;
+
+  const { data: subStatus } = useQuery<SubscriptionStatusPayload | null>({
+    queryKey: ["/api/stripe/subscription-status"],
+    queryFn: getQueryFn<SubscriptionStatusPayload | null>({ on401: "returnNull" }),
+  });
+
+  const hasSub = hasSubscriberAccess({
+    user: user as any,
+    stripePayload: subStatus ?? undefined,
+  });
+
+  const dbSaysActivePaid = isDbSubscriptionStatusActive(user as any);
+
+  const currentStripeProductId =
+    typeof subStatus?.currentProductId === "string"
+      ? subStatus.currentProductId
+      : null;
+
+  /** Tier aligned with Stripe / `subscriptionPlan` — used when DB is `active` (current plan + Upgrade/Downgrade). */
+  const matchesPurchasedTier = useCallback(
+    (planId: string) => {
+      if (!hasSub) return false;
+      if (currentStripeProductId && planId === currentStripeProductId) return true;
+      if (
+        purchasedPlanId &&
+        planId === purchasedPlanId &&
+        (!currentStripeProductId || purchasedPlanId.startsWith("prod_"))
+      ) {
+        return true;
+      }
+      return false;
+    },
+    [hasSub, currentStripeProductId, purchasedPlanId],
+  );
+
+  const showAsCurrentPlanInUi = useCallback(
+    (planId: string) => dbSaysActivePaid && matchesPurchasedTier(planId),
+    [dbSaysActivePaid, matchesPurchasedTier],
+  );
 
   const [isLoading, setIsLoading] = useState<"loading" | string | null>(null);
   const [plans, setPlans] = useState<StripeCatalogProduct[]>([]);
-  const purchasedPlan = useMemo(() => {
-    if (!purchasedPlanId) return undefined;
-    return plans.find((p) => p.id === purchasedPlanId);
-  }, [plans, purchasedPlanId]);
+  const [resumeEngineModalOpen, setResumeEngineModalOpen] = useState(false);
+  const currentPlanCard = useMemo(() => {
+    if (!dbSaysActivePaid || !hasSub) return undefined;
+    return plans.find((p) => matchesPurchasedTier(p.id));
+  }, [dbSaysActivePaid, hasSub, plans, matchesPurchasedTier]);
 
   const handleSelect = async (plan: StripeCatalogProduct) => {
     setIsLoading(plan.id);
@@ -518,7 +759,8 @@ useEffect(() => {
     const fetchPlan = async () => {
       try {
         const response = await apiRequest("GET", "/api/stripe/catalog");
-        setPlans(Array.isArray(response) ? response : []);
+        const isResumeEngine = response.map((p: StripeCatalogProduct) => ({...p, isResumeEngine:false}) );
+        setPlans(isResumeEngine);
         
       } catch (error) {
         console.error("Error fetching plans:", error);
@@ -531,7 +773,10 @@ useEffect(() => {
 
 
 
+
+
   return (
+    <>
     <div className="grid md:grid-cols-3 gap-8">
  {
   isLoading === "loading" ? (
@@ -543,33 +788,55 @@ useEffect(() => {
   ) : (
   <>
   {plans?.slice()?.reverse()?.map((plan: StripeCatalogProduct, planIdx: number) => {
-    const isCurrent = hasSub && purchasedPlanId === plan.id;
+    const isCurrent = showAsCurrentPlanInUi(plan.id);
     const priceCents = plan.default_price?.unit_amount ?? 0;
 
-    const currentPrice =
-      purchasedPlan?.default_price?.unit_amount ?? 0;
-    const isUpgrade = hasSub && priceCents > currentPrice;
+    const currentPriceBasis = currentPlanCard?.default_price?.unit_amount ?? 0;
+    const showUpgradeDowngrade =
+      dbSaysActivePaid && hasSub && currentPlanCard != null;
+    const isUpgrade =
+      showUpgradeDowngrade && priceCents > currentPriceBasis;
 
-    const actionLabel = isCurrent
+    const actionLabel = isCurrent 
       ? "Current plan"
-      : !hasSub
+      : !dbSaysActivePaid
         ? "Subscribe"
-        : isUpgrade
-          ? "Upgrade"
-          : "Downgrade";
+        : !hasSub
+          ? "Subscribe"
+          : !showUpgradeDowngrade
+            ? "Subscribe"
+            : isUpgrade
+              ? "Upgrade"
+              : "Downgrade";
+
+
+    const showMarkedFeatures =["Auto-Apply","Tailored Resume","Tailored Cover","Recruiter DM","Resume Engine","Layoff Radar"]
+    const excludeFeatures = ["Layoff Radar"];
+    const isProPlan = plan.name === "Layoff Proof AI - Pro";
+    /** Only before checkout: steer guests to Pro. Active paid users should see only green “current plan”, no second highlight. */
+    const showDefaultFeatured = isProPlan && !isCurrent && !dbSaysActivePaid;
 
     return (
       <Card
         key={plan.id}
-        className={`flex flex-col justify-between ${
+        className={`flex flex-col justify-between rounded-xl transition-shadow ${
           isCurrent
-            ? "border-blue-500 ring-2 ring-blue-500 shadow-xl"
-            : !hasSub && plan.name === "Layoff Proof AI - Pro"
-              ? "border-blue-500 ring-2 ring-blue-500 shadow-xl"
-              : "border-gray-200"
+            ? "border-2 border-emerald-600 ring-2 ring-emerald-500/50 shadow-xl dark:border-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/25"
+            : showDefaultFeatured
+              ? "border-2 border-blue-600 shadow-lg dark:border-blue-500"
+              : "border border-gray-200 dark:border-gray-700"
         }`}
       >
-        <CardHeader className="text-center">
+        <CardHeader className="text-center space-y-2">
+          <div className="flex flex-wrap justify-center gap-2">
+            {isCurrent ? (
+              <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white border-0">Your current plan</Badge>
+            ) : showDefaultFeatured ? (
+              <Badge className="bg-blue-600 hover:bg-blue-600 text-white border-0 shadow-sm">
+                Most popular
+              </Badge>
+            ) : null}
+          </div>
           <CardTitle className="text-lg">{plan?.name}</CardTitle>
           <div className="text-3xl font-bold text-blue-600">
             ${((plan?.default_price?.unit_amount ?? 0) / 100).toFixed(2)}
@@ -577,36 +844,65 @@ useEffect(() => {
               /{plan?.default_price?.recurring?.interval ?? "mo"}
             </span>
           </div>
-          <CardDescription>{plan?.description}</CardDescription>
+          {/* <CardDescription>{plan?.description}</CardDescription> */}
         </CardHeader>
         <CardContent>
           <ul className="space-y-2">
-            {Object.entries(plan?.metadata ?? {}).map(([key, value], idx: number) => (
-              <li key={idx} className="flex items-center space-x-2">
-                {planIdx === 0 && value.startsWith("Layoff Radar") ? (
+            {Object.entries(plan?.metadata ?? {}).map(([key, value], idx: number) => {
+              const label = String(value);
+              const isResumeEngine = showMarkedFeatures.some((feature) => label.includes(feature)) && 
+              !excludeFeatures.some((feature) => label.includes(feature)) ;
+              const statusIcon =
+                planIdx === 0 && showMarkedFeatures.some((feature) => label.includes(feature)) ? (
                   <CheckCircle className="h-4 w-4 flex-shrink-0 text-green-500" />
                 ) : planIdx !== 0 ? (
                   <CheckCircle className="h-4 w-4 flex-shrink-0 text-green-500" />
                 ) : (
                   <XCircle className="h-4 w-4 flex-shrink-0 text-red-500" />
-                )}
-                <span className="text-sm text-gray-700 dark:text-gray-300">{value}</span>
-              </li>
-            ))}
+                );
+              return (
+                <li key={idx} className="flex items-center gap-2">
+                  {statusIcon}
+                  <span className="text-sm text-gray-700 dark:text-gray-300">{label}  {isResumeEngine  ? "+" : ""}</span>
+                  {/* {isResumeEngine && planIdx < plans.length - 1 ? (
+                    <button
+                      type="button"
+                      className="inline-flex rounded-md p-0.5 text-blue-600 transition-colors hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-400 dark:hover:bg-blue-950/50"
+                      aria-label="Resume Engine add-on options"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setResumeEngineModalOpen(true);
+                        setPlans((pre)=>pre.map((p)=>p.id === plan.id ? {...p, isResumeEngine: true} : p));
+                      }}
+                    >
+                      <Plus className="h-4 w-4 flex-shrink-0" strokeWidth={1.2} aria-hidden />
+                    </button>
+                   
+                  ) : null} */}
+                </li>
+              );
+            })}
           </ul>
         </CardContent>
+        {console.log("plans", plan)as any}
         <CardFooter>
           <Button
-            className={`w-full ${plan.name === "Layoff Proof AI - Pro" ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}`}
+            variant={isCurrent ? "outline" : "default"}
+            className={
+              showDefaultFeatured
+                ? "w-full bg-blue-600 hover:bg-blue-700 text-white"
+                : "w-full"
+            }
             onClick={() => handleSelect(plan)}
-            disabled={(!!isLoading && isLoading === plan.id) || isCurrent}
+            disabled={plan.isResumeEngine ? false : (!!isLoading && isLoading === plan.id) || isCurrent}
           >
             {isLoading === plan.id ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Setting up...
               </>
             ) : (
-              actionLabel
+              plan.isResumeEngine === true ? "Add Resume Engine" : actionLabel
             )}
           </Button>
         </CardFooter>
@@ -619,24 +915,62 @@ useEffect(() => {
   )
 }
     </div>
+
+    <Dialog open={resumeEngineModalOpen} onOpenChange={setResumeEngineModalOpen}>
+      <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto sm:max-w-4xl">
+        <DialogHeader>
+          <DialogTitle>Resume Engine add-on</DialogTitle>
+          <DialogDescription>
+            Choose how many applications you want to power with Resume Engine each month.
+          </DialogDescription>
+        </DialogHeader>
+        <CustomSliderCard setPlans={setPlans}   setResumeEngineModalOpen={setResumeEngineModalOpen}/>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 };
 
 // Main Component
 export default function Subscribe() {
   const [clientSecret, setClientSecret] = useState("");
-  const [selectedPlan, setSelectedPlan] = useState<{ id: string; name: string } | null>(null);
+  const [selectedPlan, setSelectedPlan] = useState<{
+    id: string;
+    name: string;
+    unitAmount: number | null;
+  } | null>(null);
   const { toast } = useToast();
   const [coupon, setCoupon] = useState("");
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
+  const { data: checkoutStripeStatus } = useQuery<{
+    status?: string;
+    hasSubscription?: boolean;
+  } | null>({
+    queryKey: ["/api/stripe/subscription-status"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+  });
+
   useEffect(() => {
     // Ensure we have the latest user payload (includes subscription fields).
     queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/stripe/subscription-status"] });
   }, [queryClient]);
 
-  const hasActiveSub = hasActiveSubscription(user as any);
+  const subscriberAccess = hasSubscriberAccess({
+    user: user as any,
+    stripePayload: checkoutStripeStatus ?? undefined,
+  });
+  const dbSaysActivePaid = isDbSubscriptionStatusActive(user as any);
+  const hasStripeSubscriptionId = Boolean(
+    (user as { stripeSubscriptionId?: string | null })?.stripeSubscriptionId,
+  );
+
+  /** Stripe `incomplete` = first payment pending; DB stays `inactive` until paid. */
+  const subscriptionDraftReady =
+    Boolean((user as { stripeSubscriptionId?: string | null })?.stripeSubscriptionId) &&
+    checkoutStripeStatus?.status === "incomplete";
 
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewTarget, setPreviewTarget] = useState<StripeCatalogProduct | null>(null);
@@ -703,7 +1037,8 @@ export default function Subscribe() {
 
 
   const handlePlanSelect = async (plan: StripeCatalogProduct) => {
-    if (hasActiveSub) {
+    // Plan-change preview only when the database marks an active paid subscription (not Stripe/trial inference alone).
+    if (dbSaysActivePaid && subscriberAccess && hasStripeSubscriptionId) {
       await openPreview(plan);
       return;
     }
@@ -718,10 +1053,15 @@ export default function Subscribe() {
       console.log("📦 Subscription response:", data);
 
       if (data.clientSecret) {
+        await queryClient.refetchQueries({ queryKey: ["/api/auth/user"] });
+        await queryClient.refetchQueries({
+          queryKey: ["/api/stripe/subscription-status"],
+        });
         setClientSecret(data.clientSecret);
         setSelectedPlan({
           id: plan.id,
-          name: plan.name
+          name: plan.name,
+          unitAmount: plan.default_price?.unit_amount ?? null,
         });
         console.log("✅ Client secret received");
       } else {
@@ -847,6 +1187,8 @@ export default function Subscribe() {
                   onRefreshPayment={handleRefreshPayment}
                   coupon={coupon}
                   setCoupon={setCoupon}
+                  subscriptionDraftReady={subscriptionDraftReady}
+                  defaultPriceCents={selectedPlan?.unitAmount ?? null}
                 />
 
               </Elements>

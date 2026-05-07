@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { LoginRequest } from "@shared/schema";
+import { LAYOFF_PROOF_USER_STORAGE_KEY } from "@/lib/logoutStorage";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 
 export default function Login() {
@@ -30,11 +31,18 @@ export default function Login() {
       const response = await apiRequest('POST', '/api/auth/login', data);
       return  response;
     },
-    onSuccess: () => {
+    onSuccess: (response: any) => {
       toast({
         title: "Welcome Back",
         description: "Successfully signed in to your account.",
       });
+
+console.log("response", response);
+
+     localStorage.setItem(
+        LAYOFF_PROOF_USER_STORAGE_KEY,
+        JSON.stringify({ user: response.user, token: response.token })
+      );
       const dest =
         getSafeRedirectPath(searchParams.get("redirect")) ?? "/";
       window.location.href = dest;

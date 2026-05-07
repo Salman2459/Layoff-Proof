@@ -6,12 +6,26 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { zodResolver } from "@hookform/resolvers/zod";
+import {
   Users, AlertTriangle, Calendar, MapPin,
   ChevronLeft, ChevronRight, ExternalLink,
   Building2, ShoppingCart, DollarSign,
   Activity, Factory, Loader2, Search, Car, Newspaper, Clock
 } from "lucide-react";
 import GlobalHeader from "@/components/GlobalHeader";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+import { apiRequest, getApiErrorMessage } from "@/lib/queryClient";
 
 const CATEGORIES = [
   { id: "all", label: "All Industries", icon: Building2, color: "blue" },
@@ -67,9 +81,29 @@ export default function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [pagination, setPagination] = useState<PaginationInfo | null>(null);
   const [loading, setLoading] = useState(false);
+  const [notifySaving, setNotifySaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const itemsPerPage = 15;
+
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
+
+  const notificationScheduleSchema = z.object({
+    companyName: z.string().trim().optional(),
+    email: z.string().trim().email("Valid email is required"),
+    role: z.string().trim().min(1, "Role is required"),
+    status: z.string().optional(),
+  });
+
+  const notificationForm = useForm<z.infer<typeof notificationScheduleSchema>>({
+    resolver: zodResolver(notificationScheduleSchema),
+    defaultValues: {
+      companyName: "",
+      email: user?.email || "",
+      role: "",
+      status: "pending",
+    },
+  });
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -234,9 +268,131 @@ export default function Dashboard() {
 
         {/* Category Selector */}
         <div className="mb-8">
+
+<div className="flex items-center justify-between mb-4">
           <h3 className="mb-4 text-lg font-semibold text-foreground">
             Select Industry
           </h3>
+<Button
+            variant="outline"
+            className="h-12 px-8 text-primary-foreground lp-gradient-fill sm:w-auto"
+            onClick={() => setNotifyDialogOpen(true)}
+          >
+
+              Notify Me
+
+            </Button>
+
+          <Dialog open={notifyDialogOpen} onOpenChange={setNotifyDialogOpen}>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Schedule notifications</DialogTitle>
+                <DialogDescription>
+                  Get alerts for new layoff updates. This schedules the reminder preferences for your account.
+                </DialogDescription>
+              </DialogHeader>
+
+              <Form {...notificationForm}>
+                <form
+                  className="grid gap-4"
+                  onSubmit={notificationForm.handleSubmit(async (values) => {
+                    setNotifySaving(true);
+                    try {
+                      await apiRequest("POST", "/api/notify-me", {
+                        email: values.email,
+                        role: values.role,
+                        company: values.companyName,
+                        status: values.status ?? "pending",
+                      });
+                      setNotifyDialogOpen(false);
+                      toast({
+                        title: "Saved",
+                        description: "Your notification request has been saved.",
+                      });
+                    } catch (err: unknown) {
+                      const msg = getApiErrorMessage(err, "Failed to save notification request");
+                      toast({
+                        title: msg.toLowerCase().includes("already added")
+                          ? "Already added"
+                          : "Error",
+                        description: msg,
+                        variant: "destructive",
+                      });
+                    } finally {
+                      setNotifySaving(false);
+                    }
+                  })}
+                >
+                  <FormField
+                    control={notificationForm.control}
+                    name="companyName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Company Name</FormLabel>
+                        <FormControl>
+                          <Input type="text" placeholder="e.g. Amazon" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                   <FormField
+                    control={notificationForm.control}
+                    name="email"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Email</FormLabel>
+                        <FormControl>
+                          <Input type="email" placeholder="you@example.com" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                    <FormField
+                    control={notificationForm.control}
+                    name="role"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Role</FormLabel>
+                        <FormControl>
+                          <Input type="text" placeholder="e.g. Software Engineer" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+     
+                  <DialogFooter>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setNotifyDialogOpen(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      className="lp-gradient-fill"
+                      disabled={notifySaving}
+                    >
+                      {notifySaving ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        "Save"
+                      )}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </Form>
+
+            </DialogContent>
+          </Dialog>
+          </div>
+
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-10">
             {CATEGORIES.map((cat) => {
               const Icon = cat.icon;

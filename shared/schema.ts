@@ -39,7 +39,7 @@ export const users = pgTable("users", {
   subscriptionPlan: varchar("subscription_plan").default("trial"), // trial, pro
   stripeCustomerId: varchar("stripe_customer_id"),
   stripeSubscriptionId: varchar("stripe_subscription_id"),
-  subscriptionStatus: varchar("subscription_status").default("trial"), // trial, active, canceled, past_due
+  subscriptionStatus: varchar("subscription_status").default("inactive"), // paid: active — otherwise inactive (free trial uses trial_* dates)
   subscriptionEndDate: timestamp("subscription_end_date"),
   trialStartDate: timestamp("trial_start_date"),
   trialEndDate: timestamp("trial_end_date"),
@@ -364,6 +364,7 @@ export const layoffs = pgTable("layoffs", {
   source: varchar("source"),
   location: varchar("location"),
   industry: varchar("industry"),
+  role: varchar("role"),
   details: text("details"),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -375,6 +376,7 @@ export const insertLayoffSchema = createInsertSchema(layoffs).pick({
   source: true,
   location: true,
   industry: true,
+  role: true,
   details: true,
 });
 
@@ -526,6 +528,66 @@ export const portfolios = pgTable("portfolios", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+export const jobBoardSchema = pgTable("job_board", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  platform: varchar("platform").notNull(),
+  jobTitle: varchar("job_title").notNull(),
+  companyName: varchar("company_name").notNull(),
+  jobLocation: varchar("job_location"),
+  jobType: varchar("job_type"),
+  jobDescription: text("job_description"),
+  companyLink: varchar("company_link"),
+  salaryRange: varchar("salary_range"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const jobBoardRelations = relations(jobBoardSchema, ({ one }) => ({
+  user: one(users, { fields: [jobBoardSchema.userId], references: [users.id] }),
+}));
+
+export const insertJobBoardSchema = createInsertSchema(jobBoardSchema).pick({
+  platform: true,
+  jobTitle: true,
+  companyName: true,
+  jobLocation: true,
+  jobType: true,
+  jobDescription: true,
+  companyLink: true,
+  salaryRange: true,
+});
+
+export type SelectJobBoard = typeof jobBoardSchema.$inferSelect;
+export type InsertJobBoard = z.infer<typeof insertJobBoardSchema>;
+
+
+export const notifyMe = pgTable("notify_me", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  company: varchar("company").notNull(),
+  email: varchar("email").notNull(),  
+  role: varchar("role").notNull(),
+  status: varchar("status").default("pending"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertNotifyMeSchema = createInsertSchema(notifyMe).pick({
+  company: true,
+  email: true,
+  role: true,
+  status: true,
+});
+
+
+export const notifyMeRelations = relations(notifyMe, ({ one }) => ({
+  user: one(users, { fields: [notifyMe.userId], references: [users.id] }),
+}));
+
+export type SelectNotifyMe = typeof notifyMe.$inferSelect;
+export type InsertNotifyMe = z.infer<typeof insertNotifyMeSchema>;
 
 // Network Connections table
 export const networkConnections = pgTable("network_connections", {

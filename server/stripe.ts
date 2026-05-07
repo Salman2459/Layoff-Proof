@@ -8,7 +8,6 @@ export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: "2024-12-18.acacia",
 });
 
-// Create or get a Stripe customer for a user
 export async function getOrCreateStripeCustomer(user: {
   id: string;
   email: string;
@@ -16,10 +15,8 @@ export async function getOrCreateStripeCustomer(user: {
   lastName?: string;
   stripeCustomerId?: string;
 }): Promise<string> {
-  // If user already has a Stripe customer ID, return it
   if (user.stripeCustomerId) {
     try {
-      // Verify the customer still exists in Stripe
       await stripe.customers.retrieve(user.stripeCustomerId);
       return user.stripeCustomerId;
     } catch (error) {
@@ -27,110 +24,136 @@ export async function getOrCreateStripeCustomer(user: {
     }
   }
 
-  // Create new Stripe customer
   const customer = await stripe.customers.create({
     email: user.email,
-    name: user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : undefined,
-    metadata: {
-      userId: user.id,
-    },
+    name: user.firstName && user.lastName
+      ? `${user.firstName} ${user.lastName}`
+      : undefined,
+    metadata: { userId: user.id },
   });
 
   return customer.id;
 }
 
-// Create a setup intent for trial users to save payment method
-export async function createSetupIntent(customerId: string): Promise<Stripe.SetupIntent> {
-  return await stripe.setupIntents.create({
-    customer: customerId,
-    usage: 'off_session',
-    automatic_payment_methods: {
-      enabled: true,
-    },
-    metadata: {
-      type: 'trial_setup',
-    },
-  });
-}
-
-// Create a subscription for the user after trial
+// ✅ Added couponId parameter
 export async function createSubscription(
   customerId: string,
   priceId: string,
-  paymentMethodId?: string
+  paymentMethodId?: string,
+  couponId?: string          // <-- NEW
 ): Promise<Stripe.Subscription> {
   const subscriptionData: Stripe.SubscriptionCreateParams = {
     customer: customerId,
     items: [{ price: priceId }],
     expand: ['latest_invoice.payment_intent'],
-    metadata: {
-      type: 'monthly_subscription',
-    },
+    metadata: { type: 'monthly_subscription' },
   };
 
-  // If payment method is provided, use it
   if (paymentMethodId) {
     subscriptionData.default_payment_method = paymentMethodId;
   } else {
-    // Otherwise, collect payment method during checkout
     subscriptionData.payment_behavior = 'default_incomplete';
+  }
+
+  // ✅ Apply coupon if provided
+  if (couponId) {
+    subscriptionData.discounts = [{ coupon: couponId }];
   }
 
   return await stripe.subscriptions.create(subscriptionData);
 }
 
-// Create a one-time payment intent (alternative to subscription)
+// ✅ Fixed: skip PaymentIntent if amount is 0 (100% coupon)
 export async function createPaymentIntent(
   amount: number,
   customerId: string,
-  currency: string = 'usd'
-): Promise<Stripe.PaymentIntent> {
+  currency: string = 'usd',
+  couponId?: string          // <-- NEW
+): Promise<Stripe.PaymentIntent | null> {
+
+  // Apply coupon discount if provided
+  let finalAmount = amount;
+  if (couponId) {
+    const coupon = await stripe.coupons.retrieve(couponId);
+    if (coupon.percent_off === 100 || (coupon.amount_off && coupon.amount_off >= amount * 100)) {
+      // ✅ 100% off — no PaymentIntent needed, handle via checkout session
+      return null;
+    }
+    if (coupon.percent_off) {
+      finalAmount = amount * (1 - coupon.percent_off / 100);
+    } else if (coupon.amount_off) {
+      finalAmount = Math.max(0, amount - coupon.amount_off / 100);
+    }
+  }
+
+  // ✅ Guard: never create a $0 PaymentIntent
+  if (finalAmount <= 0) return null;
+
   return await stripe.paymentIntents.create({
-    amount: Math.round(amount * 100), // Convert to cents
+    amount: Math.round(finalAmount * 100),
     currency,
     customer: customerId,
-    automatic_payment_methods: {
-      enabled: true,
-    },
+    automatic_payment_methods: { enabled: true },
     metadata: {
       type: 'one_time_payment',
+      ...(couponId && { couponId }),
     },
   });
 }
 
-// Cancel a subscription
+// ✅ NEW: Create Checkout Session (handles $0 orders natively)
+export async function createCheckoutSession(
+  customerId: string,
+  priceId: string,
+  successUrl: string,
+  cancelUrl: string,
+  couponId?: string
+): Promise<Stripe.Checkout.Session> {
+  return await stripe.checkout.sessions.create({
+    customer: customerId,
+    mode: 'subscription',
+    line_items: [{ price: priceId, quantity: 1 }],
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    ...(couponId
+      ? { discounts: [{ coupon: couponId }] }
+      : { allow_promotion_codes: true }
+    ),
+  });
+}
+
+export async function createSetupIntent(customerId: string): Promise<Stripe.SetupIntent> {
+  return await stripe.setupIntents.create({
+    customer: customerId,
+    usage: 'off_session',
+    automatic_payment_methods: { enabled: true },
+    metadata: { type: 'trial_setup' },
+  });
+}
+
 export async function cancelSubscription(subscriptionId: string): Promise<Stripe.Subscription> {
   return await stripe.subscriptions.cancel(subscriptionId);
 }
 
-// Get subscription details
 export async function getSubscription(subscriptionId: string): Promise<Stripe.Subscription> {
   return await stripe.subscriptions.retrieve(subscriptionId, {
     expand: ['latest_invoice.payment_intent'],
   });
 }
 
-// Create a test price for $19/month (only needed once)
 export async function createTestPrice(): Promise<Stripe.Price> {
-  // First create a product
   const product = await stripe.products.create({
     name: 'Layoff Proof Pro',
     description: 'Complete career resilience platform with AI-powered tools',
-    metadata: {
-      type: 'subscription',
-    },
+    metadata: { type: 'subscription' },
   });
 
-  // Then create the price
   return await stripe.prices.create({
     product: product.id,
-    unit_amount: 1900, // $19.00 in cents
+    unit_amount: 1900,
     currency: 'usd',
-    recurring: {
-      interval: 'month',
-    },
-    metadata: {
-      plan: 'pro',
-    },
+    recurring: { interval: 'month' },
+    metadata: { plan: 'pro' },
   });
 }
+

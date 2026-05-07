@@ -17,6 +17,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Link } from "wouter";
+import { logoutViaFullPageNavigate } from "@/lib/logoutStorage";
 import { 
   Shield, 
   Users, 
@@ -233,7 +234,14 @@ export default function AdminDashboard() {
               <Link href="/" className="text-gray-600 hover:text-gray-900">
                 ← Back to Site
               </Link>
-              <Link href="/api/logout" className="text-gray-600 hover:text-gray-900">
+              <Link
+                href="/api/logout"
+                className="text-gray-600 hover:text-gray-900"
+                onClick={(e) => {
+                  e.preventDefault();
+                  logoutViaFullPageNavigate();
+                }}
+              >
                 Sign Out
               </Link>
             </div>

@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LoginDialog } from "@/components/login-dialog";
 import { CompanyTable } from "@/components/company-table";
 import { Link } from "wouter";
+import { logoutViaFullPageNavigate } from "@/lib/logoutStorage";
 import {
   TrendingDown,
   Building,
@@ -73,7 +74,16 @@ function Header({ user }: { user: any }) {
             {user ? (
               <>
                 <a href="/profile" className="text-gray-600 hover:text-gray-900">Profile</a>
-                <a href="/api/logout" className="text-gray-600 hover:text-gray-900">Sign Out</a>
+                <a
+                  href="/api/logout"
+                  className="text-gray-600 hover:text-gray-900"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    logoutViaFullPageNavigate();
+                  }}
+                >
+                  Sign Out
+                </a>
               </>
             ) : (
               <>

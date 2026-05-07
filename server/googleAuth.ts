@@ -21,9 +21,11 @@ function getSafeRedirectPath(redirect: unknown): string | null {
 function hasActiveSubscription(user: any): boolean {
   const status = (user?.subscriptionStatus ?? "").toString().toLowerCase();
   if (status === "active") return true;
-  const end = user?.subscriptionEndDate ? new Date(user.subscriptionEndDate) : null;
-  if (!end || Number.isNaN(end.getTime())) return false;
-  return end > new Date();
+  const trialEnd = user?.trialEndDate ? new Date(user.trialEndDate) : null;
+  if (trialEnd && !Number.isNaN(trialEnd.getTime()) && trialEnd > new Date()) {
+    return true;
+  }
+  return false;
 }
 
 export function setupGoogleAuth(app: Express) {

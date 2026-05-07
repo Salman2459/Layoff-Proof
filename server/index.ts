@@ -2,9 +2,22 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { allCronjobs } from "./cronjobs/index";
+import { handleStripeWebhook } from "./stripeWebhook";
+import cors from "cors";
+
 allCronjobs();
 
 const app = express();
+app.use(cors());
+// Stripe webhooks require the raw body for signature verification.
+app.post(
+  "/api/stripe/webhook",
+  express.raw({ type: "application/json" }),
+  (req, res, next) => {
+    Promise.resolve(handleStripeWebhook(req, res)).catch(next);
+  },
+);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 

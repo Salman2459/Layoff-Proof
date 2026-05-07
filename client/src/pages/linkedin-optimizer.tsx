@@ -270,7 +270,7 @@ const ProfileDataDisplay = ({ profileData, setProfileData }: { profileData: Prof
 // MAIN COMPONENT (Orchestrates the process and renders components)
 // =================================================================
 export default function LinkedInOptimizer() {
-  const [profileUrl, setProfileUrl] = useState("");
+  const [profilePdf, setProfilePdf] = useState<File | null>(null);
   const [targetJobTitle, setTargetJobTitle] = useState("");
   const [analysisStep, setAnalysisStep] = useState("");
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
@@ -282,8 +282,8 @@ export default function LinkedInOptimizer() {
   const isAnalyzing = analysisStep !== "";
 
   const analyzeProfile = async () => {
-    if (!profileUrl || !profileUrl.includes('linkedin.com')) {
-      toast({ title: "Invalid URL", description: "Please enter a valid LinkedIn profile URL.", variant: "destructive" });
+    if (!profilePdf) {
+      toast({ title: "Missing PDF", description: "Please upload your LinkedIn profile PDF.", variant: "destructive" });
       return;
     }
     if (!targetJobTitle) {
@@ -297,10 +297,13 @@ export default function LinkedInOptimizer() {
 
     try {
       setAnalysisStep("Fetching profile data...");
-      const importResponse = await fetch(`/api/import-linkedin-resume`, {
+      const form = new FormData();
+      form.append("file", profilePdf);
+      if (user?.id) form.append("id", String(user.id));
+
+      const importResponse = await fetch(`/api/import-linkedin-resume-pdf`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profileUrl, id: user?.id }),
+        body: form,
       });
       const importData = await importResponse.json();
       if (!importResponse.ok) {
@@ -359,7 +362,7 @@ export default function LinkedInOptimizer() {
         </div>
       );
     }
-    return <div className="text-center py-16 border-2 border-dashed rounded-lg"><UserCheck className="mx-auto h-12 w-12 text-slate-400" /><h3 className="mt-2 text-lg font-medium text-slate-900">Ready to Optimize?</h3><p className="mt-1 text-sm text-slate-500">Enter your URL and target job title to start.</p></div>;
+    return <div className="text-center py-16 border-2 border-dashed rounded-lg"><UserCheck className="mx-auto h-12 w-12 text-slate-400" /><h3 className="mt-2 text-lg font-medium text-slate-900">Ready to Optimize?</h3><p className="mt-1 text-sm text-slate-500">Upload your LinkedIn profile PDF and enter your target job title to start.</p></div>;
   };
 
   return (
@@ -370,13 +373,19 @@ export default function LinkedInOptimizer() {
         <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="space-y-8">
             <Card className="shadow-sm">
-              <CardHeader><CardTitle className="text-xl">1. Start Your Analysis</CardTitle><p className="text-slate-500 text-sm">Enter your public LinkedIn URL and the job title you're targeting.</p></CardHeader>
+              <CardHeader><CardTitle className="text-xl">1. Start Your Analysis</CardTitle><p className="text-slate-500 text-sm">Upload your LinkedIn profile as a PDF and enter the job title you're targeting.</p></CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <Input placeholder="https://www.linkedin.com/in/yourname" value={profileUrl} onChange={(e) => setProfileUrl(e.target.value)} disabled={isAnalyzing} className="md:col-span-2" />
+                  <Input
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    onChange={(e) => setProfilePdf(e.target.files?.[0] ?? null)}
+                    disabled={isAnalyzing}
+                    className="md:col-span-2"
+                  />
                   <Input placeholder="e.g., Website Developer" value={targetJobTitle} onChange={(e) => setTargetJobTitle(e.target.value)} disabled={isAnalyzing} />
                 </div>
-                <Button onClick={analyzeProfile} disabled={isAnalyzing || !profileUrl || !targetJobTitle} size="lg" className="w-full mt-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-semibold shadow-md hover:opacity-90 transition-opacity">
+                <Button onClick={analyzeProfile} disabled={isAnalyzing || !profilePdf || !targetJobTitle} size="lg" className="w-full mt-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-semibold shadow-md hover:opacity-90 transition-opacity">
                   {isAnalyzing ? <RefreshCw className="w-5 h-5 mr-2 animate-spin" /> : <Search className="w-5 h-5 mr-2" />}
                   {analysisStep || 'Analyze Profile'}
                 </Button>

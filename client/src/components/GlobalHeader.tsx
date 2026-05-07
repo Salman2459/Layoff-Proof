@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { User, Menu, LogOut, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { clearClientStorageOnLogout } from "@/lib/logoutStorage";
 
 function GlobalHeader() {
   const { user, isAuthenticated } = useAuth();
@@ -25,6 +26,7 @@ function GlobalHeader() {
         cache: "no-store",
       });
 
+      clearClientStorageOnLogout();
       if (response.ok) {
         window.location.href = "/";
       } else {
@@ -33,6 +35,7 @@ function GlobalHeader() {
       }
     } catch (error) {
       console.error("Logout error:", error);
+      clearClientStorageOnLogout();
       window.location.href = "/";
     }
   };
@@ -63,6 +66,9 @@ function GlobalHeader() {
             <Link href="/subscribe" className={navLink("/subscribe")}>
               Subscribe
             </Link>
+           {user && <Link href="/job-board" className={navLink("/job-board")}>
+              Job Board
+            </Link>}
           </nav>
 
           <div className="flex items-center gap-4">

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, getApiErrorMessage, queryClient } from "@/lib/queryClient";
@@ -37,8 +37,51 @@ interface SalaryData {
   industry: string;
 }
 
+function experienceLevelFromTotalExperience(totalExperience: unknown): string {
+  const nRaw =
+    typeof totalExperience === "string"
+      ? Number(totalExperience)
+      : typeof totalExperience === "number"
+        ? totalExperience
+        : NaN;
+  const n = Number.isFinite(nRaw) ? nRaw : NaN;
+  if (!Number.isFinite(n)) return "";
+  if (n <= 2) return "entry";
+  if (n <= 5) return "mid";
+  if (n <= 10) return "senior";
+  return "lead";
+}
+
+function splitLinesToItems(text: unknown): string[] {
+  if (typeof text !== "string") return [];
+  return text
+    .split(/\r?\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+}
+
+function normalizeStringArray(input: unknown, maxItems: number): string[] {
+  if (!Array.isArray(input)) return [];
+  const toStringSafe = (v: unknown): string => {
+    if (typeof v === "string") return v.trim();
+    if (typeof v === "number") return String(v);
+    if (v && typeof v === "object") {
+      const obj = v as Record<string, unknown>;
+      const candidate =
+        obj.name ?? obj.label ?? obj.skill ?? obj.title ?? obj.value ?? obj.text;
+      if (typeof candidate === "string") return candidate.trim();
+    }
+    return "";
+  };
+  return input
+    .map(toStringSafe)
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
 export default function SalaryNegotiator() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   const { toast } = useToast();
   const [step, setStep] = useState(1);
   const [deletingResearchId, setDeletingResearchId] = useState<string | null>(
@@ -62,10 +105,70 @@ export default function SalaryNegotiator() {
     .trim();
 
   // Fetch existing salary research
-  const { data: existingResearch } = useQuery({
+  const { data: existingResearch } = useQuery<any[]>({
     queryKey: ["/api/salary-research"],
     enabled: isAuthenticated,
   });
+
+  // Fetch user job profile (same API used in auto-job-apply)
+  const { data: jobProfile } = useQuery({
+    queryKey: ["userJobProfile", user?.id],
+    queryFn: async () => {
+      if (!user?.id) return null;
+      const res = await fetch(`/api/profile/jobprofile/${user.id}`, {
+        credentials: "include",
+      });
+      const json = await res.json();
+      if (!res.ok) return null;
+      return json.data ?? null;
+    },
+    enabled: !!user?.id,
+  });
+
+  // Prefill the form once from jobProfile (don't overwrite what user already typed)
+  const didPrefillRef = useRef(false);
+  useEffect(() => {
+    if (!jobProfile || didPrefillRef.current) return;
+    didPrefillRef.current = true;
+
+    const nextJobTitle =
+      typeof jobProfile?.profession === "string" ? jobProfile.profession : "";
+    const nextLocation =
+      [jobProfile?.city, jobProfile?.country].filter(Boolean).join(", ") || "";
+    const nextExperienceLevel = experienceLevelFromTotalExperience(
+      jobProfile?.totalExperience,
+    );
+    const nextCurrentSalary =
+      jobProfile?.currentSalary != null ? String(jobProfile.currentSalary) : "";
+    const nextTargetSalary =
+      jobProfile?.expectedSalary != null
+        ? String(jobProfile.expectedSalary)
+        : "";
+
+    const nextStrengths = normalizeStringArray(jobProfile?.skills, 3);
+    const nextAchievements = splitLinesToItems(jobProfile?.achievements);
+
+    setFormData((prev) => ({
+      ...prev,
+      jobTitle: prev.jobTitle || nextJobTitle,
+      location: prev.location || nextLocation,
+      experienceLevel: prev.experienceLevel || nextExperienceLevel,
+      currentSalary: prev.currentSalary || nextCurrentSalary,
+      targetSalary: prev.targetSalary || nextTargetSalary,
+      strengths:
+        prev.strengths.filter((s) => s.trim()).length > 0
+          ? prev.strengths
+          : nextStrengths.length > 0
+            ? nextStrengths
+            : prev.strengths,
+      achievements:
+        prev.achievements.filter((a) => a.trim()).length > 0
+          ? prev.achievements
+          : nextAchievements.length > 0
+            ? nextAchievements
+            : prev.achievements,
+    }));
+  }, [jobProfile]);
 
   // Generate negotiation strategy mutation
   const generateStrategyMutation = useMutation({

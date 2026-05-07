@@ -2,13 +2,14 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Bell } from "lucide-react";
 import { Link, useLocation } from "wouter";
+import { logoutViaFullPageNavigate } from "@/lib/logoutStorage";
 
 export default function Header() {
   const { user } = useAuth();
   const [location] = useLocation();
 
   const handleLogout = () => {
-    window.location.href = "/api/logout";
+    logoutViaFullPageNavigate();
   };
 
   const isActive = (path: string) => {

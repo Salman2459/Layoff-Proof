@@ -9,6 +9,8 @@ import {
   magicLinkTokens,
   promotionPlans,
   salaryResearch,
+  jobBoardSchema,
+  notifyMe,
   networkConnections,
   type User,
   type UpsertUser,
@@ -16,6 +18,7 @@ import {
   type InsertCompany,
   type LayoffEvent,
   type Layoff,
+  type InsertLayoff,
   type InsertLayoffEvent,
   type Notification,
   type InsertNotification,
@@ -26,9 +29,13 @@ import {
   type MagicLinkToken,
   type SelectPromotionPlan,
   type InsertPromotionPlan,
+  type SelectJobBoard,
+  type InsertJobBoard,
+  type SelectNotifyMe,
+  type InsertNotifyMe,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, ilike, desc, and, isNull, gte, lte, sql, count } from "drizzle-orm";
+import { eq, ilike, desc, and, or, isNull, gte, lte, sql, count, type SQL } from "drizzle-orm";
 
 export interface IStorage {
   // User operations
@@ -83,6 +90,7 @@ export interface IStorage {
   getMagicLinkToken(token: string): Promise<MagicLinkToken | undefined>;
   useMagicLinkToken(token: string): Promise<void>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByStripeCustomerId(stripeCustomerId: string): Promise<User | undefined>;
 
   // Email/password authentication
   createEmailUser(userData: {
@@ -143,6 +151,19 @@ export interface IStorage {
   createNetworkConnection(userId: string, connectionData: any): Promise<any>;
   updateNetworkConnection(userId: string, id: string, updates: any): Promise<any>;
   deleteNetworkConnection(userId: string, id: string): Promise<void>;
+
+  // Job Board
+  getJobBoardPosts(
+    userId: string,
+    limit: number,
+    page: number,
+    search?: string | null,
+  ): Promise<SelectJobBoard[]>;
+  getJobBoardPostsCount(userId: string, search?: string | null): Promise<number>;
+  createJobBoardPost(userId: string, post: InsertJobBoard): Promise<SelectJobBoard>;
+
+  // Notify Me
+  createNotifyMe(userId: string, data: InsertNotifyMe): Promise<SelectNotifyMe>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -314,7 +335,9 @@ export class DatabaseStorage implements IStorage {
     return {
       byYear,
       byIndustry,
-      byState: byState.filter(item => item.state),
+      byState: byState.filter(
+        (item): item is { state: string; count: number; employees: number } => Boolean(item.state),
+      ),
       byJobTitle,
     };
   }
@@ -499,6 +522,16 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  async getUserByStripeCustomerId(
+    stripeCustomerId: string,
+  ): Promise<User | undefined> {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.stripeCustomerId, stripeCustomerId));
+    return user;
+  }
+
   // Email/password authentication methods
   async createEmailUser(userData: {
     firstName: string;
@@ -521,7 +554,7 @@ export class DatabaseStorage implements IStorage {
         authProvider: userData.authProvider,
         isEmailVerified: userData.isEmailVerified,
         subscriptionPlan: "trial",
-        subscriptionStatus: "trial",
+        subscriptionStatus: "inactive",
         trialStartDate,
         trialEndDate,
         lastLoginAt: new Date(),
@@ -699,6 +732,101 @@ export class DatabaseStorage implements IStorage {
     const userApplications = this.jobApplications.get(userId) || [];
     const filteredApplications = userApplications.filter(app => app.id !== id);
     this.jobApplications.set(userId, filteredApplications);
+  }
+
+  // Job Board methods (DB-backed)
+  private jobBoardSearchWhere(userId: string, search?: string | null): SQL {
+    const userScope = eq(jobBoardSchema.userId, userId);
+    const trimmed = typeof search === "string" ? search.trim() : "";
+    if (!trimmed) return userScope;
+    const pattern = `%${trimmed}%`;
+    return and(
+      userScope,
+      or(
+        ilike(jobBoardSchema.platform, pattern),
+        ilike(jobBoardSchema.jobTitle, pattern),
+        ilike(jobBoardSchema.companyName, pattern),
+        ilike(jobBoardSchema.jobLocation, pattern),
+        ilike(jobBoardSchema.jobType, pattern),
+        ilike(jobBoardSchema.jobDescription, pattern),
+        ilike(jobBoardSchema.salaryRange, pattern),
+        ilike(jobBoardSchema.companyLink, pattern),
+      )!,
+    )!;
+  }
+
+  async getJobBoardPosts(
+    userId: string,
+    limit: number,
+    page: number,
+    search?: string | null,
+  ): Promise<SelectJobBoard[]> {
+    return await db
+      .select()
+      .from(jobBoardSchema)
+      .where(this.jobBoardSearchWhere(userId, search))
+      .orderBy(desc(jobBoardSchema.createdAt))
+      .limit(limit)
+      .offset((page - 1) * limit);
+  }
+
+  async getJobBoardPostsCount(userId: string, search?: string | null): Promise<number> {
+    const [{ count }] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(jobBoardSchema)
+      .where(this.jobBoardSearchWhere(userId, search));
+    return count ?? 0;
+  }
+
+  async createJobBoardPost(userId: string, post: InsertJobBoard): Promise<SelectJobBoard> {
+    const [row] = await db
+      .insert(jobBoardSchema)
+      .values({
+        userId,
+        ...post,
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    if (!row) throw new Error("Failed to create job board post");
+    return row;
+  }
+
+  async createNotifyMe(userId: string, data: InsertNotifyMe): Promise<SelectNotifyMe> {
+    const company = String((data as any).company || "").trim();
+    const email = String(data.email || "").trim();
+    const role = String(data.role || "").trim();
+    const status = data.status ?? "pending";
+
+    if (!company) throw new Error("Missing company");
+
+    // If user already added this email, throw a conflict error.
+    const existing = await db
+      .select()
+      .from(notifyMe)
+      .where(and(eq(notifyMe.userId, userId), eq(notifyMe.email, email)))
+      .limit(1);
+
+    if (existing.length > 0) {
+      const err: any = new Error("User has already added with this email");
+      err.code = "DUPLICATE_NOTIFY_EMAIL";
+      throw err;
+    }
+
+    const [created] = await db
+      .insert(notifyMe)
+      .values({
+        userId,
+        company,
+        email,
+        role,
+        status,
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    if (!created) throw new Error("Failed to create notify me");
+    return created;
   }
 
   // Salary Negotiator methods

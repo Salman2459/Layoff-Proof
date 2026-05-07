@@ -147,6 +147,8 @@ interface FormData {
     resume: File | null;
     /** Saved resume URL from profile (shown when user returns to step 1 so they see resume is on file) */
     resumeUrl: string | null;
+    /** Original file name for the saved resume (persisted via user_documents table) */
+    resumeFileName: string | null;
     recommendationLetters: FileList | null;
     certificates: FileList | null;
 }
@@ -370,6 +372,30 @@ function isNonEmptyString(v: unknown): v is string {
     return typeof v === "string" && v.trim().length > 0;
 }
 
+function normalizeLinkedInUrlInput(raw: unknown): string {
+    const v = typeof raw === "string" ? raw.trim() : "";
+    if (!v) return "";
+    const lower = v.toLowerCase();
+    if (lower.includes("linkedin.com")) {
+        return v.startsWith("http://") || v.startsWith("https://") ? v : `https://${v}`;
+    }
+    // If it's a single token (no spaces) treat it as a handle/slug.
+    if (!/\s/.test(v)) {
+        const handle = v.replace(/^@+/, "").replace(/^\/+|\/+$/g, "");
+        if (handle) return `https://www.linkedin.com/in/${handle}`;
+    }
+    return v;
+}
+
+function isValidLinkedInUrl(raw: unknown): boolean {
+    if (raw == null) return true;
+    const v = typeof raw === "string" ? raw.trim() : "";
+    if (!v) return true; // optional
+    const normalized = normalizeLinkedInUrlInput(v);
+    if (!/^https?:\/\//i.test(normalized)) return false;
+    return /(^|\/\/)(www\.)?linkedin\.com\//i.test(normalized);
+}
+
 function sanitizeExperiences(experiences: unknown): ExperienceItem[] {
     if (!Array.isArray(experiences)) return [];
     return experiences
@@ -415,6 +441,11 @@ function getStepSchema(step: number): Yup.ObjectSchema<Partial<FormData>> {
                     lastName: Yup.string().required('Last name is required'),
                     email: Yup.string().email('Invalid email').required('Email is required'),
                     phone: Yup.string().required('Phone is required'),
+                    linkedin: Yup.string().test(
+                        "linkedin-url",
+                        "LinkedIn must be a valid LinkedIn URL (e.g. https://www.linkedin.com/in/username)",
+                        (v) => isValidLinkedInUrl(v),
+                    ),
                 }),
             }) as Yup.ObjectSchema<Partial<FormData>>;
         case 1:
@@ -532,6 +563,7 @@ const defaultInitialValues: FormData = {
     achievements: { achievements: '' },
     resume: null,
     resumeUrl: null,
+    resumeFileName: null,
     recommendationLetters: null,
 };
 
@@ -594,6 +626,7 @@ function buildInitialFromProfile(p: Record<string, unknown>): FormData {
         },
         achievements: { achievements: defStr(p.achievements) || defaultInitialValues.achievements.achievements },
         resumeUrl: (typeof p.resume === 'string' && p.resume) ? p.resume : null,
+        resumeFileName: (typeof (p as any).resumeFileName === 'string' && (p as any).resumeFileName) ? String((p as any).resumeFileName) : null,
     };
 }
 
@@ -812,6 +845,11 @@ const AutoJobApply: React.FC = () => {
         enabled: !!id,
     });
 
+
+
+console.log("profileData", profileData);
+
+
     // Initialize form and step from profile only once when profile first loads (prevents refetches from wiping Education/Skills)
     useEffect(() => {
         if (!profileData || profileLoaded) return;
@@ -891,35 +929,70 @@ const AutoJobApply: React.FC = () => {
         },
         onSettled: () => setSavingSection(null),
     });
-    const handleFileChange = (
+    const handleFileChange = async (
         e: React.ChangeEvent<HTMLInputElement>,
         type: 'resume' | 'recommendationLetters' | 'certificates',
         setValues: (values: FormData) => void
     ) => {
         const files = e.target.files;
         if (!files || files.length === 0) return;
-        if (type === 'resume') {
-            const file = files[0];
-            const withResume = { ...latestFormValuesRef.current, resume: file };
-            latestFormValuesRef.current = withResume;
-            setValues(withResume);
-            parseResumeAndFillForm(file, setValues);
-        } else if (type === 'recommendationLetters') {
-            const prev = latestFormValuesRef.current;
-            const existingFiles = prev.recommendationLetters ? Array.from(prev.recommendationLetters) : [];
-            const dataTransfer = new DataTransfer();
-            [...existingFiles, ...Array.from(files)].forEach(f => dataTransfer.items.add(f));
-            const next = { ...prev, recommendationLetters: dataTransfer.files };
-            latestFormValuesRef.current = next;
-            setValues(next);
-        } else if (type === 'certificates') {
-            const prev = latestFormValuesRef.current;
-            const existingFiles = prev.certificates ? Array.from(prev.certificates) : [];
-            const dataTransfer = new DataTransfer();
-            [...existingFiles, ...Array.from(files)].forEach(f => dataTransfer.items.add(f));
-            const next = { ...prev, certificates: dataTransfer.files };
-            latestFormValuesRef.current = next;
-            setValues(next);
+
+        try {
+            if (type === 'resume') {
+                const file = files[0];
+                const withResume = { ...latestFormValuesRef.current, resume: file };
+                latestFormValuesRef.current = withResume;
+                setValues(withResume);
+                parseResumeAndFillForm(file, setValues);
+
+                setUploadingDocument('resume');
+                const fd = new FormData();
+                fd.append('file', file);
+                const resp = await apiRequest('POST', `/api/profile/documentupdate/${id}?documentType=resume`, fd);
+                const uploadedUrl =
+                    (resp && typeof resp === 'object' && 'url' in resp && typeof (resp as any).url === 'string')
+                        ? String((resp as any).url)
+                        : null;
+
+                const withSaved = {
+                    ...latestFormValuesRef.current,
+                    resumeUrl: uploadedUrl ?? latestFormValuesRef.current.resumeUrl,
+                    resumeFileName: file.name || latestFormValuesRef.current.resumeFileName,
+                };
+                latestFormValuesRef.current = withSaved;
+                setValues(withSaved);
+
+                toast({ title: "Success", description: "Resume uploaded successfully." });
+            } else if (type === 'recommendationLetters') {
+                const prev = latestFormValuesRef.current;
+                const existingFiles = prev.recommendationLetters ? Array.from(prev.recommendationLetters) : [];
+                const dataTransfer = new DataTransfer();
+                [...existingFiles, ...Array.from(files)].forEach(f => dataTransfer.items.add(f));
+                const next = { ...prev, recommendationLetters: dataTransfer.files };
+                latestFormValuesRef.current = next;
+                setValues(next);
+            } else if (type === 'certificates') {
+                const prev = latestFormValuesRef.current;
+                const existingFiles = prev.certificates ? Array.from(prev.certificates) : [];
+                const dataTransfer = new DataTransfer();
+                [...existingFiles, ...Array.from(files)].forEach(f => dataTransfer.items.add(f));
+                const next = { ...prev, certificates: dataTransfer.files };
+                latestFormValuesRef.current = next;
+                setValues(next);
+            }
+        } catch (error) {
+            console.error("File upload error:", error);
+            toast({
+                title: "Upload Failed",
+                description: error instanceof Error ? error.message : "An error occurred while uploading. Please try again.",
+                variant: "destructive",
+            });
+        } finally {
+            if (type === 'resume') {
+                setUploadingDocument(null);
+                // Allow selecting same file again
+                e.target.value = "";
+            }
         }
     };
 
@@ -1313,7 +1386,7 @@ const AutoJobApply: React.FC = () => {
                     accept=".pdf,.doc,.docx,.txt,.rtf"
                     ref={resumeFileRef}
                     disabled={resumeParseLoading}
-                    onChange={(e) => handleFileChange(e, 'resume', setValues)}
+                    onChange={(e) => { void handleFileChange(e, 'resume', setValues); }}
                 />
                 <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
                     <div className='flex justify-between items-center mb-2'>
@@ -1323,7 +1396,7 @@ const AutoJobApply: React.FC = () => {
                                 <Loader2 className="w-4 h-4 animate-spin" /> Auto filling form…
                             </span>
                         )}
-                        <button type="button" disabled={resumeParseLoading || uploadingDocument === 'resume'} className="px-4 py-2 lp-gradient-fill text-primary-foreground border-0 rounded-md hover:opacity-[0.97] focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2" onClick={async () => {
+                        {/* <button type="button" disabled={resumeParseLoading || uploadingDocument === 'resume'} className="px-4 py-2 lp-gradient-fill text-primary-foreground border-0 rounded-md hover:opacity-[0.97] focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2" onClick={async () => {
                             if (!values.resume) {
                                 toast({ title: "No file selected", description: "Please select a resume to upload.", variant: "destructive" });
                                 return;
@@ -1342,7 +1415,7 @@ const AutoJobApply: React.FC = () => {
                         }}>
                             {uploadingDocument === 'resume' ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                             {uploadingDocument === 'resume' ? 'Uploading…' : 'Upload'}
-                        </button>
+                        </button> */}
                     </div>
                     {values.resume ? (
                         <div className="space-y-2">
@@ -1367,7 +1440,9 @@ const AutoJobApply: React.FC = () => {
                                     <svg className="w-5 h-5 text-primary shrink-0" fill="currentColor" viewBox="0 0 20 20">
                                         <path fillRule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 0v12h8V4H6zm1 2h6v1H7V6zm0 2h6v1H7V8zm0 2h6v1H7v-1zm0 2h6v1H7v-1zm3-6a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
                                     </svg>
-                                    <span className="text-sm text-gray-700">Resume on file</span>
+                                    <span className="text-sm text-gray-700">
+                                        Resume on file{values.resumeFileName ? `: ${values.resumeFileName}` : ""}
+                                    </span>
                                     <a href={values.resumeUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline">View</a>
                                 </div>
                                 <button type="button" onClick={() => !resumeParseLoading && handleBrowseClick(resumeFileRef)} className="ml-2 text-sm text-primary hover:text-primary font-medium">Upload new</button>
@@ -1467,7 +1542,19 @@ const AutoJobApply: React.FC = () => {
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">LinkedIn URL</label>
-                        <input type="text" value={values.personal.linkedin} onChange={(e) => handleUpdate('personal', 'linkedin', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Enter your LinkedIn URL..." />
+                        <input
+                            type="text"
+                            value={values.personal.linkedin}
+                            onChange={(e) => handleUpdate('personal', 'linkedin', e.target.value, setValuesWithPrev)}
+                            onBlur={(e) => {
+                                const normalized = normalizeLinkedInUrlInput(e.target.value);
+                                if (normalized !== values.personal.linkedin) {
+                                    handleUpdate('personal', 'linkedin', normalized, setValuesWithPrev);
+                                }
+                            }}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
+                            placeholder="Enter your LinkedIn URL..."
+                        />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">X/Twitter URL</label>

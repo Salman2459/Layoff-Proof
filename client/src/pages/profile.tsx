@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { User, Bell, Smartphone, Mail } from "lucide-react";
 import GlobalHeader from "@/components/GlobalHeader";
+import { logoutViaFullPageNavigate } from "@/lib/logoutStorage";
 
 function Header() {
   const { user } = useAuth();
@@ -27,7 +28,16 @@ function Header() {
             <a href="/analytics" className="text-gray-600 hover:text-gray-900">Analytics</a>
             <a href="/profile" className="text-gray-600 hover:text-gray-900">Profile</a>
             {user ? (
-              <a href="/api/logout" className="text-gray-600 hover:text-gray-900">Sign Out</a>
+              <a
+                href="/api/logout"
+                className="text-gray-600 hover:text-gray-900"
+                onClick={(e) => {
+                  e.preventDefault();
+                  logoutViaFullPageNavigate();
+                }}
+              >
+                Sign Out
+              </a>
             ) : (
               <a href="/api/login" className="text-gray-600 hover:text-gray-900">Sign In</a>
             )}
