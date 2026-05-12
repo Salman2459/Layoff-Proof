@@ -370,6 +370,34 @@ export default function LinkedInOptimizer() {
       <GlobalHeader />
       <div className="min-h-screen bg-slate-50">
         <header className="bg-white border-b border-slate-200"><div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 text-center"><h1 className="text-4xl font-bold tracking-tight text-slate-900">AI LinkedIn Optimizer</h1><p className="mt-4 text-lg text-slate-600">Get instant, actionable feedback to land your dream job.</p></div></header>
+        <section className="py-8 px-4 sm:px-6 lg:px-8 border-b border-slate-200 bg-white/80">
+          <div className="max-w-6xl mx-auto">
+            <div className="grid gap-8 lg:grid-cols-2 lg:items-center lg:gap-10">
+              <div className="space-y-3 lg:pr-4">
+                <p className="text-sm font-semibold text-purple-600 dark:text-purple-400">Walkthrough</p>
+                <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+                  See the LinkedIn optimizer in action
+                </h2>
+                <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed max-w-md">
+                  A quick tour of how to upload your profile PDF, run the analysis, and apply AI suggestions.
+                </p>
+              </div>
+              <div className="relative mx-auto w-full max-w-md overflow-hidden rounded-xl border border-slate-200 bg-black shadow-sm aspect-video dark:border-slate-700 sm:max-w-lg lg:mx-0 lg:max-w-none">
+  <iframe
+    width="560"
+    height="315"
+    src="https://www.youtube-nocookie.com/embed/mjJMwMZeu10?si=mIU_NP5v-ei24Gqw&controls=0&autoplay=1&mute=1"
+    title="YouTube video player"
+    frameBorder={0}
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+    referrerPolicy="strict-origin-when-cross-origin"
+    allowFullScreen
+    className="absolute inset-0 h-full w-full border-0"
+  />
+</div>
+            </div>
+          </div>
+        </section>
         <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="space-y-8">
             <Card className="shadow-sm">

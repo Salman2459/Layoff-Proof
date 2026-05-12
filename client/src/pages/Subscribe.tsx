@@ -307,6 +307,7 @@ const CheckoutForm = ({
   setCoupon,
   subscriptionDraftReady,
   defaultPriceCents,
+  checkoutMode,
 }: {
   planId: string;
   planName: string;
@@ -318,6 +319,7 @@ const CheckoutForm = ({
   subscriptionDraftReady: boolean;
   /** Catalog/list price — shows Price Breakdown immediately before API returns */
   defaultPriceCents: number | null;
+  checkoutMode: "subscription" | "resume_engine";
 }) => {
   const stripe = useStripe();
   const elements = useElements();
@@ -341,6 +343,15 @@ const CheckoutForm = ({
   }, [defaultPriceCents]);
 
   useEffect(() => {
+    if (checkoutMode !== "subscription") {
+      const d = defaultBreakdownFromPlanCents(defaultPriceCents);
+      setIsCheckingCoupon(false);
+      setCouponError(null);
+      setCouponSuccessHint(null);
+      setBreakdownLoading(false);
+      if (d) setPriceBreakdown(d);
+      return;
+    }
     const seq = ++couponBreakdownSeq.current;
     const stillCurrent = () => seq === couponBreakdownSeq.current;
     const trimmed = coupon.trim();
@@ -495,7 +506,7 @@ const CheckoutForm = ({
 
     try {
 
-      if (coupon.trim() && !isCouponApplied) {
+      if (checkoutMode === "subscription" && coupon.trim() && !isCouponApplied) {
         const response = await apiRequest("POST", "/api/stripe/apply-coupon", { coupon, planId });
         const data =  response;
 
@@ -565,20 +576,29 @@ const CheckoutForm = ({
       } else if (paymentIntent && paymentIntent.status === 'succeeded') {
         console.log("✅ Payment succeeded:", paymentIntent.id);
 
-        // Confirm subscription on backend
-        const confirmData = await apiRequest("POST", "/api/stripe/confirm-subscription", {
-          planId,
-        });
-
-        if (confirmData.success) {
-          window.location.href = `${window.location.origin}/`;
-        } else {
-          toast({
-            title: "Activation Error",
-            description: "Payment succeeded but activation failed. Please contact support.",
-            variant: "destructive",
+        if (checkoutMode === "subscription") {
+          // Confirm subscription on backend
+          const confirmData = await apiRequest("POST", "/api/stripe/confirm-subscription", {
+            planId,
           });
-          setIsProcessing(false);
+
+          if (confirmData.success) {
+            window.location.href = `${window.location.origin}/`;
+          } else {
+            toast({
+              title: "Activation Error",
+              description: "Payment succeeded but activation failed. Please contact support.",
+              variant: "destructive",
+            });
+            setIsProcessing(false);
+          }
+        } else {
+          // One-time add-on payment: no subscription confirmation
+          toast({
+            title: "Payment successful",
+            description: "Your Resume Engine add-on payment was received.",
+          });
+          window.location.href = `${window.location.origin}/`;
         }
       }
     } catch (error) {
@@ -677,7 +697,11 @@ const CheckoutForm = ({
         ) : priceBreakdown?.finalAmount === 0 ? (
           <><CheckCircle className="mr-2 h-4 w-4" /> Activate Free Subscription</>
         ) : (
-          <><CreditCard className="mr-2 h-4 w-4" /> Subscribe to {planName}</>
+          <>
+            <CreditCard className="mr-2 h-4 w-4" />
+            {checkoutMode === "resume_engine" ? "Pay for " : "Subscribe to "}
+            {planName}
+          </>
         )}
       </Button>
     </form>
@@ -742,6 +766,13 @@ const PlanSelection = ({
   const [isLoading, setIsLoading] = useState<"loading" | string | null>(null);
   const [plans, setPlans] = useState<StripeCatalogProduct[]>([]);
   const [resumeEngineModalOpen, setResumeEngineModalOpen] = useState(false);
+  const [resumeEngineCheckout, setResumeEngineCheckout] = useState<{
+    clientSecret: string;
+    addonPriceCents: number;
+    jobsPerMonth: number;
+  } | null>(null);
+  const [resumeEngineCheckoutLoading, setResumeEngineCheckoutLoading] = useState(false);
+  const { toast } = useToast();
   const currentPlanCard = useMemo(() => {
     if (!dbSaysActivePaid || !hasSub) return undefined;
     return plans.find((p) => matchesPurchasedTier(p.id));
@@ -770,6 +801,42 @@ useEffect(() => {
     };
     fetchPlan();
   }, []);
+
+  const startResumeEngineCheckout = async (opts: {
+    addonPriceCents: number;
+    jobsPerMonth: number;
+  }) => {
+    setResumeEngineCheckoutLoading(true);
+    try {
+      const data = (await apiRequest(
+        "POST",
+        "/api/stripe/create-resume-engine-addon-payment",
+        {
+          addonPriceCents: opts.addonPriceCents,
+          jobsPerMonth: opts.jobsPerMonth,
+        },
+      )) as { clientSecret?: string };
+
+      if (!data?.clientSecret) throw new Error("No client secret received from server");
+
+      setResumeEngineCheckout({
+        clientSecret: data.clientSecret,
+        addonPriceCents: opts.addonPriceCents,
+        jobsPerMonth: opts.jobsPerMonth,
+      });
+    } catch (error) {
+      toast({
+        title: "Setup Error",
+        description: getApiErrorMessage(
+          error,
+          "Failed to initialize add-on payment. Please try again.",
+        ),
+        variant: "destructive",
+      });
+    } finally {
+      setResumeEngineCheckoutLoading(false);
+    }
+  };
 
 
 
@@ -847,43 +914,99 @@ useEffect(() => {
           {/* <CardDescription>{plan?.description}</CardDescription> */}
         </CardHeader>
         <CardContent>
-          <ul className="space-y-2">
-            {Object.entries(plan?.metadata ?? {}).map(([key, value], idx: number) => {
-              const label = String(value);
-              const isResumeEngine = showMarkedFeatures.some((feature) => label.includes(feature)) && 
-              !excludeFeatures.some((feature) => label.includes(feature)) ;
-              const statusIcon =
-                planIdx === 0 && showMarkedFeatures.some((feature) => label.includes(feature)) ? (
-                  <CheckCircle className="h-4 w-4 flex-shrink-0 text-green-500" />
-                ) : planIdx !== 0 ? (
-                  <CheckCircle className="h-4 w-4 flex-shrink-0 text-green-500" />
-                ) : (
-                  <XCircle className="h-4 w-4 flex-shrink-0 text-red-500" />
-                );
-              return (
-                <li key={idx} className="flex items-center gap-2">
-                  {statusIcon}
-                  <span className="text-sm text-gray-700 dark:text-gray-300">{label}  {isResumeEngine  ? "+" : ""}</span>
-                  {/* {isResumeEngine && planIdx < plans.length - 1 ? (
-                    <button
-                      type="button"
-                      className="inline-flex rounded-md p-0.5 text-blue-600 transition-colors hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-400 dark:hover:bg-blue-950/50"
-                      aria-label="Resume Engine add-on options"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setResumeEngineModalOpen(true);
-                        setPlans((pre)=>pre.map((p)=>p.id === plan.id ? {...p, isResumeEngine: true} : p));
-                      }}
-                    >
-                      <Plus className="h-4 w-4 flex-shrink-0" strokeWidth={1.2} aria-hidden />
-                    </button>
-                   
-                  ) : null} */}
-                </li>
-              );
-            })}
-          </ul>
+<ul className="space-y-2">
+  {Object.entries(plan?.metadata ?? {}).map(
+    ([key, value], idx: number) => {
+      const label = String(value);
+
+      const isResumeEngine =
+        showMarkedFeatures.some((feature) =>
+          label.includes(feature)
+        ) &&
+        !excludeFeatures.some((feature) =>
+          label.includes(feature)
+        );
+
+      const isCurrentPlan =
+        user?.subscriptionPlan === plan.id;
+
+      const isResumeEngineFeature =
+        value.startsWith("Resume Engine");
+
+      const shouldShowPlus =
+        isResumeEngine &&
+        plans.length > planIdx + 1 &&
+        (!isCurrentPlan || !isResumeEngineFeature);
+
+      const shouldShowButton =
+        isResumeEngine &&
+        isResumeEngineFeature &&
+        isCurrentPlan &&
+        plans.length > planIdx + 1;
+
+      const statusIcon =
+        planIdx === 0 &&
+        showMarkedFeatures.some((feature) =>
+          label.includes(feature)
+        ) ? (
+          <CheckCircle className="h-4 w-4 flex-shrink-0 text-green-500" />
+        ) : planIdx !== 0 ? (
+          <CheckCircle className="h-4 w-4 flex-shrink-0 text-green-500" />
+        ) : (
+          <XCircle className="h-4 w-4 flex-shrink-0 text-red-500" />
+        );
+
+      return (
+        <li
+          key={idx}
+          className="flex items-center gap-2"
+        >
+          {statusIcon}
+
+          <div className="flex items-center gap-1">
+            <span className="text-sm text-gray-700 dark:text-gray-300">
+              {label}
+              {shouldShowPlus ? " +" : ""}
+            </span>
+
+            {shouldShowButton && (
+              <button
+                type="button"
+                className="inline-flex rounded-md p-0.5 text-blue-600 transition-colors hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-blue-400 dark:hover:bg-blue-950/50"
+                aria-label="Resume Engine add-on options"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+
+                  setResumeEngineModalOpen(true);
+
+                  setPlans((prev) =>
+                    prev.map((p) =>
+                      p.id === plan.id
+                        ? {
+                            ...p,
+                            isResumeEngine: true,
+                          }
+                        : p
+                    )
+                  );
+                }}
+              >
+                <Plus
+                  className="h-4 w-4 flex-shrink-0"
+                  strokeWidth={1.2}
+                  aria-hidden
+                />
+              </button>
+            )}
+          </div>
+        </li>
+      );
+    }
+  )}
+</ul>
+
+
         </CardContent>
         {console.log("plans", plan)as any}
         <CardFooter>
@@ -916,7 +1039,13 @@ useEffect(() => {
 }
     </div>
 
-    <Dialog open={resumeEngineModalOpen} onOpenChange={setResumeEngineModalOpen}>
+    <Dialog
+      open={resumeEngineModalOpen}
+      onOpenChange={(open) => {
+        setResumeEngineModalOpen(open);
+        if (!open) setResumeEngineCheckout(null);
+      }}
+    >
       <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>Resume Engine add-on</DialogTitle>
@@ -924,7 +1053,52 @@ useEffect(() => {
             Choose how many applications you want to power with Resume Engine each month.
           </DialogDescription>
         </DialogHeader>
-        <CustomSliderCard setPlans={setPlans}   setResumeEngineModalOpen={setResumeEngineModalOpen}/>
+        {resumeEngineCheckout ? (
+          <div className="mx-auto w-full max-w-md space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setResumeEngineCheckout(null)}
+                disabled={resumeEngineCheckoutLoading}
+              >
+                Back
+              </Button>
+              <div className="text-sm text-muted-foreground">
+                {resumeEngineCheckout.jobsPerMonth.toLocaleString()} apps/mo
+              </div>
+            </div>
+
+            <h2 className="text-xl font-semibold text-center">
+              Complete Your Payment for Resume Engine add-on ({resumeEngineCheckout.jobsPerMonth.toLocaleString()} apps/mo)
+            </h2>
+
+            <Elements stripe={stripePromise} options={{ clientSecret: resumeEngineCheckout.clientSecret }}>
+              <CheckoutForm
+                planId={"resume_engine_addon"}
+                planName={`Resume Engine add-on (${resumeEngineCheckout.jobsPerMonth.toLocaleString()} apps/mo)`}
+                clientSecret={resumeEngineCheckout.clientSecret}
+                onRefreshPayment={() =>
+                  startResumeEngineCheckout({
+                    addonPriceCents: resumeEngineCheckout.addonPriceCents,
+                    jobsPerMonth: resumeEngineCheckout.jobsPerMonth,
+                  })
+                }
+                coupon={""}
+                setCoupon={() => {}}
+                subscriptionDraftReady={false}
+                defaultPriceCents={resumeEngineCheckout.addonPriceCents}
+                checkoutMode="resume_engine"
+              />
+            </Elements>
+          </div>
+        ) : (
+          <CustomSliderCard
+            setPlans={setPlans}
+            setResumeEngineModalOpen={setResumeEngineModalOpen}
+            onCheckout={startResumeEngineCheckout}
+          />
+        )}
       </DialogContent>
     </Dialog>
     </>
@@ -1189,6 +1363,7 @@ export default function Subscribe() {
                   setCoupon={setCoupon}
                   subscriptionDraftReady={subscriptionDraftReady}
                   defaultPriceCents={selectedPlan?.unitAmount ?? null}
+                  checkoutMode="subscription"
                 />
 
               </Elements>

@@ -610,6 +610,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
 
 
+  // Resume Engine add-on: one-time PaymentIntent (no subscription)
+  app.post(
+    "/api/stripe/create-resume-engine-addon-payment",
+    isAuthenticatedAny,
+    async (req, res) => {
+      try {
+        const user: any = req.user;
+        const { addonPriceCents, jobsPerMonth } = req.body as {
+          addonPriceCents?: number;
+          jobsPerMonth?: number;
+        };
+
+        if (
+          typeof addonPriceCents !== "number" ||
+          !Number.isFinite(addonPriceCents) ||
+          addonPriceCents <= 0
+        ) {
+          return res.status(400).json({ message: "Invalid add-on price." });
+        }
+
+        let stripeCustomerId = user.stripeCustomerId;
+        if (!stripeCustomerId) {
+          const customer = await stripe.customers.create({
+            email: user.email,
+            name: user.name,
+            metadata: { userId: user.id },
+          });
+          stripeCustomerId = customer.id;
+          await storage.updateUser(user.id, { stripeCustomerId });
+        }
+
+        const intent = await stripe.paymentIntents.create({
+          amount: Math.round(addonPriceCents),
+          currency: "usd",
+          customer: stripeCustomerId,
+          automatic_payment_methods: { enabled: true },
+          description: `Resume Engine add-on${typeof jobsPerMonth === "number" && Number.isFinite(jobsPerMonth) ? ` (${Math.round(jobsPerMonth)} apps/mo)` : ""}`,
+          metadata: {
+            type: "resume_engine_addon",
+            userId: String(user.id ?? ""),
+            ...(typeof jobsPerMonth === "number" && Number.isFinite(jobsPerMonth)
+              ? { jobsPerMonth: String(Math.round(jobsPerMonth)) }
+              : {}),
+            addonPriceCents: String(Math.round(addonPriceCents)),
+          },
+        });
+
+        return res.json({ clientSecret: intent.client_secret });
+      } catch (error) {
+        console.error("❌ Error creating Resume Engine add-on PaymentIntent:", error);
+        return res.status(500).json({ message: "Failed to initialize payment." });
+      }
+    },
+  );
+
   app.post(
     "/api/stripe/preview-plan-change",
     isAuthenticatedAny,

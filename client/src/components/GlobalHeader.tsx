@@ -7,7 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { User, Menu, LogOut, Settings } from "lucide-react";
+import { User, Menu, LogOut, Settings, Briefcase } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { clearClientStorageOnLogout } from "@/lib/logoutStorage";
 
@@ -66,9 +66,7 @@ function GlobalHeader() {
             <Link href="/subscribe" className={navLink("/subscribe")}>
               Subscribe
             </Link>
-           {user && <Link href="/job-board" className={navLink("/job-board")}>
-              Job Board
-            </Link>}
+          
           </nav>
 
           <div className="flex items-center gap-4">
@@ -114,6 +112,14 @@ function GlobalHeader() {
                       Profile
                     </Link>
                   </DropdownMenuItem>
+                  {user &&  <DropdownMenuItem asChild>
+                 <Link href="/job-board" className="flex w-full items-center gap-2">
+                      <Briefcase className="h-4 w-4" />
+                      Job Board
+                    </Link>
+                  </DropdownMenuItem>
+                  }
+                
                   <DropdownMenuItem
                     onClick={handleLogout}
                     className="flex items-center gap-2"

@@ -245,6 +245,21 @@ export async function handleStripeWebhook(
 
       case "payment_intent.succeeded": {
         const pi = event.data.object as Stripe.PaymentIntent;
+        if (pi.metadata?.type === "resume_engine_addon") {
+          const cid = customerIdOnly(pi.customer);
+          const userId = await resolveUserId({
+            stripeCustomerId: cid,
+            metadataUserId: pi.metadata?.userId ?? undefined,
+          });
+          if (!userId) {
+            console.warn("resume_engine_addon payment: could not resolve user", pi.id);
+            break;
+          }
+
+          // Intentionally do NOT mutate subscription fields for add-ons.
+          await storage.updateUser(userId, { stripeCustomerId: cid ?? undefined });
+          break;
+        }
         const cid = customerIdOnly(pi.customer);
         const userId = await resolveUserId({
           stripeCustomerId: cid,

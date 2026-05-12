@@ -90,12 +90,12 @@ async function fetchAndSaveLayoffs() {
         for (const category of categories) {
             console.log(`\n📊 Processing category: ${category.toUpperCase()}`);
 
-            // ✅ 1. SCRAPE LAYOFFS.FYI (only for first iteration to avoid duplicates)
+            // ✅ 1. SCRAPE warntracker.com (only for first iteration to avoid duplicates)
             if (category === "tech") {
-                console.log("Scraping layoffs.fyi...");
+                console.log("Scraping warntracker.com...");
                 try {
                     const layoffsFyiUrl = `https://api.scrapingdog.com/scrape?api_key=${SCRAPINGDOG_API_KEY}&url=${encodeURIComponent(
-                        "https://layoffs.fyi/"
+                        "https://www.warntracker.com"
                     )}&dynamic=true`;
                     const response = await fetch(layoffsFyiUrl);
 
@@ -118,19 +118,19 @@ async function fetchAndSaveLayoffs() {
                                         company,
                                         date: date || new Date().toISOString(),
                                         employees_laid_off: employees ? parseInt(employees.replace(/,/g, "")) : null,
-                                        source: "https://layoffs.fyi/",
+                                        source: "https://www.warntracker.com",
                                         location: location || null,
                                         industry: "tech",
-                                        details: `Layoff tracked by layoffs.fyi`,
+                                        details: `Layoff tracked by warntracker.com`,
                                         is_upcoming: false,
                                     });
                                 }
                             }
                         }
-                        console.log(`✓ Layoffs.fyi: Found ${allLayoffs.length} entries`);
+                        console.log(`✓ warntracker.com: Found ${allLayoffs.length} entries`);
                     }
                 } catch (err: any) {
-                    console.error("Layoffs.fyi error:", err.message);
+                    console.error("warntracker.com error:", err.message);
                 }
             }
 
@@ -568,15 +568,15 @@ function startScheduler() {
     }, initialDelayMs);
 
     // Schedule to run every hour at minute 0
-    scheduleJob("0 */6 * * *", async () => {
-        console.log(`\n⏰ [${new Date().toISOString()}] Hourly job triggered`);
-        await fetchAndSaveLayoffs();
-    });
-
-    // scheduleJob("* * * * *", async () => {
-    //     console.log(`⏰ [${new Date().toISOString()}] Job triggered every minute`);
+    // scheduleJob("0 */6 * * *", async () => {
+    //     console.log(`\n⏰ [${new Date().toISOString()}] Hourly job triggered`);
     //     await fetchAndSaveLayoffs();
     // });
+
+    scheduleJob("* * * * *", async () => {
+        console.log(`⏰ [${new Date().toISOString()}] Job triggered every minute`);
+        await fetchAndSaveLayoffs();
+    });
 
     console.log("✅ Scheduler initialized - will run every hour");
 }

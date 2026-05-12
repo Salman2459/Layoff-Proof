@@ -114,26 +114,54 @@ export default function RecruiterOutreach() {
 
       {/* Tool Description */}
       <section className="py-8 px-4 sm:px-6 lg:px-8 border-b bg-white/50">
-        <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-3xl font-bold text-gray-900 mb-4">
-            Generate Personalized Outreach Scripts
-          </h2>
-          <p className="text-lg text-gray-600 mb-6">
-            Create compelling LinkedIn DMs, cold emails, and referral requests that get noticed by recruiters.
-          </p>
-          <div className="flex flex-wrap justify-center gap-4">
-            <Badge variant="secondary" className="bg-indigo-100 text-indigo-800">
-              <Target className="w-3 h-3 mr-1" />
-              Personalized
-            </Badge>
-            <Badge variant="secondary" className="bg-purple-100 text-purple-800">
-              <Sparkles className="w-3 h-3 mr-1" />
-              AI Powered
-            </Badge>
-            <Badge variant="secondary" className="bg-pink-100 text-pink-800">
-              <MessageSquare className="w-3 h-3 mr-1" />
-              Multi-platform
-            </Badge>
+        <div className="max-w-6xl mx-auto">
+          <div className="max-w-4xl mx-auto text-center">
+            <h2 className="text-3xl font-bold text-gray-900 mb-4">
+              Generate Personalized Outreach Scripts
+            </h2>
+            <p className="text-lg text-gray-600 mb-6">
+              Create compelling LinkedIn DMs, cold emails, and referral requests that get noticed by recruiters.
+            </p>
+            <div className="flex flex-wrap justify-center gap-4">
+              <Badge variant="secondary" className="bg-indigo-100 text-indigo-800">
+                <Target className="w-3 h-3 mr-1" />
+                Personalized
+              </Badge>
+              <Badge variant="secondary" className="bg-purple-100 text-purple-800">
+                <Sparkles className="w-3 h-3 mr-1" />
+                AI Powered
+              </Badge>
+              <Badge variant="secondary" className="bg-pink-100 text-pink-800">
+                <MessageSquare className="w-3 h-3 mr-1" />
+                Multi-platform
+              </Badge>
+            </div>
+          </div>
+          <div className="grid gap-8 lg:grid-cols-2 lg:items-center lg:gap-10 mt-8">
+            <div className="space-y-3 lg:pr-4 text-left">
+              <p className="text-sm font-semibold text-purple-600 dark:text-purple-400">
+                Walkthrough
+              </p>
+              <h3 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                See recruiter outreach in action
+              </h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed max-w-md">
+                A quick tour of how to generate scripts and tailor them before you reach out.
+              </p>
+            </div>
+            <div className="relative mx-auto w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-black shadow-sm aspect-video dark:border-gray-700 sm:max-w-lg lg:mx-0 lg:max-w-none">
+  <iframe
+    width="560"
+    height="315"
+    src="https://www.youtube-nocookie.com/embed/HdGQ1lClP3E?si=3YVDf6AiestQJl0Z&controls=0&autoplay=1&mute=1"
+    title="YouTube video player"
+    frameBorder={0}
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+    referrerPolicy="strict-origin-when-cross-origin"
+    allowFullScreen
+    className="absolute inset-0 h-full w-full border-0"
+  />
+</div>
           </div>
         </div>
       </section>

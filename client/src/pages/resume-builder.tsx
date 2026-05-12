@@ -1707,6 +1707,32 @@ export default function ResumeBuilder() {
   const renderSelectStep = () => (
     <div className="max-w-4xl mx-auto space-y-8">
       <ProgressStepper steps={steps} currentStepIndex={getCurrentStepIndex()} />
+      <div className="grid gap-8 lg:grid-cols-2 lg:items-center lg:gap-10">
+        <div className="space-y-3 lg:pr-4">
+          <p className="text-sm font-semibold text-purple-600 dark:text-purple-400">
+            Walkthrough
+          </p>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+            See the AI resume builder in action
+          </h2>
+          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed max-w-md">
+            A quick tour of Layoff Proof before you upload, import from LinkedIn, or start from scratch.
+          </p>
+        </div>
+        <div className="relative mx-auto w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-black shadow-sm aspect-video dark:border-gray-700 sm:max-w-lg lg:mx-0 lg:max-w-none">
+  <iframe
+    width="560"
+    height="315"
+    src="https://www.youtube-nocookie.com/embed/WXevDBbbB9Y?si=UgspCe-piClvB3ry&controls=0&autoplay=1&mute=1"
+    title="YouTube video player"
+    frameBorder={0}
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+    referrerPolicy="strict-origin-when-cross-origin"
+    allowFullScreen
+    className="absolute inset-0 h-full w-full border-0"
+  />
+</div>
+      </div>
       <div className="text-center">
         <div className="bg-blue-50 dark:bg-blue-950 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
           <FileText className="w-8 h-8 text-blue-600 dark:text-blue-400" />

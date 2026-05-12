@@ -1,4 +1,3 @@
-import { ConsoleLogWriter } from "drizzle-orm";
 import { useState } from "react";
 
 const plans = [
@@ -12,29 +11,39 @@ const plans = [
   { jobs: 2000, sub: undefined, price: 17900 },
 ] as const;
 
-export const CustomSliderCard = ({ setPlans, setResumeEngineModalOpen }: { setPlans: (plans: any) => void, setResumeEngineModalOpen: (open: boolean) => void }) => {
+export const CustomSliderCard = ({
+  setPlans,
+  setResumeEngineModalOpen,
+  onCheckout,
+}: {
+  setPlans: (plans: any) => void;
+  setResumeEngineModalOpen: (open: boolean) => void;
+  onCheckout?: (opts: { addonPriceCents: number; jobsPerMonth: number }) => void;
+}) => {
   const [index, setIndex] = useState(0);
   const current = plans[index];
   const max = plans.length - 1;
   const fillPct = max === 0 ? 0 : (index / max) * 100;
 
-const getMyPlan = () => {  
-  setPlans((prev: any) => 
+  const getMyPlan = () => {
+    onCheckout?.({ addonPriceCents: current.price, jobsPerMonth: current.jobs });
+  setPlans((prev: any) =>
     prev.map((p: any) => {
       if (p.isResumeEngine === true) {
         return {
           ...p,
-          default_price: {
-            ...p.default_price,
-            unit_amount: p.default_price.unit_amount + current.price
-          }
+          resumeEngineAddon: {
+            jobsPerMonth: current.jobs,
+            addonPriceCents: current.price,
+          },
         };
       }
       return p;
-    })
+    }),
   );
-  setResumeEngineModalOpen(false);
-}
+  // If we’re launching checkout inside the modal, keep it open.
+  if (!onCheckout) setResumeEngineModalOpen(false);
+  };
 
 
   return (

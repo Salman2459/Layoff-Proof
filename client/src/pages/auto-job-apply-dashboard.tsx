@@ -329,7 +329,7 @@ interface InstallExtensionModalProps {
 function InstallExtensionModal({ isOpen, onClose }: InstallExtensionModalProps) {
     if (!isOpen) return null;
 
-    const EXTENSION_URL = `https://chromewebstore.google.com/detail/${import.meta.env.Vite_EXTENSION_ID}?utm_source=item-share-cb`;
+    const EXTENSION_URL = `https://chromewebstore.google.com/detail/${import.meta.env.VITE_EXTENSION_ID}?utm_source=item-share-cb`;
 
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -409,74 +409,87 @@ export default function AutoJobApplyDashboard() {
 
 
 
-    // Extension Installation Check
+    // Extension Installation Check — runs once on mount and on window focus,
+    // result is cached so Launch clicks open the correct modal instantly.
+    //
+    // Detection strategy (most → least reliable):
+    //   1. chrome.runtime.sendMessage(extensionId, { action: "Check Extension" })
+    //      — uses the extension's existing onMessageExternal handler. This is
+    //      the most reliable path because `externally_connectable` in the
+    //      manifest whitelists this origin, so it works even before the
+    //      content script has injected.
+    //   2. postMessage PING — falls back to the content script handshake
+    //      (handled in content.ts) for browsers/contexts where chrome.runtime
+    //      isn't exposed to web pages.
     const [isExtensionInstalled, setIsExtensionInstalled] = React.useState<boolean | null>(null);
     const checkExtensionInstalled = React.useCallback(() => {
         return new Promise<boolean>((resolve) => {
-            const extensionId = import.meta.env.Vite_EXTENSION_ID;
-            if (typeof window === "undefined") {
+            const extensionId = import.meta.env.VITE_EXTENSION_ID;
+            if (typeof window === "undefined" || !extensionId) {
                 setIsExtensionInstalled(false);
                 resolve(false);
                 return;
             }
 
-            // Best-practice for web pages: handshake with the extension content script via postMessage.
-            // (chrome.runtime.sendMessage is not reliably available from normal web pages.)
-            const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-            const timeoutMs = 900;
+            let settled = false;
+            const finish = (installed: boolean) => {
+                if (settled) return;
+                settled = true;
+                window.removeEventListener("message", onPostMessage);
+                clearTimeout(timer);
+                setIsExtensionInstalled(installed);
+                resolve(installed);
+            };
 
-            const onMessage = (event: MessageEvent) => {
+            // ── Path 2 (concurrent backup): postMessage PING/PONG ─────────
+            const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+            const onPostMessage = (event: MessageEvent) => {
                 if (event.source !== window) return;
                 const data = event.data;
                 if (!data || typeof data !== "object") return;
                 if (data?.source !== "LP_EXTENSION") return;
                 if (data?.type !== "PONG") return;
                 if (data?.nonce !== nonce) return;
-                // Require background reachability to avoid false positives
-                // (a stale content script can sometimes remain alive until tab refresh).
-                if (data?.backgroundOk !== true) return;
-
-                window.removeEventListener("message", onMessage);
-                clearTimeout(timer);
-                setIsExtensionInstalled(true);
-                resolve(true);
+                finish(true);
             };
-
-            const timer = window.setTimeout(() => {
-                window.removeEventListener("message", onMessage);
-
-                // Fallback: only try chrome.runtime if it's truly available.
-                const sendMessage = (window as any)?.chrome?.runtime?.sendMessage;
-                if (typeof sendMessage !== "function") {
-                    setIsExtensionInstalled(false);
-                    resolve(false);
-                    return;
-                }
-
-                try {
-                    sendMessage(extensionId, { action: "PING" }, () => {
-                        const lastError = (window as any)?.chrome?.runtime?.lastError;
-                        if (lastError) {
-                            setIsExtensionInstalled(false);
-                            resolve(false);
-                        } else {
-                            setIsExtensionInstalled(true);
-                            resolve(true);
-                        }
-                    });
-                } catch {
-                    setIsExtensionInstalled(false);
-                    resolve(false);
-                }
-            }, timeoutMs);
-
-            window.addEventListener("message", onMessage);
+            window.addEventListener("message", onPostMessage);
             window.postMessage(
                 { source: "LP_WEBAPP", type: "PING", nonce, extensionId },
                 window.location.origin,
             );
+
+            // ── Path 1 (primary): chrome.runtime.sendMessage ──────────────
+            const sendMessage = (window as any)?.chrome?.runtime?.sendMessage;
+            if (typeof sendMessage === "function") {
+                try {
+                    sendMessage(extensionId, { action: "Check Extension" }, (response: any) => {
+                        const lastError = (window as any)?.chrome?.runtime?.lastError;
+                        if (lastError) {
+                            // Don't finish(false) here — let postMessage / timer decide,
+                            // because lastError can fire for benign reasons (e.g.
+                            // origin not yet in externally_connectable cache after install).
+                            return;
+                        }
+                        if (response?.installed === true) finish(true);
+                    });
+                } catch {
+                    // ignore — postMessage path or timer will resolve.
+                }
+            }
+
+            // Safety timeout — both paths usually respond in <50 ms when alive.
+            const timer = window.setTimeout(() => finish(false), 500);
         });
     }, []);
+
+    // Run extension probe once on mount and whenever tab regains focus
+    // (so installing/uninstalling the extension updates UI without a refresh).
+    React.useEffect(() => {
+        checkExtensionInstalled();
+        const onFocus = () => { checkExtensionInstalled(); };
+        window.addEventListener("focus", onFocus);
+        return () => window.removeEventListener("focus", onFocus);
+    }, [checkExtensionInstalled]);
 
     // Fetch full job profile from DB — /api/profile/jobprofile/:id (queries by userId)
     const { data: profileData, isLoading } = useQuery<ProfileData | null>({
@@ -497,10 +510,8 @@ export default function AutoJobApplyDashboard() {
     const [isLaunchModalOpen, setIsLaunchModalOpen] = React.useState(false);
     const [isInstallModalOpen, setIsInstallModalOpen] = React.useState(false);
 
-    const handleLaunch = async (platform: string) => {
-        const isInstalled = await checkExtensionInstalled();
-
-        if (!isInstalled) {
+    const openLaunchOrInstall = (platform: string, installed: boolean) => {
+        if (!installed) {
             setIsInstallModalOpen(true);
             return;
         }
@@ -513,10 +524,20 @@ export default function AutoJobApplyDashboard() {
             window.location.href = '/subscribe';
             return;
         }
-
         setHasSubscription(true);
         setSelectedPlatform(platform);
         setIsLaunchModalOpen(true);
+    };
+
+    const handleLaunch = async (platform: string) => {
+        // Fast path: probe already finished on mount → open modal instantly.
+        if (isExtensionInstalled !== null) {
+            openLaunchOrInstall(platform, isExtensionInstalled);
+            return;
+        }
+        // First click before probe finishes — fall back to awaiting it once.
+        const installed = await checkExtensionInstalled();
+        openLaunchOrInstall(platform, installed);
     };
 
     const buildPlatformUrl = (platformName: string | null, filters: any): string => {
@@ -562,7 +583,7 @@ export default function AutoJobApplyDashboard() {
         const url = buildPlatformUrl(selectedPlatform, filters);
 
         // Send message to extension (recommended: postMessage → content script → background)
-        const extensionId = import.meta.env.Vite_EXTENSION_ID;
+        const extensionId = import.meta.env.VITE_EXTENSION_ID;
         const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
         if (typeof window !== 'undefined') {
@@ -714,6 +735,30 @@ export default function AutoJobApplyDashboard() {
             </div>
 
             <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+                <div className="grid gap-8 lg:grid-cols-2 lg:items-center lg:gap-10">
+                    <div className="space-y-3 lg:pr-4">
+                        <p className="text-sm font-semibold text-purple-600">Walkthrough</p>
+                        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                            See AI auto-apply in action
+                        </h2>
+                        <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed max-w-md">
+                            A quick tour of the dashboard and supported job boards before you start applying.
+                        </p>
+                    </div>
+                    <div className="relative mx-auto w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-black shadow-sm aspect-video dark:border-gray-700 sm:max-w-lg lg:mx-0 lg:max-w-none">
+  <iframe
+    width="560"
+    height="315"
+    src="https://www.youtube-nocookie.com/embed/O--eX6ahffM?si=SCsvpaJzCWwGZmjR&controls=0&autoplay=1&mute=1"
+    title="YouTube video player"
+    frameBorder={0}
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+    referrerPolicy="strict-origin-when-cross-origin"
+    allowFullScreen
+    className="absolute inset-0 h-full w-full border-0"
+  />
+</div>
+                </div>
 
                 {/* ── Profile Summary + Completion (side-by-side on large screens) ── */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

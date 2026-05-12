@@ -352,74 +352,19 @@ export default function ElevateLanding() {
             </div>
           </div>
 
-          {/* Right Column - Image */}
-          <div className="relative">
-            <div className="lp-ring-frame overflow-hidden shadow-2xl shadow-teal-500/15">
-              <div className="rounded-[13px] bg-card p-8">
-                <div className="space-y-6">
-                  {/* Mock Dashboard Preview */}
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-semibold text-card-foreground">
-                      Career Dashboard
-                    </h3>
-                    <Badge className="bg-green-100 text-green-700">Active</Badge>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="rounded-lg bg-teal-500/10 p-4 dark:bg-teal-500/15">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-2xl font-bold text-primary">85%</p>
-                          <p className="text-sm text-muted-foreground">
-                            Profile Score
-                          </p>
-                        </div>
-                        <TrendingUp className="h-8 w-8 text-primary" />
-                      </div>
-                    </div>
-                    <div className="rounded-lg bg-violet-500/10 p-4 dark:bg-violet-500/15">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-2xl font-bold text-violet-600 dark:text-violet-400">
-                            12
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            Applications
-                          </p>
-                        </div>
-                        <Award className="h-8 w-8 text-violet-500 dark:text-violet-400" />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between rounded-lg bg-muted/60 p-3">
-                      <span className="text-sm font-medium">Resume Score</span>
-                      <div className="h-2 w-24 rounded-full bg-muted">
-                        <div className="h-2 w-20 rounded-full bg-primary" />
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between rounded-lg bg-muted/60 p-3">
-                      <span className="text-sm font-medium">
-                        LinkedIn Optimization
-                      </span>
-                      <div className="h-2 w-24 rounded-full bg-muted">
-                        <div className="h-2 w-full rounded-full bg-emerald-500" />
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between rounded-lg bg-muted/60 p-3">
-                      <span className="text-sm font-medium">
-                        Interview Readiness
-                      </span>
-                      <div className="h-2 w-24 rounded-full bg-muted">
-                        <div className="h-2 w-16 rounded-full bg-violet-500" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <div className="relative aspect-video w-full overflow-hidden rounded-xl">
+  <iframe
+    width="560"
+    height="315"
+    src="https://www.youtube-nocookie.com/embed/odnex9mQJI4?si=hlcj1UlplWQDCLZB&controls=0&autoplay=1&mute=1"
+    title="YouTube video player"
+    frameBorder={0}
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+    referrerPolicy="strict-origin-when-cross-origin"
+    allowFullScreen
+    className="absolute inset-0 h-full w-full border-0"
+  />
+</div>
         </div>
       </main>
 
@@ -530,7 +475,7 @@ export default function ElevateLanding() {
       {/* Footer */}
       <footer className="lp-footer relative">
         <div className="relative z-[2] mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 gap-8 md:grid-cols-4">
+          <div className="flex flex-row gap-8 justify-between items-center">
             <div className="space-y-4">
               <Link href="/" className="flex items-center gap-2">
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg lp-gradient-fill shadow-md shadow-teal-600/20 ring-1 ring-primary/20">
@@ -542,12 +487,12 @@ export default function ElevateLanding() {
                   Layoff Proof
                 </span>
               </Link>
-              <p className="max-w-xs text-sm leading-relaxed text-muted-foreground">
+              <p className=" text-sm leading-relaxed text-muted-foreground">
                 Empowering careers with AI-powered tools and insights.
               </p>
             </div>
 
-            <div>
+            <div className="clear-both">
               <h3 className="mb-4 text-xs font-semibold uppercase tracking-[0.18em] text-primary">
                 Tools
               </h3>
@@ -562,7 +507,7 @@ export default function ElevateLanding() {
                 </li>
                 <li>
                   <Link
-                    href="/tools/cover-letter-generator"
+                    href="/tools/cover-letter"
                     className="transition-colors hover:text-primary"
                   >
                     Cover Letter Generator
@@ -587,7 +532,7 @@ export default function ElevateLanding() {
               </ul>
             </div>
 
-            <div>
+            {/* <div>
               <h3 className="mb-4 text-xs font-semibold uppercase tracking-[0.18em] text-primary">
                 Company
               </h3>
@@ -639,7 +584,7 @@ export default function ElevateLanding() {
                   </a>
                 </li>
               </ul>
-            </div>
+            </div> */}
           </div>
 
           <div className="mt-8 border-t border-border pt-8">

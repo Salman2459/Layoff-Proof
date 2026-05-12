@@ -449,6 +449,35 @@ export default function NetworkingAssistant() {
         </div>
       </div>
 
+      <section className="py-8 px-4 sm:px-6 lg:px-8 border-b border-violet-100/80 bg-white/60 backdrop-blur-sm">
+        <div className="max-w-6xl mx-auto">
+          <div className="grid gap-8 lg:grid-cols-2 lg:items-center lg:gap-10">
+            <div className="space-y-3 lg:pr-4">
+              <p className="text-sm font-semibold text-purple-600 dark:text-purple-400">Walkthrough</p>
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                See the networking assistant in action
+              </h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed max-w-md">
+                A quick tour of contacts, AI message ideas, and follow-ups so you know how the tool fits your workflow.
+              </p>
+            </div>
+            <div className="relative mx-auto w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-black shadow-sm aspect-video dark:border-gray-700 sm:max-w-lg lg:mx-0 lg:max-w-none">
+  <iframe
+    width="560"
+    height="315"
+    src="https://www.youtube-nocookie.com/embed/czG6g6cId-0?si=USq-X550AMYm9ZK3&controls=0&autoplay=1&mute=1"
+    title="YouTube video player"
+    frameBorder={0}
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+    referrerPolicy="strict-origin-when-cross-origin"
+    allowFullScreen
+    className="absolute inset-0 h-full w-full border-0"
+  />
+</div>
+          </div>
+        </div>
+      </section>
+
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
