@@ -7,6 +7,7 @@ import {
   companyActivities,
   userCompanySubscriptions,
   magicLinkTokens,
+  passwordResetTokens,
   promotionPlans,
   salaryResearch,
   jobBoardSchema,
@@ -27,6 +28,8 @@ import {
   type UpdateUserProfile,
   type InsertMagicLinkToken,
   type MagicLinkToken,
+  type InsertPasswordResetToken,
+  type PasswordResetToken,
   type SelectPromotionPlan,
   type InsertPromotionPlan,
   type SelectJobBoard,
@@ -89,6 +92,15 @@ export interface IStorage {
   createMagicLinkToken(token: InsertMagicLinkToken): Promise<MagicLinkToken>;
   getMagicLinkToken(token: string): Promise<MagicLinkToken | undefined>;
   useMagicLinkToken(token: string): Promise<void>;
+
+  createPasswordResetToken(
+    row: InsertPasswordResetToken,
+  ): Promise<PasswordResetToken>;
+  getPasswordResetToken(token: string): Promise<PasswordResetToken | undefined>;
+  usePasswordResetToken(token: string): Promise<void>;
+  deletePasswordResetToken(token: string): Promise<void>;
+  invalidateUnusedPasswordResetTokensForUser(userId: string): Promise<void>;
+
   getUserByEmail(email: string): Promise<User | undefined>;
   getUserByStripeCustomerId(stripeCustomerId: string): Promise<User | undefined>;
 
@@ -514,11 +526,58 @@ export class DatabaseStorage implements IStorage {
       .where(eq(magicLinkTokens.token, token));
   }
 
+  async createPasswordResetToken(
+    row: InsertPasswordResetToken,
+  ): Promise<PasswordResetToken> {
+    const [created] = await db
+      .insert(passwordResetTokens)
+      .values(row)
+      .returning();
+    return created;
+  }
+
+  async getPasswordResetToken(
+    token: string,
+  ): Promise<PasswordResetToken | undefined> {
+    const [row] = await db
+      .select()
+      .from(passwordResetTokens)
+      .where(eq(passwordResetTokens.token, token));
+    return row;
+  }
+
+  async usePasswordResetToken(token: string): Promise<void> {
+    await db
+      .update(passwordResetTokens)
+      .set({ usedAt: new Date() })
+      .where(eq(passwordResetTokens.token, token));
+  }
+
+  async deletePasswordResetToken(token: string): Promise<void> {
+    await db
+      .delete(passwordResetTokens)
+      .where(eq(passwordResetTokens.token, token));
+  }
+
+  async invalidateUnusedPasswordResetTokensForUser(
+    userId: string,
+  ): Promise<void> {
+    await db
+      .delete(passwordResetTokens)
+      .where(
+        and(
+          eq(passwordResetTokens.userId, userId),
+          isNull(passwordResetTokens.usedAt),
+        ),
+      );
+  }
+
   async getUserByEmail(email: string): Promise<User | undefined> {
+    const normalized = email.trim().toLowerCase();
     const [user] = await db
       .select()
       .from(users)
-      .where(eq(users.email, email.toLowerCase()));
+      .where(sql`lower(${users.email}) = ${normalized}`);
     return user;
   }
 

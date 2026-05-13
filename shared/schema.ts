@@ -63,6 +63,21 @@ export const magicLinkTokens = pgTable("magic_link_tokens", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const passwordResetTokens = pgTable(
+  "password_reset_tokens",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    token: varchar("token").notNull().unique(),
+    expiresAt: timestamp("expires_at").notNull(),
+    usedAt: timestamp("used_at"),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => [index("IDX_password_reset_user").on(table.userId)],
+);
+
 export const companies = pgTable("companies", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: varchar("name").notNull(),
@@ -254,6 +269,9 @@ export type User = typeof users.$inferSelect;
 export type InsertMagicLinkToken = typeof magicLinkTokens.$inferInsert;
 export type MagicLinkToken = typeof magicLinkTokens.$inferSelect;
 
+export type InsertPasswordResetToken = typeof passwordResetTokens.$inferInsert;
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
+
 // Magic link schemas
 export const createMagicLinkSchema = createInsertSchema(magicLinkTokens).pick({
   email: true,
@@ -272,9 +290,20 @@ export const loginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
+export const forgotPasswordRequestSchema = z.object({
+  email: z.string().email("Valid email is required"),
+});
+
+export const resetPasswordRequestSchema = z.object({
+  token: z.string().min(1, "Reset link is required"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+});
+
 export type CreateMagicLinkRequest = z.infer<typeof createMagicLinkSchema>;
 export type SignupRequest = z.infer<typeof signupSchema>;
 export type LoginRequest = z.infer<typeof loginSchema>;
+export type ForgotPasswordRequest = z.infer<typeof forgotPasswordRequestSchema>;
+export type ResetPasswordRequest = z.infer<typeof resetPasswordRequestSchema>;
 export type Company = typeof companies.$inferSelect;
 export type InsertCompany = z.infer<typeof insertCompanySchema>;
 export type LayoffEvent = typeof layoffEvents.$inferSelect;

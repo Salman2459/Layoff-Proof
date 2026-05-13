@@ -1,13 +1,51 @@
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 import { Express, RequestHandler } from 'express';
 import './types'; // Import session and request type extensions
 import { destroyUserSession } from './sessionLogout';
 import { storage } from './storage';
-import { signupSchema, loginSchema, SignupRequest, LoginRequest } from '@shared/schema';
+import {
+  signupSchema,
+  loginSchema,
+  forgotPasswordRequestSchema,
+  resetPasswordRequestSchema,
+  SignupRequest,
+  LoginRequest,
+} from '@shared/schema';
 import { signJwt, verifyJwt } from "./jwt";
+import { sendEmail } from "./emailService";
 
 const SALT_ROUNDS = 10;
 const JWT_EXPIRES_SECONDS = 7 * 24 * 60 * 60; // 7 days
+const PASSWORD_RESET_EXPIRY_MINUTES = 60;
+
+function passwordResetEmailHtml(firstName: string | null, resetUrl: string) {
+  const name = firstName?.trim() || "there";
+  return `<p>Hi ${escapeHtml(name)},</p>
+<p>We received a request to reset your Layoff Proof password. Use the link below to choose a new password. It expires in ${PASSWORD_RESET_EXPIRY_MINUTES} minutes.</p>
+<p><a href="${resetUrl}">Reset your password</a></p>
+<p>If you did not request this, you can ignore this email.</p>`;
+}
+
+function escapeHtml(s: string) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function appOrigin(req: Parameters<RequestHandler>[0]) {
+  const fromEnv = process.env.PUBLIC_APP_URL?.replace(/\/$/, "");
+  if (fromEnv) return fromEnv;
+  return `${req.protocol}://${req.get("host")}`;
+}
+
+/** True if the user has a bcrypt password hash (email signup, or email then linked Google). */
+function hasPasswordHashForReset(user: { password: string | null }): boolean {
+  const p = user.password;
+  return typeof p === "string" && p.length > 0 && p.startsWith("$2");
+}
 
 export function setupPasswordAuth(app: Express) {
   // Email/Password signup
@@ -21,7 +59,9 @@ export function setupPasswordAuth(app: Express) {
         });
       }
 
-      const { firstName, lastName, email, password }: SignupRequest = validation.data;
+      const { firstName, lastName, email: rawEmail, password }: SignupRequest =
+        validation.data;
+      const email = rawEmail.trim().toLowerCase();
 
       // Check if user already exists
       const existingUser = await storage.getUserByEmail(email);
@@ -95,16 +135,17 @@ export function setupPasswordAuth(app: Express) {
         });
       }
 
-      const { email, password }: LoginRequest = validation.data;
+      const { email: rawEmail, password }: LoginRequest = validation.data;
+      const email = rawEmail.trim().toLowerCase();
 
       // Find user
       const user = await storage.getUserByEmail(email);
-      if (!user || user.authProvider !== 'email' || !user.password) {
+      if (!user || !hasPasswordHashForReset(user)) {
         return res.status(401).json({ error: 'Invalid email or password' });
       }
 
       // Verify password
-      const isValidPassword = await bcrypt.compare(password, user.password);
+      const isValidPassword = await bcrypt.compare(password, user.password!);
       if (!isValidPassword) {
         return res.status(401).json({ error: 'Invalid email or password' });
       }
@@ -152,6 +193,104 @@ export function setupPasswordAuth(app: Express) {
     } catch (error) {
       console.error('Login error:', error);
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  const forgotPasswordResponse = {
+    success: true as const,
+    message:
+      "If an account exists for that email, you will receive password reset instructions shortly.",
+  };
+
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    try {
+      const validation = forgotPasswordRequestSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({
+          error: "Validation failed",
+          details: validation.error.issues,
+        });
+      }
+
+      const email = validation.data.email.trim().toLowerCase();
+      const user = await storage.getUserByEmail(email);
+
+      if (!user || !hasPasswordHashForReset(user)) {
+        return res.json(forgotPasswordResponse);
+      }
+
+      await storage.invalidateUnusedPasswordResetTokensForUser(user.id);
+      const token = crypto.randomBytes(32).toString("hex");
+      const expiresAt = new Date(
+        Date.now() + PASSWORD_RESET_EXPIRY_MINUTES * 60 * 1000,
+      );
+      await storage.createPasswordResetToken({ userId: user.id, token, expiresAt });
+
+      const resetUrl = `${appOrigin(req)}/reset-password?token=${encodeURIComponent(token)}`;
+      const html = passwordResetEmailHtml(user.firstName ?? null, resetUrl);
+      const sent = await sendEmail({
+        to: email,
+        subject: "Reset your Layoff Proof password",
+        html,
+      });
+
+      if (!sent) {
+        console.error("Forgot password: failed to send email to", email);
+        if (process.env.NODE_ENV === "development") {
+          console.warn(
+            "\n========== PASSWORD RESET (dev: email not sent) ==========\n" +
+              resetUrl +
+              "\n============================================================\n",
+          );
+        } else {
+          await storage.deletePasswordResetToken(token);
+        }
+      }
+
+      return res.json(forgotPasswordResponse);
+    } catch (error) {
+      console.error("Forgot password error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/auth/reset-password", async (req, res) => {
+    try {
+      const validation = resetPasswordRequestSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({
+          error: "Validation failed",
+          details: validation.error.issues,
+        });
+      }
+
+      const { token, password } = validation.data;
+      const row = await storage.getPasswordResetToken(token);
+
+      if (!row || row.usedAt || new Date() > row.expiresAt) {
+        return res.status(400).json({
+          error: "Invalid or expired reset link. Please request a new password reset.",
+        });
+      }
+
+      const user = await storage.getUser(row.userId);
+      if (!user || !hasPasswordHashForReset(user)) {
+        return res.status(400).json({
+          error: "Invalid or expired reset link. Please request a new password reset.",
+        });
+      }
+
+      const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
+      await storage.updateUser(user.id, { password: hashedPassword });
+      await storage.usePasswordResetToken(token);
+
+      res.json({
+        success: true,
+        message: "Your password has been updated. You can sign in now.",
+      });
+    } catch (error) {
+      console.error("Reset password error:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
   });
 

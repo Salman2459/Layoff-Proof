@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Switch, Route } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -31,6 +31,8 @@ const PortfolioBuilder = lazy(() => import("@/pages/portfolio-builder"));
 const NetworkingAssistant = lazy(() => import("@/pages/networking-assistant"));
 const Signup = lazy(() => import("@/pages/Signup"));
 const Login = lazy(() => import("@/pages/Login"));
+const ForgotPassword = lazy(() => import("@/pages/forgot-password"));
+const ResetPassword = lazy(() => import("@/pages/reset-password"));
 const Subscribe = lazy(() => import("@/pages/Subscribe"));
 const AutoJobApply = lazy(() => import("@/pages/auto-job-apply"));
 const AutoJobApplyDashboard = lazy(
@@ -40,11 +42,26 @@ const JobBoardPage = lazy(() => import("@/pages/job-board"));
 const PrivacyPolicyPage = lazy(() => import("@/pages/privacy-policy"));
 
 function Router() {
+
+  useEffect(() => {
+    const script = document.createElement("script");
+    script.src = "//code.tidio.co/eijmmrvjhztkzw9by8dvmiysdyjyejni.js";
+    script.async = true;
+    document.body.appendChild(script);
+
+    return () => {
+      document.body.removeChild(script); // Cleanup on unmount
+    };
+  }, []);
+
+  
   return (
     <Suspense fallback={<PageLoader overlay />}>
     <Switch>
       <Route path="/signup" component={Signup} />
       <Route path="/login" component={Login} />
+      <Route path="/forgot-password" component={ForgotPassword} />
+      <Route path="/reset-password" component={ResetPassword} />
       <Route path="/auth" component={AuthEnhanced} />
       <Route path="/magic-login" component={MagicLogin} />
 
