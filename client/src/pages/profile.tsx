@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import PhoneInput from "react-phone-input-2";
+import "react-phone-input-2/lib/style.css";
 import { useAuth } from "@/hooks/useAuth";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -233,12 +235,21 @@ export default function Profile() {
 
                   <div className="space-y-2">
                     <Label htmlFor="phoneNumber">Phone Number</Label>
-                    <Input
-                      id="phoneNumber"
-                      type="tel"
-                      value={formData.phoneNumber}
-                      onChange={(e) => handleInputChange('phoneNumber', e.target.value)}
-                      placeholder="Enter your phone number"
+                    <PhoneInput
+                      country="us"
+                      value={formData.phoneNumber.replace(/\D/g, "")}
+                      onChange={(value) =>
+                        handleInputChange("phoneNumber", value || "")
+                      }
+                      inputProps={{
+                        id: "phoneNumber",
+                        name: "phoneNumber",
+                        autoComplete: "tel",
+                      }}
+                      containerClass="w-full"
+                      inputClass="!w-full !h-10  !py-2 !border !border-gray-300 !rounded-md !shadow-sm focus:!ring-primary focus:!border-primary"
+                      dropdownClass="!z-[60]"
+                      placeholder="Enter your phone..."
                     />
                   </div>
 

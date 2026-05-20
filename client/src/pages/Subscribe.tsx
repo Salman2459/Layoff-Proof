@@ -121,8 +121,8 @@ const showcase = [
 
 const faqs = [
   {
-    q: "How does the 7-day free trial work?",
-    a: "Start your free trial with no credit card required. You'll have access to basic features for 7 days. After the trial, continue with full access until you choose to cancel or your account will be paused until you choose to subscribe.",
+    q: "When do I get access to the tools?",
+    a: "As soon as your subscription payment is confirmed, your account is activated and you can use every AI career tool. There is no free trial — a paid plan is required to use the platform.",
   },
   {
     q: "Can I cancel anytime?",
@@ -928,7 +928,7 @@ useEffect(() => {
         );
 
       const isCurrentPlan =
-        user?.subscriptionPlan === plan.id;
+        user?.subscriptionPlan === plan.id && user?.subscriptionStatus === "active";
 
       const isResumeEngineFeature =
         value.startsWith("Resume Engine");
@@ -1327,7 +1327,7 @@ export default function Subscribe() {
                     <span className="lp-gradient-text">Questions</span>
                   </h2>
                   <p className="mb-12 text-center text-muted-foreground">
-                    Straight answers about trials, billing, and what you get.
+                    Straight answers about billing and what you get.
                   </p>
 
                   <div className="space-y-4">

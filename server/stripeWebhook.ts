@@ -2,6 +2,18 @@
  * Stripe webhooks → source of truth for subscription / payment state in DB.
  * Register POST /api/stripe/webhook with express.raw({ type: "application/json" }})
  * BEFORE express.json() in server/index.ts.
+ *
+ * DB column `subscription_status` (`users.subscription_status`) is written from this handler
+ * only (Stripe subscription lifecycle). REST routes do not set it.
+ * New email signups default to `inactive` in `storage.createEmailUser` until a webhook activates paid access.
+ * Events that set it:
+ * - checkout.session.completed (active)
+ * - checkout.session.async_payment_failed (inactive, subscription mode)
+ * - invoice.payment_succeeded, invoice.paid (active; syncs subscription fields when invoice has a subscription)
+ * - invoice.payment_failed (inactive)
+ * - customer.subscription.created / updated (active | inactive from Stripe subscription.status)
+ * - customer.subscription.deleted (inactive)
+ * - payment_intent.succeeded (active for non–resume_engine_addon intents)
  */
 import type { Request, Response } from "express";
 import type Stripe from "stripe";
@@ -97,13 +109,38 @@ async function applySubscriptionStripeFields(
   });
 }
 
+/** Subscription (or paid) invoice → refresh Stripe fields and set DB `subscription_status` to active. */
+async function handleInvoicePaid(invoice: Stripe.Invoice) {
+  const cid = customerIdOnly(invoice.customer);
+  const userId = await resolveUserId({ stripeCustomerId: cid });
+  if (!userId) {
+    console.warn("invoice paid: could not resolve user", invoice.id);
+    return;
+  }
+
+  await storage.updateUser(userId, { stripeCustomerId: cid ?? undefined });
+
+  const invExtended = invoice as Stripe.Invoice & {
+    subscription?: string | Stripe.Subscription | null;
+  };
+  const subRef = invExtended.subscription;
+  const subId = typeof subRef === "string" ? subRef : subRef?.id ?? null;
+  if (subId) {
+    const sub = await stripe.subscriptions.retrieve(subId);
+    await applySubscriptionStripeFields(userId, sub, cid!);
+    await storage.updateUser(userId, { subscriptionStatus: "active" });
+  } else {
+    await storage.updateUser(userId, { subscriptionStatus: "active" });
+  }
+}
+
 /**
  * Handles verified Stripe webhook events. All subscription/payment writes to DB go here.
  */
-export async function handleStripeWebhook(
+export const handleStripeWebhook = async (
   req: Request,
   res: Response,
-): Promise<void> {
+): Promise<void> => {
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!webhookSecret) {
     console.error("STRIPE_WEBHOOK_SECRET is not set");
@@ -134,7 +171,9 @@ export async function handleStripeWebhook(
   }
 
   try {
+    console.log("event.type", event.type);
     switch (event.type) {
+
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
         const cid = customerIdOnly(session.customer);
@@ -175,30 +214,32 @@ export async function handleStripeWebhook(
         break;
       }
 
-      case "invoice.payment_succeeded": {
-        const invoice = event.data.object as Stripe.Invoice;
-        const cid = customerIdOnly(invoice.customer);
-        const userId = await resolveUserId({ stripeCustomerId: cid });
+      case "invoice.payment_succeeded":
+      case "invoice.paid": {
+        await handleInvoicePaid(event.data.object as Stripe.Invoice);
+        break;
+      }
+
+      case "checkout.session.async_payment_failed": {
+        const session = event.data.object as Stripe.Checkout.Session;
+        const cid = customerIdOnly(session.customer);
+        const userId = await resolveUserId({
+          stripeCustomerId: cid,
+          clientReferenceId: session.client_reference_id ?? undefined,
+          metadataUserId: session.metadata?.userId ?? undefined,
+        });
         if (!userId) {
-          console.warn("invoice.payment_succeeded: could not resolve user", invoice.id);
+          console.warn(
+            "checkout.session.async_payment_failed: could not resolve user",
+            session.id,
+          );
           break;
         }
-
-        await storage.updateUser(userId, { stripeCustomerId: cid ?? undefined });
-
-        const invExtended = invoice as Stripe.Invoice & {
-          subscription?: string | Stripe.Subscription | null;
-        };
-        const subRef = invExtended.subscription;
-        const subId =
-          typeof subRef === "string" ? subRef : subRef?.id ?? null;
-        if (subId) {
-          const sub = await stripe.subscriptions.retrieve(subId);
-          await applySubscriptionStripeFields(userId, sub, cid!);
-          // Invoice marked paid — user should have subscription access now.
-          await storage.updateUser(userId, { subscriptionStatus: "active" });
-        } else {
-          await storage.updateUser(userId, { subscriptionStatus: "active" });
+        if (session.mode === "subscription") {
+          await storage.updateUser(userId, {
+            subscriptionStatus: "inactive",
+            stripeCustomerId: cid ?? undefined,
+          });
         }
         break;
       }

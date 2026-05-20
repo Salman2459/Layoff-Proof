@@ -600,9 +600,6 @@ export class DatabaseStorage implements IStorage {
     authProvider: string;
     isEmailVerified: boolean;
   }): Promise<User> {
-    const trialStartDate = new Date();
-    const trialEndDate = new Date(trialStartDate.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
-
     const [user] = await db
       .insert(users)
       .values({
@@ -612,10 +609,8 @@ export class DatabaseStorage implements IStorage {
         password: userData.password,
         authProvider: userData.authProvider,
         isEmailVerified: userData.isEmailVerified,
-        subscriptionPlan: "trial",
+        subscriptionPlan: "free",
         subscriptionStatus: "inactive",
-        trialStartDate,
-        trialEndDate,
         lastLoginAt: new Date(),
       })
       .returning();

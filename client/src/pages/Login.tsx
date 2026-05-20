@@ -12,12 +12,13 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { LoginRequest } from "@shared/schema";
-import { LAYOFF_PROOF_USER_STORAGE_KEY } from "@/lib/logoutStorage";
+import { persistAuthLogin } from "@/lib/logoutStorage";
+import { getPostAuthRedirectPath } from "@/lib/subscription";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 
 export default function Login() {
   const { toast } = useToast();
-  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const [searchParams] = useSearchParams();
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
@@ -37,14 +38,11 @@ export default function Login() {
         description: "Successfully signed in to your account.",
       });
 
-console.log("response", response);
-
-     localStorage.setItem(
-        LAYOFF_PROOF_USER_STORAGE_KEY,
-        JSON.stringify({ user: response.user, token: response.token })
+      persistAuthLogin({ user: response.user, token: response.token });
+      const dest = getPostAuthRedirectPath(
+        { subscriptionStatus: response.user?.subscriptionStatus },
+        searchParams.get("redirect"),
       );
-      const dest =
-        getSafeRedirectPath(searchParams.get("redirect")) ?? "/";
       window.location.href = dest;
     },
     onError: (error: any) => {
@@ -80,7 +78,12 @@ console.log("response", response);
   };
 
   const handleGoogleLogin = () => {
-    window.location.href = "/api/auth/google";
+    const redirect = searchParams.get("redirect");
+    const qs =
+      redirect && getSafeRedirectPath(redirect)
+        ? `?redirect=${encodeURIComponent(getSafeRedirectPath(redirect)!)}`
+        : "";
+    window.location.href = `/api/auth/google${qs}`;
   };
 
   if (authLoading) {
@@ -94,7 +97,7 @@ console.log("response", response);
   if (isAuthenticated) {
     return (
       <Redirect
-        to={getSafeRedirectPath(searchParams.get("redirect")) ?? "/"}
+        to={getPostAuthRedirectPath(user, searchParams.get("redirect"))}
       />
     );
   }

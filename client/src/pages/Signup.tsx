@@ -33,7 +33,7 @@ export default function Signup() {
     onSuccess: () => {
       toast({
         title: "Account Created",
-        description: "Welcome to Layoff Proof! You can now access all features.",
+        description: "Choose a plan on the next screen to unlock all career tools.",
       });
       window.location.href = "/subscribe";
     },
@@ -75,7 +75,7 @@ export default function Signup() {
   };
 
   const handleGoogleSignup = () => {
-    window.location.href = "/api/auth/google";
+    window.location.href = "/api/auth/google?redirect=%2Fsubscribe";
   };
 
   return (

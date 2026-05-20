@@ -31,6 +31,7 @@ const PortfolioBuilder = lazy(() => import("@/pages/portfolio-builder"));
 const NetworkingAssistant = lazy(() => import("@/pages/networking-assistant"));
 const Signup = lazy(() => import("@/pages/Signup"));
 const Login = lazy(() => import("@/pages/Login"));
+const GoogleOAuthCallback = lazy(() => import("@/pages/google-oauth-callback"));
 const ForgotPassword = lazy(() => import("@/pages/forgot-password"));
 const ResetPassword = lazy(() => import("@/pages/reset-password"));
 const Subscribe = lazy(() => import("@/pages/Subscribe"));
@@ -60,6 +61,7 @@ function Router() {
     <Switch>
       <Route path="/signup" component={Signup} />
       <Route path="/login" component={Login} />
+      <Route path="/auth/google/callback" component={GoogleOAuthCallback} />
       <Route path="/forgot-password" component={ForgotPassword} />
       <Route path="/reset-password" component={ResetPassword} />
       <Route path="/auth" component={AuthEnhanced} />
@@ -101,79 +103,79 @@ function Router() {
         </ProtectedRoute>
       </Route>
 
-      {/* Career Tools */}
+      {/* Career Tools — paid subscription required */}
       <Route path="/tools/resume-builder">
-        <ProtectedRoute>
+        <ProtectedRoute requireSubscription>
           <ResumeBuilder />
         </ProtectedRoute>
       </Route>
       <Route path="/tools/cover-letter">
-        <ProtectedRoute>
+        <ProtectedRoute requireSubscription>
           <CoverLetter />
         </ProtectedRoute>
       </Route>
       <Route path="/tools/interview-preparation">
-        <ProtectedRoute>
+        <ProtectedRoute requireSubscription>
           <InterviewPreparation />
         </ProtectedRoute>
       </Route>
       <Route path="/tools/linkedin-optimizer">
-        <ProtectedRoute>
+        <ProtectedRoute requireSubscription>
           <LinkedInOptimizer />
         </ProtectedRoute>
       </Route>
       <Route path="/tools/recruiter-outreach">
-        <ProtectedRoute>
+        <ProtectedRoute requireSubscription>
           <RecruiterOutreach />
         </ProtectedRoute>
       </Route>
       <Route path="/tools/promotion-planner">
-        <ProtectedRoute>
+        <ProtectedRoute requireSubscription>
           <PromotionPlanner />
         </ProtectedRoute>
       </Route>
       <Route path="/tools/job-search-optimizer">
-        <ProtectedRoute>
+        <ProtectedRoute requireSubscription>
           <JobSearchOptimizer />
         </ProtectedRoute>
       </Route>
       <Route path="/tools/salary-negotiator">
-        <ProtectedRoute>
+        <ProtectedRoute requireSubscription>
           <SalaryNegotiator />
         </ProtectedRoute>
       </Route>
       <Route path="/tools/career-path-analyzer">
-        <ProtectedRoute>
+        <ProtectedRoute requireSubscription>
           <CareerPathAnalyzer />
         </ProtectedRoute>
       </Route>
       <Route path="/tools/skills-assessment">
-        <ProtectedRoute>
+        <ProtectedRoute requireSubscription>
           <SkillsAssessment />
         </ProtectedRoute>
       </Route>
       <Route path="/tools/portfolio-builder">
-        <ProtectedRoute>
+        <ProtectedRoute requireSubscription>
           <PortfolioBuilder />
         </ProtectedRoute>
       </Route>
       <Route path="/tools/networking-assistant">
-        <ProtectedRoute>
+        <ProtectedRoute requireSubscription>
           <NetworkingAssistant />
         </ProtectedRoute>
       </Route>
       <Route path="/tools/auto-job-apply">
-        <ProtectedRoute>
+        <ProtectedRoute requireSubscription>
           <AutoJobApply />
         </ProtectedRoute>
       </Route>
       <Route path="/tools/auto-job-apply-dashboard">
-        <ProtectedRoute>
+        <ProtectedRoute requireSubscription>
           <AutoJobApplyDashboard />
         </ProtectedRoute>
       </Route>
       <Route path="/job-board">
-        <ProtectedRoute>
+        <ProtectedRoute requireSubscription>
           <JobBoardPage />
         </ProtectedRoute>
       </Route>

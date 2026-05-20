@@ -568,15 +568,15 @@ function startScheduler() {
     }, initialDelayMs);
 
     // Schedule to run every hour at minute 0
-    // scheduleJob("0 */6 * * *", async () => {
-    //     console.log(`\n⏰ [${new Date().toISOString()}] Hourly job triggered`);
-    //     await fetchAndSaveLayoffs();
-    // });
-
-    scheduleJob("* * * * *", async () => {
-        console.log(`⏰ [${new Date().toISOString()}] Job triggered every minute`);
+    scheduleJob("0 0 * * *", async () => {
+        console.log(`\n⏰ [${new Date().toISOString()}] Daily job triggered`);
         await fetchAndSaveLayoffs();
     });
+
+    // scheduleJob("* * * * *", async () => {
+    //     console.log(`⏰ [${new Date().toISOString()}] Job triggered every minute`);
+    //     await fetchAndSaveLayoffs();
+    // });
 
     console.log("✅ Scheduler initialized - will run every hour");
 }

@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Redirect, useLocation } from "wouter";
 import { PageLoader } from "@/components/PageLoader";
 import { useAuth } from "@/hooks/useAuth";
+import { hasActiveSubscription } from "@/lib/subscription";
 
 /** Only allows same-origin relative paths (prevents open redirects). */
 export function getSafeRedirectPath(redirect: string | null): string | null {
@@ -18,8 +19,15 @@ export function getSafeRedirectPath(redirect: string | null): string | null {
   return decoded;
 }
 
-export function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth();
+export function ProtectedRoute({
+  children,
+  requireSubscription = false,
+}: {
+  children: ReactNode;
+  /** When true, only users with `subscriptionStatus === "active"` may view the route. */
+  requireSubscription?: boolean;
+}) {
+  const { user, isAuthenticated, isLoading } = useAuth();
   const [location] = useLocation();
 
   if (isLoading) {
@@ -33,6 +41,10 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
         ? `?redirect=${encodeURIComponent(safe)}`
         : "";
     return <Redirect to={`/login${qs}`} />;
+  }
+
+  if (requireSubscription && !hasActiveSubscription(user)) {
+    return <Redirect to="/subscribe" />;
   }
 
   return <>{children}</>;

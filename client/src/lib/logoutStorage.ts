@@ -1,5 +1,28 @@
-/** Persisted login payload (see Login.tsx). */
+/** Persisted login payload (email login + Google OAuth callback). */
 export const LAYOFF_PROOF_USER_STORAGE_KEY = "layoff-proof-user";
+
+export type StoredAuthUser = {
+  id: string;
+  email: string;
+  firstName?: string | null;
+  lastName?: string | null;
+};
+
+/** Save JWT + user to localStorage (same shape as POST /api/auth/login). */
+export function persistAuthLogin(payload: {
+  user: StoredAuthUser;
+  token: string;
+}): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(
+      LAYOFF_PROOF_USER_STORAGE_KEY,
+      JSON.stringify(payload),
+    );
+  } catch {
+    // private mode / quota — ignore
+  }
+}
 
 /** App-scoped keys: drafts, templates, etc. (e.g. `lp:autoJobApply:draft:*`). */
 const APP_STORAGE_KEY_PREFIX = "lp:";

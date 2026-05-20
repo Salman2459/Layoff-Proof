@@ -12,11 +12,10 @@ import {
   SignupRequest,
   LoginRequest,
 } from '@shared/schema';
-import { signJwt, verifyJwt } from "./jwt";
+import { getJwtSecret, signAppAccessToken, verifyJwt } from "./jwt";
 import { sendEmail } from "./emailService";
 
 const SALT_ROUNDS = 10;
-const JWT_EXPIRES_SECONDS = 7 * 24 * 60 * 60; // 7 days
 const PASSWORD_RESET_EXPIRY_MINUTES = 60;
 
 function passwordResetEmailHtml(firstName: string | null, resetUrl: string) {
@@ -98,15 +97,11 @@ export function setupPasswordAuth(app: Express) {
         });
       });
 
-      const jwtSecret =
-        process.env.JWT_SECRET ||
-        process.env.SESSION_SECRET ||
-        "layoff-proof-dev-secret-key-2024";
-      const token = signJwt(
-        { sub: user.id, email: user.email ?? email, authProvider: "email" },
-        jwtSecret,
-        JWT_EXPIRES_SECONDS
-      );
+      const token = signAppAccessToken({
+        sub: user.id,
+        email: user.email ?? email,
+        authProvider: "email",
+      });
 
       res.status(201).json({
         success: true,
@@ -169,26 +164,22 @@ export function setupPasswordAuth(app: Express) {
         });
       });
 
-      const jwtSecret =
-        process.env.JWT_SECRET ||
-        process.env.SESSION_SECRET ||
-        "layoff-proof-dev-secret-key-2024";
-      const token = signJwt(
-        { sub: user.id, email: user.email ?? email, authProvider: "email" },
-        jwtSecret,
-        JWT_EXPIRES_SECONDS
-      );
+      const token = signAppAccessToken({
+        sub: user.id,
+        email: user.email ?? email,
+        authProvider: "email",
+      });
 
       res.json({
         success: true,
-        redirectTo: '/pricing',
         token,
         user: {
           id: user.id,
           email: user.email,
           firstName: user.firstName,
-          lastName: user.lastName
-        }
+          lastName: user.lastName,
+          subscriptionStatus: user.subscriptionStatus,
+        },
       });
     } catch (error) {
       console.error('Login error:', error);
@@ -358,11 +349,7 @@ export const isAuthenticatedAny: RequestHandler = async (req, res, next) => {
   const authHeader = req.headers.authorization || (req.headers as any).Authorization;
   if (typeof authHeader === "string" && authHeader.toLowerCase().startsWith("bearer ")) {
     const token = authHeader.slice("bearer ".length).trim();
-    const jwtSecret =
-      process.env.JWT_SECRET ||
-      process.env.SESSION_SECRET ||
-      "layoff-proof-dev-secret-key-2024";
-    const payload = verifyJwt(token, jwtSecret);
+    const payload = verifyJwt(token, getJwtSecret());
     const userId = typeof payload?.sub === "string" ? payload.sub : null;
     if (userId) {
       try {

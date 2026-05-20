@@ -2,7 +2,7 @@ import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import type { Express } from "express";
 import { storage } from "./storage";
-import session from "express-session";
+import { signAppAccessToken } from "./jwt";
 
 function getSafeRedirectPath(redirect: unknown): string | null {
   if (!redirect || typeof redirect !== "string") return null;
@@ -19,13 +19,8 @@ function getSafeRedirectPath(redirect: unknown): string | null {
 }
 
 function hasActiveSubscription(user: any): boolean {
-  const status = (user?.subscriptionStatus ?? "").toString().toLowerCase();
-  if (status === "active") return true;
-  const trialEnd = user?.trialEndDate ? new Date(user.trialEndDate) : null;
-  if (trialEnd && !Number.isNaN(trialEnd.getTime()) && trialEnd > new Date()) {
-    return true;
-  }
-  return false;
+  const status = (user?.subscriptionStatus ?? "").toString().toLowerCase().trim();
+  return status === "active";
 }
 
 export function setupGoogleAuth(app: Express) {
@@ -34,11 +29,8 @@ export function setupGoogleAuth(app: Express) {
     return;
   }
 
-  // ================================================================
-  // 🔑 Add serialization logic for sessions
-  // ================================================================
   passport.serializeUser((user: any, done) => {
-    done(null, user.id); // only store user.id in the session
+    done(null, user.id);
   });
 
   passport.deserializeUser(async (id: string, done) => {
@@ -50,8 +42,12 @@ export function setupGoogleAuth(app: Express) {
     }
   });
 
-  // Force canonical domain (always www.layoffproof.ai)
-  const callbackURL = "https://layoffproof.ai/api/auth/google/callback";
+  const port = process.env.PORT || "5000";
+  const callbackURL =
+    process.env.GOOGLE_CALLBACK_URL ||
+    (process.env.NODE_ENV === "development"
+      ? `http://127.0.0.1:${port}/api/auth/google/callback`
+      : "https://layoffproof.ai/api/auth/google/callback");
 
   console.log("Google OAuth callback URL:", callbackURL);
   console.log("GOOGLE_CLIENT_ID:", process.env.GOOGLE_CLIENT_ID);
@@ -93,7 +89,7 @@ export function setupGoogleAuth(app: Express) {
               firstName,
               lastName,
               email,
-              password: "", // no password for Google users
+              password: "",
               authProvider: "google",
               isEmailVerified: true,
             });
@@ -111,34 +107,24 @@ export function setupGoogleAuth(app: Express) {
           console.error("Google OAuth error:", error);
           return done(error);
         }
-      }
-    )
+      },
+    ),
   );
-
-  // ================================================================
-  // Mount session + passport middlewares
-  // ================================================================
-  app.use(
-    session({
-      secret: process.env.SESSION_SECRET || "super-secret",
-      resave: false,
-      saveUninitialized: false,
-    })
-  );
-  app.use(passport.initialize());
-  app.use(passport.session());
 
   // Start OAuth flow
-  app.get("/api/auth/google", (req: any, _res, next) => {
-    // Preserve where the user wanted to go (only allow safe same-origin paths)
-    const safe = getSafeRedirectPath(req.query?.redirect);
-    if (req.session) {
-      req.session.oauthRedirect = safe ?? null;
-    }
-    next();
-  }, passport.authenticate("google", { scope: ["profile", "email"] }));
+  app.get(
+    "/api/auth/google",
+    (req: any, _res, next) => {
+      const safe = getSafeRedirectPath(req.query?.redirect);
+      if (req.session) {
+        req.session.oauthRedirect = safe ?? null;
+      }
+      next();
+    },
+    passport.authenticate("google", { scope: ["profile", "email"] }),
+  );
 
-  // OAuth callback
+  // OAuth callback — session + Layoff Proof JWT (same as email login)
   app.get(
     "/api/auth/google/callback",
     passport.authenticate("google", { failureRedirect: "/login?error=oauth_failed" }),
@@ -149,44 +135,58 @@ export function setupGoogleAuth(app: Express) {
           return res.redirect("/login?error=oauth_failed");
         }
 
-        console.log("Google OAuth user received:", req.user);
-
         if (!req.session) {
           console.error("No session available in Google OAuth callback");
           return res.redirect("/login?error=session_failed");
         }
 
+        const user = req.user;
+        const email = user.email ?? "";
+
         req.session.user = {
-          id: req.user.id,
-          email: req.user.email,
-          firstName: req.user.firstName,
-          lastName: req.user.lastName,
+          id: user.id,
+          email,
+          firstName: user.firstName,
+          lastName: user.lastName,
           authProvider: "google",
         };
 
         await new Promise<void>((resolve, reject) => {
           req.session.save((err: any) => {
-            if (err) {
-              console.error("Session save error:", err);
-              reject(err);
-            } else {
-              console.log("Session saved successfully");
-              resolve();
-            }
+            if (err) reject(err);
+            else resolve();
           });
+        });
+
+        const token = signAppAccessToken({
+          sub: user.id,
+          email,
+          authProvider: "google",
         });
 
         const requested = getSafeRedirectPath(req.session?.oauthRedirect);
         if (req.session) req.session.oauthRedirect = null;
 
-        const fallback = hasActiveSubscription(req.user) ? "/" : "/pricing";
-        const dest = requested ?? fallback;
-        console.log("Google OAuth successful, redirecting to", dest);
-        res.redirect(dest);
+        const dest = hasActiveSubscription(user)
+          ? requested ?? "/"
+          : "/subscribe";
+
+        const hash = new URLSearchParams({
+          token,
+          redirect: dest,
+          user: JSON.stringify({
+            id: user.id,
+            email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+          }),
+        }).toString();
+
+        res.redirect(`/auth/google/callback#${hash}`);
       } catch (error) {
         console.error("Error in Google OAuth callback:", error);
         res.redirect("/login?error=oauth_failed");
       }
-    }
+    },
   );
 }

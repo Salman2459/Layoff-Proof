@@ -36,10 +36,10 @@ export const users = pgTable("users", {
   jobTitle: varchar("job_title"),
   emailNotifications: boolean("email_notifications").default(true),
   smsNotifications: boolean("sms_notifications").default(false),
-  subscriptionPlan: varchar("subscription_plan").default("trial"), // trial, pro
+  subscriptionPlan: varchar("subscription_plan").default("free"), // free until Stripe product id is stored
   stripeCustomerId: varchar("stripe_customer_id"),
   stripeSubscriptionId: varchar("stripe_subscription_id"),
-  subscriptionStatus: varchar("subscription_status").default("inactive"), // paid: active — otherwise inactive (free trial uses trial_* dates)
+  subscriptionStatus: varchar("subscription_status").default("inactive"), // active = paid subscriber
   subscriptionEndDate: timestamp("subscription_end_date"),
   trialStartDate: timestamp("trial_start_date"),
   trialEndDate: timestamp("trial_end_date"),

@@ -6,6 +6,25 @@ export type JwtPayload = Record<string, unknown> & {
   sub?: string;
 };
 
+export const JWT_EXPIRES_SECONDS = 7 * 24 * 60 * 60; // 7 days
+
+export function getJwtSecret(): string {
+  return (
+    process.env.JWT_SECRET ||
+    process.env.SESSION_SECRET ||
+    "layoff-proof-dev-secret-key-2024"
+  );
+}
+
+/** Layoff Proof API access token (email login, Google OAuth, etc.). */
+export function signAppAccessToken(payload: {
+  sub: string;
+  email: string;
+  authProvider: string;
+}): string {
+  return signJwt(payload, getJwtSecret(), JWT_EXPIRES_SECONDS);
+}
+
 function b64UrlEncode(buf: Buffer) {
   return buf
     .toString("base64")

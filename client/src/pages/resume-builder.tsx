@@ -63,6 +63,53 @@ interface ParsedResumeData {
   website: string;
 }
 
+/** Canonical prefix for public LinkedIn profiles (stored value always includes full URL). */
+const LINKEDIN_PROFILE_PREFIX = "https://www.linkedin.com/in/";
+
+/** Extract the /in/ vanity slug from a full URL, pasted input, or plain handle. */
+function linkedInVanityFromStored(stored: string): string {
+  const t = (stored || "").trim();
+  if (!t) return "";
+  const fromPath = t.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
+  if (fromPath) return decodeURIComponent(fromPath[1]);
+  if (!/^https?:\/\//i.test(t)) {
+    return t.replace(/^@/, "").replace(/^\/*/, "").replace(/\/*$/, "");
+  }
+  return "";
+}
+
+/** Build stored `linkedin` field from what the user types in the profile slug box. */
+function linkedInUrlFromVanityInput(input: string): string {
+  const vanity = linkedInVanityFromStored(input);
+  if (!vanity) return "";
+  return `${LINKEDIN_PROFILE_PREFIX}${vanity}`;
+}
+
+/** Normalize legacy/plain values (e.g. from resume upload) to a full profile URL when possible. */
+function normalizeStoredLinkedInProfileUrl(stored: string): string {
+  const t = (stored || "").trim();
+  if (!t) return "";
+  const built = linkedInUrlFromVanityInput(t);
+  return built || t;
+}
+
+/**
+ * When the user types a bare profile slug (not a partial `https`/`www`), coalesce to a full
+ * `https://www.linkedin.com/in/...` URL so one input shows route + name together.
+ */
+function shouldCoalesceBareLinkedInToFullUrl(raw: string): boolean {
+  const t = raw.trim();
+  if (t.length < 3) return false;
+  if (/linkedin\.com/i.test(t) || /^https?:\/\//i.test(t)) return false;
+  if (/[:/]/.test(t)) return false;
+  const lower = t.toLowerCase();
+  if (lower.length < 10) {
+    if ("https://".startsWith(lower) || "http://".startsWith(lower)) return false;
+    if (lower.length < 5 && "www.".startsWith(lower)) return false;
+  }
+  return /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(t);
+}
+
 interface ResumeTemplate {
   id: string;
   name: string;
@@ -360,6 +407,15 @@ const ResumeEditorForm = ({
     RESUME_TEMPLATES_WITH_PROJECTS.has(selectedTemplateId);
   // --- END NEW ---
 
+  useEffect(() => {
+    const raw = (extractedData.linkedin ?? "").trim();
+    if (!raw || !shouldCoalesceBareLinkedInToFullUrl(raw)) return;
+    const n = normalizeStoredLinkedInProfileUrl(raw);
+    if (n && n !== raw) {
+      setExtractedData((prev) => ({ ...prev, linkedin: n }));
+    }
+  }, [extractedData.linkedin, setExtractedData]);
+
   return (
     <Card>
       <CardContent className="p-4 sm:p-6 lg:p-8">
@@ -562,7 +618,17 @@ const ResumeEditorForm = ({
                       linkedin: e.target.value,
                     })
                   }
-                  placeholder="https://linkedin.com/in/johndoe"
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    setExtractedData((prev) => {
+                      if (!v) return { ...prev, linkedin: "" };
+                      const n = normalizeStoredLinkedInProfileUrl(v);
+                      return { ...prev, linkedin: n };
+                    });
+                  }}
+                  placeholder="https://www.linkedin.com/in/your-profile"
+                  autoComplete="url"
+                  inputMode="url"
                 />
               </div>
               <div>
@@ -1041,6 +1107,12 @@ export default function ResumeBuilder() {
       }
 
       if (!fieldName.includes(".") && !fieldName.includes("[")) {
+        if (fieldName === "linkedin") {
+          return {
+            ...prevData,
+            linkedin: normalizeStoredLinkedInProfileUrl(suggestion),
+          };
+        }
         return { ...prevData, [fieldName]: suggestion };
       }
 
@@ -1090,7 +1162,13 @@ export default function ResumeBuilder() {
       return response.json();
     },
     onSuccess: (data: any) => {
-      setExtractedData({ ...initialResumeData, ...data.parsedData });
+      const parsed = { ...data.parsedData } as Partial<ParsedResumeData>;
+      if (parsed.linkedin != null && parsed.linkedin !== "") {
+        parsed.linkedin = normalizeStoredLinkedInProfileUrl(
+          String(parsed.linkedin),
+        );
+      }
+      setExtractedData({ ...initialResumeData, ...parsed });
       setCurrentStep("templates");
       toast({ title: "Resume Extracted Successfully" });
     },
@@ -1114,7 +1192,13 @@ export default function ResumeBuilder() {
     },
     onSuccess: (data: any) => {
       if (data.resumeData) {
-        setExtractedData({ ...initialResumeData, ...data.resumeData });
+        const resumeData = { ...data.resumeData } as Partial<ParsedResumeData>;
+        if (resumeData.linkedin != null && resumeData.linkedin !== "") {
+          resumeData.linkedin = normalizeStoredLinkedInProfileUrl(
+            String(resumeData.linkedin),
+          );
+        }
+        setExtractedData({ ...initialResumeData, ...resumeData });
         setCurrentStep("templates");
         toast({ title: "LinkedIn Profile Imported" });
       } else {

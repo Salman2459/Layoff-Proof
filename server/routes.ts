@@ -133,17 +133,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return false;
     }
 
-    // Allow if Stripe says the subscription is active, even if our cached end date is stale.
     if (user.subscriptionStatus === "active") {
-      return user;
-    }
-
-    // Otherwise fall back to stored end dates / trials.
-    const now = new Date();
-    if (user.subscriptionEndDate && new Date(user.subscriptionEndDate) >= now) {
-      return user;
-    }
-    if (user.trialEndDate && new Date(user.trialEndDate) >= now) {
       return user;
     }
 
@@ -181,7 +171,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const dbUser = await storage.getUser(String(userId));
-      // Always prefer DB as source of truth for subscription fields.
+      // Merge session with DB; paid `subscription_status` is maintained by Stripe webhooks.
       res.json({ ...(sessionUser ?? {}), ...(dbUser ?? {}) });
     } catch (error) {
       console.error("Error fetching user:", error);
@@ -589,9 +579,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
+        // subscription_status is updated only from Stripe webhooks (see server/stripeWebhook.ts).
         await storage.updateUser(user.id, {
           subscriptionPlan: planId,
-          subscriptionStatus: "inactive",
           stripeSubscriptionId: subscription.id,
           updatedAt: new Date(),
         });
@@ -829,13 +819,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Don't update our DB plan until the invoice is paid.
         const hasPendingUpdate = Boolean((updated as any).pending_update);
         if (!hasPendingUpdate) {
+          // subscription_status is updated only from Stripe webhooks.
           await storage.updateUser(user.id, {
             subscriptionPlan: newPlanId,
             stripeSubscriptionId: updated.id,
-            subscriptionStatus:
-              updated.status === "active" || updated.status === "trialing"
-                ? "active"
-                : "inactive",
             updatedAt: new Date(),
           });
         }
@@ -1180,10 +1167,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           inferredDays,
         );
 
-        // Update user with new subscription ID and set to active
+        // subscription_status is updated only from Stripe webhooks.
         await storage.updateUser(user.id, {
           subscriptionPlan: planId,
-          subscriptionStatus: "active",
           stripeSubscriptionId: subscription.id,
           subscriptionEndDate,
           updatedAt: new Date(),
@@ -1199,9 +1185,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // 8. Handle Discounted Payment (Update DB with new ID)
+      // subscription_status is updated only from Stripe webhooks.
       await storage.updateUser(user.id, {
         subscriptionPlan: planId,
-        subscriptionStatus: "inactive",
         stripeSubscriptionId: subscription.id,
         updatedAt: new Date(),
       });
@@ -1248,25 +1234,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         if (subscription.status === "active" || subscription.status === "trialing") {
-          // Prefer Stripe's period end when available
-          const stripePeriodEndMs = (subscription as any).current_period_end
-            ? (subscription as any).current_period_end * 1000
-            : null;
-          const subscriptionEndDate = stripePeriodEndMs
-            ? new Date(stripePeriodEndMs)
-            : calculateSubscriptionEndDate(user, 30);
-
-          await storage.updateUser(user.id, {
-            subscriptionStatus: "active",
-            subscriptionEndDate,
-            updatedAt: new Date(),
-          });
-
+          // subscription_status and subscription_end_date are updated only from Stripe webhooks.
           console.log(
-            `✅ Subscription confirmed for user ${user.id}. End date: ${subscriptionEndDate}`,
+            `✅ Subscription active in Stripe for user ${user.id}; DB will sync via webhook.`,
           );
 
-          return res.json({ success: true, status: "active" });
+          return res.json({
+            success: true,
+            status: "active",
+            message:
+              "Stripe reports an active subscription. Your account updates when the webhook is processed.",
+          });
         }
 
         return res.json({
@@ -1299,11 +1277,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           user.stripeSubscriptionId,
         );
 
-        await storage.updateUser(user.id, {
-          subscriptionStatus: "inactive",
-          stripeSubscriptionId: null,
-          updatedAt: new Date(),
-        });
+        // subscription_status and stripe_subscription_id are cleared when Stripe sends
+        // customer.subscription.deleted (see server/stripeWebhook.ts).
 
         res.json({
           message: "Subscription canceled successfully",
@@ -1672,7 +1647,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/admin/users/:id", requireAdmin, async (req, res) => {
     try {
-      const user = await storage.updateUserProfile(req.params.id, req.body);
+      const validated = updateUserProfileSchema.parse(req.body);
+      const user = await storage.updateUserProfile(req.params.id, validated);
       res.json(user);
     } catch (error) {
       console.error("Update user error:", error);
@@ -2370,7 +2346,7 @@ Requirements:
           .json({ error: "Job description or job title is required" });
       }
 
-      // Validate user subscription/trial and credits
+      // Validate paid subscription
       const user = await GetUserScscriptionTrialValidation(typeof id === "string" ? id : "");
       const anthropic = new Anthropic({
         apiKey: process.env.ANTHROPIC_API_KEY,
