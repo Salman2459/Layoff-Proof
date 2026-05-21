@@ -39,3 +39,56 @@ export function resumeLocationSvg(opts?: {
   const cls = opts?.className ? ` class="${opts.className}"` : "";
   return `<svg${cls} xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Location" width="${size}" height="${size}" viewBox="0 0 24 24"><path fill="${fill}" d="${MD_LOCATION_ON_PATH}"/></svg>`;
 }
+
+/** Absolute URL for PDF/print link targets. */
+export function normalizeLinkedInHref(raw: unknown): string {
+  const t = String(raw ?? "").trim();
+  if (!t) return "";
+  if (/^https?:\/\//i.test(t)) return t;
+  if (/linkedin\.com/i.test(t)) return `https://${t.replace(/^\/+/, "")}`;
+  const slug = t.replace(/^@/, "").replace(/^\/*/, "").replace(/\/*$/, "");
+  return slug ? `https://www.linkedin.com/in/${slug}` : "";
+}
+
+/** Visible LinkedIn URL without protocol (e.g. www.linkedin.com/in/handle). */
+export function linkedInDisplayUrl(raw: unknown): string {
+  const href = normalizeLinkedInHref(raw);
+  if (!href) return "";
+  return href.replace(/^https?:\/\//i, "");
+}
+
+export type LinkedInPdfLinkOpts = {
+  esc?: (s: string) => string;
+  iconSize?: number;
+  iconFill?: string;
+  linkColor?: string;
+  /** Photo Classic contact band: icon in .icon cell */
+  bandLayout?: boolean;
+  /** Brand Split hero pills */
+  pillLayout?: boolean;
+};
+
+/** Icon + full profile URL as a clickable anchor for resume PDF HTML. */
+export function linkedInPdfLinkHtml(
+  raw: unknown,
+  opts: LinkedInPdfLinkOpts = {},
+): string {
+  const href = normalizeLinkedInHref(raw);
+  if (!href) return "";
+  const display = linkedInDisplayUrl(raw);
+  const e = opts.esc ?? ((s: string) => s);
+  const icon = resumeSocialSvg("linkedin", {
+    size: opts.iconSize ?? 16,
+    fill: opts.iconFill ?? "#0A66C2",
+  });
+  const color = opts.linkColor ?? "#2563eb";
+  const link = `<a href="${e(href)}" target="_blank" rel="noopener noreferrer" style="color:${color};text-decoration:underline;word-break:break-all;">${e(display)}</a>`;
+
+  if (opts.bandLayout) {
+    return `<span style="display:inline-flex;align-items:center;gap:8px;min-width:0;"><span class="icon">${icon}</span><span style="min-width:0;">${link}</span></span>`;
+  }
+  if (opts.pillLayout) {
+    return `<span class="pill" style="display:inline-flex;align-items:center;gap:6px;min-width:0;">${icon}${link}</span>`;
+  }
+  return `<span style="display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap;">${icon}${link}</span>`;
+}

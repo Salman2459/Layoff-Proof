@@ -35,7 +35,11 @@ import { db } from "./db";
 import Parser from "rss-parser";
 import { eq, and, gte, lte, desc, sql } from "drizzle-orm";
 import { layoffs } from "@shared/schema";
-import { resumeLocationSvg, resumeSocialSvg } from "@shared/resumeSocialIcons";
+import {
+  linkedInPdfLinkHtml,
+  resumeLocationSvg,
+  resumeSocialSvg,
+} from "@shared/resumeSocialIcons";
 import {
   stripe,
   getOrCreateStripeCustomer,
@@ -6242,6 +6246,10 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
   };
   // --- END MODIFICATION ---
 
+  const achievementItems: string[] = Array.isArray(resumeData.achievements)
+    ? resumeData.achievements.filter(isPresent).map(String)
+    : [];
+
   // Helper to generate experience sections dynamically
   const generateExperienceHTML = (
     experience: any[],
@@ -6337,7 +6345,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
                 ${isPresent(resumeData.email) ? `<span>📧 <a href="mailto:${resumeData.email}">${resumeData.email}</a></span>` : ""}
                 ${isPresent(resumeData.phone) ? `<span>📞 ${resumeData.phone}</span>` : ""}
                 ${isPresent(resumeData.location) ? `<span>${resumeLocationSvg({ size: 16, fill: "#666666" })}${resumeData.location}</span>` : ""}
-                ${isPresent(resumeData.linkedin) ? `<span>${resumeSocialSvg("linkedin", { size: 16, fill: "#0A66C2" })}<a href="${resumeData.linkedin}" target="_blank" rel="noopener noreferrer">LinkedIn</a></span>` : ""}
+                ${isPresent(resumeData.linkedin) ? linkedInPdfLinkHtml(resumeData.linkedin, { linkColor: "#3B82F6" }) : ""}
                 ${isPresent(resumeData.github) ? `<span>${resumeSocialSvg("github", { size: 16, fill: "#24292f" })}<a href="${resumeData.github}" target="_blank" rel="noopener noreferrer">GitHub</a></span>` : ""}
                 ${isPresent(resumeData.website) ? `<span>🌐 <a href="${resumeData.website}" target="_blank">Website</a></span>` : ""}
               </div>
@@ -6357,6 +6365,13 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
             }
             ${resumeData.experience && resumeData.experience.length > 0 ? `<div class="section"><h2>Work Experience</h2>${generateExperienceHTML(resumeData.experience, "professional")}</div>` : ""}
             ${resumeData.education && resumeData.education.length > 0 ? `<div class="section"><h2>Education</h2>${generateEducationHTML(resumeData.education)}</div>` : ""}
+            ${
+              achievementItems.length > 0
+                ? `<div class="section"><h2>Achievements</h2><ul style="margin-left:20px;">${achievementItems
+                    .map((ach) => `<li>${ach}</li>`)
+                    .join("")}</ul></div>`
+                : ""
+            }
             <!-- --- END MODIFICATION --- -->
             
         </div></body></html>`;
@@ -6476,9 +6491,8 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
                     : ""
                 }
                 ${
-                  resumeData.achievements && resumeData.achievements.length
-                    ? `<div class="section card"><div class="bar"></div><div class="h">Honors & Awards</div><ul class="list">${resumeData.achievements
-                        .filter(isPresent)
+                  achievementItems.length > 0
+                    ? `<div class="section card"><div class="bar"></div><div class="h">Achievements</div><ul class="list">${achievementItems
                         .slice(0, 6)
                         .map((a: string) => `<li>${a}</li>`)
                         .join("")}</ul></div>`
@@ -6565,7 +6579,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
               ${isPresent(resumeData.email) ? `<span><span class="icon">✉</span><span>${esc(resumeData.email)}</span></span>` : ""}
               ${isPresent(resumeData.location) ? `<span><span class="icon">${resumeLocationSvg({ size: 12, fill: "#ffffff" })}</span><span>${esc(resumeData.location)}</span></span>` : ""}
               ${isPresent(resumeData.phone) ? `<span><span class="icon">☎</span><span>${esc(resumeData.phone)}</span></span>` : ""}
-              ${isPresent(resumeData.linkedin) ? `<span><span class="icon">${resumeSocialSvg("linkedin", { size: 12, fill: "#ffffff" })}</span><span>${esc(String(resumeData.linkedin).replace(/^https?:\/\//, ""))}</span></span>` : ""}
+              ${isPresent(resumeData.linkedin) ? linkedInPdfLinkHtml(resumeData.linkedin, { esc, iconSize: 12, iconFill: "#ffffff", linkColor: "#111827", bandLayout: true }) : ""}
               ${isPresent(resumeData.github) ? `<span><span class="icon">${resumeSocialSvg("github", { size: 12, fill: "#ffffff" })}</span><span>${esc(String(resumeData.github).replace(/^https?:\/\//, ""))}</span></span>` : ""}
             </div>
 
@@ -6615,16 +6629,17 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
                   <div class="links">${projectLinks || `<div class="muted">—</div>`}</div>
                 </div>
 
-                <div class="section">
-                  <h2>HONOR AWARDS</h2>
-                  <div class="muted">${
-                    (resumeData.achievements || [])
-                      .filter(isPresent)
-                      .slice(0, 2)
-                      .map((a: string) => esc(a))
-                      .join("<br/>") || "—"
-                  }</div>
-                </div>
+                ${
+                  achievementItems.length > 0
+                    ? `<div class="section">
+                  <h2>ACHIEVEMENTS</h2>
+                  <div class="muted">${achievementItems
+                    .slice(0, 6)
+                    .map((a: string) => esc(a))
+                    .join("<br/>")}</div>
+                </div>`
+                    : ""
+                }
 
                 <div class="section">
                   <h2>LANGUAGES</h2>
@@ -6720,7 +6735,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
                     ${isPresent(resumeData.email) ? `<span class="pill">✉ ${esc(resumeData.email)}</span>` : ""}
                     ${isPresent(resumeData.phone) ? `<span class="pill">☎ ${esc(resumeData.phone)}</span>` : ""}
                     ${isPresent(resumeData.location) ? `<span class="pill" style="display:inline-flex;align-items:center;gap:6px;">${resumeLocationSvg({ size: 14, fill: "#0f766e" })}${esc(resumeData.location)}</span>` : ""}
-                    ${isPresent(resumeData.linkedin) ? `<span class="pill" style="display:inline-flex;align-items:center;gap:6px;">${resumeSocialSvg("linkedin", { size: 14, fill: "#0A66C2" })}${esc(String(resumeData.linkedin).replace(/^https?:\/\//, ""))}</span>` : ""}
+                    ${isPresent(resumeData.linkedin) ? linkedInPdfLinkHtml(resumeData.linkedin, { esc, iconSize: 14, linkColor: "#0f766e", pillLayout: true }) : ""}
                     ${isPresent(resumeData.github) ? `<span class="pill" style="display:inline-flex;align-items:center;gap:6px;">${resumeSocialSvg("github", { size: 14, fill: "#24292f" })}${esc(String(resumeData.github).replace(/^https?:\/\//, ""))}</span>` : ""}
                   </div>
                 </div>
@@ -6766,6 +6781,17 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
                   <div class="h"><span>Projects</span></div>
                   <div class="links">${projectBlocks || `<div class="muted">—</div>`}</div>
                 </div>
+
+                ${
+                  achievementItems.length > 0
+                    ? `<div class="section card">
+                  <div class="h"><span>Achievements</span></div>
+                  <ul style="margin:0;padding-left:18px;font-size:11px;">${achievementItems
+                    .map((a: string) => `<li style="margin:4px 0;">${esc(a)}</li>`)
+                    .join("")}</ul>
+                </div>`
+                    : ""
+                }
               </div>
             </div>
           </div>
@@ -6778,7 +6804,9 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
       if (isPresent(resumeData.email)) harvardBits.push(resumeData.email);
       if (isPresent(resumeData.linkedin)) {
         harvardBits.push(
-          `<span style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;max-width:100%;">${resumeSocialSvg("linkedin", { size: 14, fill: "#0A66C2" })}${resumeData.linkedin}</span>`,
+          linkedInPdfLinkHtml(resumeData.linkedin, {
+            linkColor: "#000000",
+          }),
         );
       }
       if (isPresent(resumeData.github)) {
@@ -6841,9 +6869,8 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
             }
             
             ${
-              resumeData.achievements && resumeData.achievements.length > 0
-                ? `<div class="section achievements-section"><h2>Achievements</h2><ul>${resumeData.achievements
-                    .filter(isPresent)
+              achievementItems.length > 0
+                ? `<div class="section achievements-section"><h2>Achievements</h2><ul>${achievementItems
                     .map((ach: string) => `<li>${ach}</li>`)
                     .join("")}</ul></div>`
                 : ""
@@ -6890,7 +6917,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
                 ${isPresent(resumeData.email) ? `<div class="contact-item"><span>📧</span><span>${resumeData.email}</span></div>` : ""}
                 ${isPresent(resumeData.location) ? `<div class="contact-item">${resumeLocationSvg({ size: 18, fill: "#ffffff" })}<span>${resumeData.location}</span></div>` : ""}
                 ${isPresent(resumeData.website) ? `<div class="contact-item"><span>🌐</span><span>${resumeData.website}</span></div>` : ""}
-                ${isPresent(resumeData.linkedin) ? `<div class="contact-item">${resumeSocialSvg("linkedin", { size: 18, fill: "#ffffff" })}<span><a href="${resumeData.linkedin}" target="_blank" rel="noopener noreferrer" style="color:#fff;">${resumeData.linkedin}</a></span></div>` : ""}
+                ${isPresent(resumeData.linkedin) ? `<div class="contact-item">${linkedInPdfLinkHtml(resumeData.linkedin, { iconSize: 18, iconFill: "#ffffff", linkColor: "#ffffff" })}</div>` : ""}
                 ${isPresent(resumeData.github) ? `<div class="contact-item">${resumeSocialSvg("github", { size: 18, fill: "#ffffff" })}<span><a href="${resumeData.github}" target="_blank" rel="noopener noreferrer" style="color:#fff;">${resumeData.github}</a></span></div>` : ""}
               </div>`
                   : ""
@@ -6913,9 +6940,8 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
               }
               
               ${
-                resumeData.achievements && resumeData.achievements.length > 0
-                  ? `<div class="section"><h3>Achievements</h3>${resumeData.achievements
-                      .filter(isPresent)
+                achievementItems.length > 0
+                  ? `<div class="section"><h3>Achievements</h3>${achievementItems
                       .map(
                         (ach: string) =>
                           `<div class="skill-item">• ${ach}</div>`,

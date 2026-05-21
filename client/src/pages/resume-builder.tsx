@@ -17,7 +17,11 @@ import {
 } from "lucide-react";
 import { MdLocationOn } from "react-icons/md";
 import { SiGithub, SiLinkedin } from "react-icons/si";
-import { resumeLocationSvg, resumeSocialSvg } from "@shared/resumeSocialIcons";
+import {
+  linkedInPdfLinkHtml,
+  resumeLocationSvg,
+  resumeSocialSvg,
+} from "@shared/resumeSocialIcons";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -361,6 +365,14 @@ const RESUME_TEMPLATES_WITH_PROJECTS = new Set([
   "brand-split",
 ]);
 
+/** Non-empty achievement lines for resume preview and PDF. */
+function nonEmptyAchievements(achievements: unknown): string[] {
+  if (!Array.isArray(achievements)) return [];
+  return achievements
+    .map((a) => String(a ?? "").trim())
+    .filter(Boolean);
+}
+
 const initialResumeData: ParsedResumeData = {
   name: "",
   email: "",
@@ -421,13 +433,14 @@ const ResumeEditorForm = ({
       <CardContent className="p-4 sm:p-6 lg:p-8">
         <Tabs defaultValue="personal" className="w-full">
           <TabsList
-            className={`grid w-full mb-6 sm:mb-8 ${showProjectsTab ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-6" : "grid-cols-3 sm:grid-cols-5"}`}
+            className={`grid w-full mb-6 sm:mb-8 ${showProjectsTab ? "grid-cols-2 sm:grid-cols-4 lg:grid-cols-7" : "grid-cols-2 sm:grid-cols-4 lg:grid-cols-6"}`}
           >
             <TabsTrigger value="personal">Personal</TabsTrigger>
             <TabsTrigger value="summary">Summary</TabsTrigger>
             <TabsTrigger value="skills">Skills</TabsTrigger>
             <TabsTrigger value="experience">Experience</TabsTrigger>
             <TabsTrigger value="education">Education</TabsTrigger>
+            <TabsTrigger value="achievements">Achievements</TabsTrigger>
             {showProjectsTab ? (
               <TabsTrigger value="projects">Projects</TabsTrigger>
             ) : null}
@@ -945,6 +958,75 @@ const ResumeEditorForm = ({
             ))}
           </TabsContent>
 
+          <TabsContent value="achievements" className="space-y-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h3 className="text-xl font-semibold">Achievements</h3>
+                <p className="text-sm text-muted-foreground">
+                  Honors, awards, or notable accomplishments. They appear on your
+                  downloaded PDF only when you add at least one entry.
+                </p>
+              </div>
+              <Button
+                type="button"
+                onClick={() =>
+                  setExtractedData({
+                    ...extractedData,
+                    achievements: [...(extractedData.achievements || []), ""],
+                  })
+                }
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+              >
+                <Plus className="w-4 h-4 mr-2" /> Add achievement
+              </Button>
+            </div>
+            {(extractedData.achievements || []).map((achievement, index) => (
+              <Card key={index} className="p-4 bg-gray-50 dark:bg-gray-800">
+                <div className="mb-4">
+                  <Label htmlFor={`achievement-${index}`}>Achievement</Label>
+                  <Textarea
+                    id={`achievement-${index}`}
+                    value={String(achievement ?? "")}
+                    onChange={(e) => {
+                      const list = [...(extractedData.achievements || [])];
+                      list[index] = e.target.value;
+                      setExtractedData({
+                        ...extractedData,
+                        achievements: list,
+                      });
+                    }}
+                    placeholder="e.g. Dean's List, Employee of the Year, published research..."
+                    rows={3}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  onClick={() =>
+                    setExtractedData({
+                      ...extractedData,
+                      achievements: (extractedData.achievements || []).filter(
+                        (_, i) => i !== index,
+                      ),
+                    })
+                  }
+                  variant="outline"
+                  size="sm"
+                  className="text-red-600"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" /> Remove
+                </Button>
+              </Card>
+            ))}
+            {!(extractedData.achievements || []).length ? (
+              <p className="text-sm text-muted-foreground">
+                No achievements yet. Use &quot;Add achievement&quot; to list honors,
+                awards, or milestones.
+              </p>
+            ) : null}
+          </TabsContent>
+
           {showProjectsTab ? (
             <TabsContent value="projects" className="space-y-6">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -1264,6 +1346,8 @@ export default function ResumeBuilder() {
         const renderSkills = (skills: string[] = []) =>
           skills.slice(0, 15).join(", ");
 
+        const achievementLines = nonEmptyAchievements(resumeData.achievements);
+
         switch (templateId) {
           case "emerald-sidebar":
             html = `
@@ -1334,6 +1418,17 @@ export default function ResumeBuilder() {
                         <div class="h2">Work Experience</div>
                         ${renderExperience(resumeData.experience || []) || `<div class="muted">Add your experience to see it here.</div>`}
                       </div>
+                      ${
+                        achievementLines.length
+                          ? `<div class="card"><div class="bar"></div><div class="h2">Achievements</div><ul class="list">${achievementLines
+                              .slice(0, 6)
+                              .map(
+                                (a: string) =>
+                                  `<li>${formatTextForHtml(a)}</li>`,
+                              )
+                              .join("")}</ul></div>`
+                          : ""
+                      }
                     </main>
                   </div>
                 </div>
@@ -1384,7 +1479,7 @@ export default function ResumeBuilder() {
                     ${resumeData.email ? `<span><span class="icon">✉</span><span>${resumeData.email}</span></span>` : ""}
                     ${resumeData.location ? `<span><span class="icon">${resumeLocationSvg({ size: 12, fill: "#ffffff" })}</span><span>${resumeData.location}</span></span>` : ""}
                     ${resumeData.phone ? `<span><span class="icon">☎</span><span>${resumeData.phone}</span></span>` : ""}
-                    ${resumeData.linkedin ? `<span><span class="icon">${resumeSocialSvg("linkedin", { size: 12, fill: "#ffffff" })}</span><span>${(resumeData.linkedin || "").replace(/^https?:\/\//, "")}</span></span>` : ""}
+                    ${resumeData.linkedin ? linkedInPdfLinkHtml(resumeData.linkedin, { iconSize: 12, iconFill: "#ffffff", linkColor: "#111827", bandLayout: true }) : ""}
                     ${resumeData.github ? `<span><span class="icon">${resumeSocialSvg("github", { size: 12, fill: "#ffffff" })}</span><span>${(resumeData.github || "").replace(/^https?:\/\//, "")}</span></span>` : ""}
                   </div>
                   <div class="grid">
@@ -1458,10 +1553,14 @@ export default function ResumeBuilder() {
                           ${Array.isArray(resumeData.projects) && (resumeData.projects as any[]).length ? "" : `<div class="muted">Add project links.</div>`}
                         </div>
                       </div>
-                      <div class="section">
-                        <h2>HONOR AWARDS</h2>
-                        <div class="muted">${(resumeData.achievements || []).slice(0, 2).join("<br/>") || "—"}</div>
-                      </div>
+                      ${
+                        achievementLines.length
+                          ? `<div class="section"><h2>ACHIEVEMENTS</h2><div class="muted">${achievementLines
+                              .slice(0, 6)
+                              .map((a: string) => formatTextForHtml(a))
+                              .join("<br/>")}</div></div>`
+                          : ""
+                      }
                       <div class="section">
                         <h2>LANGUAGES</h2>
                         <div class="two">${(resumeData.languages || [])
@@ -1531,7 +1630,7 @@ export default function ResumeBuilder() {
                           ${resumeData.email ? `<span class="pill">✉ ${resumeData.email}</span>` : ``}
                           ${resumeData.phone ? `<span class="pill">☎ ${resumeData.phone}</span>` : ``}
                           ${resumeData.location ? `<span class="pill" style="display:inline-flex;align-items:center;gap:6px;">${resumeLocationSvg({ size: 14, fill: "#0f766e" })}${resumeData.location}</span>` : ``}
-                          ${resumeData.linkedin ? `<span class="pill" style="display:inline-flex;align-items:center;gap:6px;">${resumeSocialSvg("linkedin", { size: 14, fill: "#0A66C2" })}${(resumeData.linkedin || "").replace(/^https?:\/\//, "")}</span>` : ``}
+                          ${resumeData.linkedin ? linkedInPdfLinkHtml(resumeData.linkedin, { iconSize: 14, linkColor: "#0f766e", pillLayout: true }) : ``}
                           ${resumeData.github ? `<span class="pill" style="display:inline-flex;align-items:center;gap:6px;">${resumeSocialSvg("github", { size: 14, fill: "#24292f" })}${(resumeData.github || "").replace(/^https?:\/\//, "")}</span>` : ``}
                         </div>
                       </div>
@@ -1603,6 +1702,16 @@ export default function ResumeBuilder() {
                           ${Array.isArray(resumeData.projects) && (resumeData.projects as any[]).length ? "" : `<div class="muted">Add project links.</div>`}
                         </div>
                       </div>
+                      ${
+                        achievementLines.length
+                          ? `<div class="section card"><div class="h"><span>Achievements</span></div><ul style="margin:0;padding-left:18px;font-size:11px;">${achievementLines
+                              .map(
+                                (a: string) =>
+                                  `<li style="margin:4px 0;">${formatTextForHtml(a)}</li>`,
+                              )
+                              .join("")}</ul></div>`
+                          : ""
+                      }
                     </div>
                   </div>
                 </div>
@@ -1617,11 +1726,18 @@ export default function ResumeBuilder() {
                 .section h2 { text-transform: uppercase; border-bottom: none; padding-bottom: 5px; margin-top: 20px; font-size: 1.2rem; }
                 .job, .education-item { margin-bottom: 15px; } h4 { margin: 0 0 5px; }
               </style></head><body>
-                <div class="header"><h1>${resumeData.name || "YOUR NAME"}</h1><p>${resumeData.location ? `<span style="display:inline-flex;align-items:center;gap:5px;vertical-align:middle;">${resumeLocationSvg({ size: 14, fill: "#333333" })}${resumeData.location}</span>` : ""}${resumeData.location && (resumeData.email || resumeData.phone) ? " | " : ""}${resumeData.email || ""}${resumeData.email && resumeData.phone ? " | " : ""}${resumeData.phone || ""}</p>${resumeData.linkedin ? `<p style="margin-top:6px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;justify-content:center;">${resumeSocialSvg("linkedin", { size: 14, fill: "#0A66C2" })}${resumeData.linkedin}</p>` : ""}${resumeData.github ? `<p style="margin-top:4px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;justify-content:center;">${resumeSocialSvg("github", { size: 14, fill: "#24292f" })}${resumeData.github}</p>` : ""}</div>
+                <div class="header"><h1>${resumeData.name || "YOUR NAME"}</h1><p>${resumeData.location ? `<span style="display:inline-flex;align-items:center;gap:5px;vertical-align:middle;">${resumeLocationSvg({ size: 14, fill: "#333333" })}${resumeData.location}</span>` : ""}${resumeData.location && (resumeData.email || resumeData.phone) ? " | " : ""}${resumeData.email || ""}${resumeData.email && resumeData.phone ? " | " : ""}${resumeData.phone || ""}</p>${resumeData.linkedin ? `<p style="margin-top:6px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;justify-content:center;">${linkedInPdfLinkHtml(resumeData.linkedin, { iconSize: 14, linkColor: "#000000" })}</p>` : ""}${resumeData.github ? `<p style="margin-top:4px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;justify-content:center;">${resumeSocialSvg("github", { size: 14, fill: "#24292f" })}${resumeData.github}</p>` : ""}</div>
                 <div class="section"><h2>Summary</h2><p>${formatTextForHtml(resumeData.summary)}</p></div>
                 <div class="section"><h2>Skills</h2><p>${renderSkills(resumeData.skills)}</p></div>
                 <div class="section"><h2>Experience</h2>${renderExperience(resumeData.experience)}</div>
                 <div class="section"><h2>Education</h2>${renderEducation(resumeData.education)}</div>
+                ${
+                  achievementLines.length
+                    ? `<div class="section"><h2>Achievements</h2><ul>${achievementLines
+                        .map((a: string) => `<li>${formatTextForHtml(a)}</li>`)
+                        .join("")}</ul></div>`
+                    : ""
+                }
               </body></html>`;
             break;
 
@@ -1637,8 +1753,18 @@ export default function ResumeBuilder() {
                 <div class="sidebar">
                   <h1>${resumeData.name || "Your Name"}</h1><p>${resumeData.profession || "Your Profession"}</p>
                   <h2>Contact</h2><p>${resumeData.email}<br/>${resumeData.phone}${resumeData.location ? `<br/><span style="display:inline-flex;align-items:center;gap:8px;">${resumeLocationSvg({ size: 18, fill: "#ffffff" })}<span>${resumeData.location}</span></span>` : ""}</p>
-                  ${resumeData.linkedin ? `<p style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:0.9rem;">${resumeSocialSvg("linkedin", { size: 18, fill: "#ffffff" })}<span style="word-break:break-all;">${resumeData.linkedin}</span></p>` : ""}
+                  ${resumeData.linkedin ? `<p style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:0.9rem;">${linkedInPdfLinkHtml(resumeData.linkedin, { iconSize: 18, iconFill: "#ffffff", linkColor: "#ffffff" })}</p>` : ""}
                   ${resumeData.github ? `<p style="display:flex;align-items:flex-start;gap:8px;margin-top:8px;font-size:0.9rem;">${resumeSocialSvg("github", { size: 18, fill: "#ffffff" })}<span style="word-break:break-all;">${resumeData.github}</span></p>` : ""}
+                  ${
+                    achievementLines.length
+                      ? `<h2 style="margin-top:20px;">Achievements</h2><ul>${achievementLines
+                          .map(
+                            (a: string) =>
+                              `<li>${formatTextForHtml(a)}</li>`,
+                          )
+                          .join("")}</ul>`
+                      : ""
+                  }
                 </div>
                 <div class="main">
                   <h2>Summary</h2><p>${formatTextForHtml(resumeData.summary)}</p>
@@ -1662,11 +1788,18 @@ export default function ResumeBuilder() {
                 .section h2 { color: #2563eb; border-bottom: none; padding-bottom: 5px; margin-top: 20px; }
                 .job, .education-item { margin-bottom: 15px; } h4 { margin: 0 0 5px; }
               </style></head><body>
-                <div class="header"><h1>${resumeData.name || "YOUR NAME"}</h1><p>${resumeData.profession || "Your Profession"}</p><p>${resumeData.email || ""}${resumeData.email && resumeData.phone ? " | " : ""}${resumeData.phone || ""}${(resumeData.email || resumeData.phone) && resumeData.location ? " | " : ""}${resumeData.location ? `<span style="display:inline-flex;align-items:center;gap:5px;">${resumeLocationSvg({ size: 14, fill: "#555555" })}${resumeData.location}</span>` : ""}</p>${resumeData.linkedin ? `<p style="margin-top:8px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;">${resumeSocialSvg("linkedin", { size: 15, fill: "#0A66C2" })}<a href="${resumeData.linkedin}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;">LinkedIn</a></p>` : ""}${resumeData.github ? `<p style="margin-top:4px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;">${resumeSocialSvg("github", { size: 15, fill: "#24292f" })}<a href="${resumeData.github}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;">GitHub</a></p>` : ""}</div>
+                <div class="header"><h1>${resumeData.name || "YOUR NAME"}</h1><p>${resumeData.profession || "Your Profession"}</p><p>${resumeData.email || ""}${resumeData.email && resumeData.phone ? " | " : ""}${resumeData.phone || ""}${(resumeData.email || resumeData.phone) && resumeData.location ? " | " : ""}${resumeData.location ? `<span style="display:inline-flex;align-items:center;gap:5px;">${resumeLocationSvg({ size: 14, fill: "#555555" })}${resumeData.location}</span>` : ""}</p>${resumeData.linkedin ? `<p style="margin-top:8px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;">${linkedInPdfLinkHtml(resumeData.linkedin, { iconSize: 15, linkColor: "#2563eb" })}</p>` : ""}${resumeData.github ? `<p style="margin-top:4px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;">${resumeSocialSvg("github", { size: 15, fill: "#24292f" })}<a href="${resumeData.github}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;">GitHub</a></p>` : ""}</div>
                 <div class="section"><h2>Summary</h2><p>${formatTextForHtml(resumeData.summary)}</p></div>
                 <div class="section"><h2>Skills</h2><p>${renderSkills(resumeData.skills)}</p></div>
                 <div class="section"><h2>Experience</h2>${renderExperience(resumeData.experience)}</div>
                 <div class="section"><h2>Education</h2>${renderEducation(resumeData.education)}</div>
+                ${
+                  achievementLines.length
+                    ? `<div class="section"><h2>Achievements</h2><ul>${achievementLines
+                        .map((a: string) => `<li>${formatTextForHtml(a)}</li>`)
+                        .join("")}</ul></div>`
+                    : ""
+                }
               </body></html>`;
             break;
         }
