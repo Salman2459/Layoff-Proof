@@ -46,9 +46,14 @@ import {
   createSetupIntent,
   createSubscription,
   createPaymentIntent,
-  cancelSubscription,
+  cancelSubscriptionAtPeriodEnd,
   getSubscription,
+  customerHasPaymentMethod,
 } from "./stripe";
+import {
+  effectiveSubscriptionStatus,
+  withEffectiveSubscriptionFields,
+} from "./subscriptionAccess";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import { cloudinary } from "./cloudinary";
 import { AnyAaaaRecord } from "dns";
@@ -137,7 +142,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return false;
     }
 
-    if (user.subscriptionStatus === "active") {
+    if (effectiveSubscriptionStatus(user) === "active") {
       return user;
     }
 
@@ -175,8 +180,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const dbUser = await storage.getUser(String(userId));
-      // Merge session with DB; paid `subscription_status` is maintained by Stripe webhooks.
-      res.json({ ...(sessionUser ?? {}), ...(dbUser ?? {}) });
+      const merged = { ...(sessionUser ?? {}), ...(dbUser ?? {}) };
+      // Promo month: treat as inactive once `subscription_end_date` has passed.
+      res.json(withEffectiveSubscriptionFields(merged));
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
@@ -753,6 +759,90 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   );
 
+  async function buildPlanChangeItemUpdates(
+    subscription: { items: { data: any[] } },
+    newPlanId: string,
+  ) {
+    const currentItem = subscription.items.data[0];
+    if (!currentItem) {
+      throw new Error("Subscription has no items.");
+    }
+
+    const { priceId: newPriceId, unitAmount: newUnitAmount } =
+      await resolvePriceFromId(newPlanId);
+
+    const nextItems = subscription.items.data.map((item: any, idx: number) =>
+      idx === 0
+        ? { id: item.id, price: newPriceId, quantity: 1 }
+        : { id: item.id, deleted: true },
+    );
+
+    const currentUnitAmount = (currentItem as any)?.price?.unit_amount ?? null;
+    const isDowngrade =
+      typeof currentUnitAmount === "number" &&
+      typeof newUnitAmount === "number" &&
+      newUnitAmount < currentUnitAmount;
+
+    return { nextItems, isDowngrade };
+  }
+
+  async function previewPlanChangePayToday(
+    subscription: { id: string; customer: string | { id: string } },
+    nextItems: any[],
+    isDowngrade: boolean,
+    prorationDate: number,
+  ) {
+    const customerId =
+      typeof subscription.customer === "string"
+        ? subscription.customer
+        : subscription.customer.id;
+
+    const upcoming = await (stripe.invoices as any).createPreview({
+      customer: customerId,
+      subscription: subscription.id,
+      subscription_details: {
+        items: nextItems,
+        proration_behavior: isDowngrade ? "none" : "create_prorations",
+        ...(isDowngrade ? {} : { proration_date: prorationDate }),
+      },
+    });
+
+    const lines = Array.isArray(upcoming?.lines?.data) ? upcoming.lines.data : [];
+    const payToday = lines
+      .filter((l: any) => l?.proration === true)
+      .reduce(
+        (sum: number, l: any) =>
+          sum + (typeof l.amount === "number" ? l.amount : 0),
+        0,
+      );
+
+    return {
+      payToday,
+      currency: (upcoming.currency as string) || "usd",
+    };
+  }
+
+  async function persistPlanChangeToUser(
+    user: { id: string; subscriptionViaCoupon?: boolean },
+    updated: any,
+    newPlanId: string,
+    payToday: number,
+  ) {
+    const hasPendingUpdate = Boolean((updated as any).pending_update);
+    if (!hasPendingUpdate) {
+      const periodEndMs = updated.current_period_end * 1000;
+      await storage.updateUser(user.id, {
+        subscriptionPlan: newPlanId,
+        stripeSubscriptionId: updated.id,
+        subscriptionStatus: "active",
+        subscriptionEndDate: new Date(periodEndMs),
+        subscriptionViaCoupon: payToday > 0 ? false : user.subscriptionViaCoupon,
+        updatedAt: new Date(),
+      });
+    }
+    return hasPendingUpdate;
+  }
+
   app.post(
     "/api/stripe/change-plan",
     isAuthenticatedAny,
@@ -775,42 +865,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
           user.stripeSubscriptionId,
           { expand: ["items.data", "items.data.price"] },
         );
-        const currentItem = subscription.items.data[0];
-        if (!currentItem) {
-          return res.status(400).json({ message: "Subscription has no items." });
-        }
 
-        const { priceId: newPriceId, unitAmount: newUnitAmount } =
-          await resolvePriceFromId(newPlanId);
-
-        const nextItems = subscription.items.data.map((item: any, idx: number) =>
-          idx === 0
-            ? { id: item.id, price: newPriceId, quantity: 1 }
-            : { id: item.id, deleted: true },
+        const { nextItems, isDowngrade } = await buildPlanChangeItemUpdates(
+          subscription,
+          newPlanId,
         );
 
-        const currentUnitAmount = (currentItem as any)?.price?.unit_amount ?? null;
-        const isDowngrade =
-          typeof currentUnitAmount === "number" &&
-          typeof newUnitAmount === "number" &&
-          newUnitAmount < currentUnitAmount;
+        const effectiveProrationDate =
+          typeof prorationDate === "number" && Number.isFinite(prorationDate)
+            ? Math.floor(prorationDate)
+            : Math.floor(Date.now() / 1000);
+
+        const hasPm = user.stripeCustomerId
+          ? await customerHasPaymentMethod(
+              user.stripeCustomerId,
+              subscription.id,
+            )
+          : false;
+
+        const { payToday: previewPayToday, currency: previewCurrency } =
+          await previewPlanChangePayToday(
+            subscription,
+            nextItems,
+            isDowngrade,
+            effectiveProrationDate,
+          );
+
+        // Promo / no-card subscribers: collect proration via PaymentIntent before updating Stripe subscription.
+        if (
+          !isDowngrade &&
+          previewPayToday > 0 &&
+          !hasPm &&
+          user.stripeCustomerId
+        ) {
+          const paymentIntent = await stripe.paymentIntents.create({
+            amount: previewPayToday,
+            currency: previewCurrency,
+            customer: user.stripeCustomerId,
+            description: "Subscription update",
+            automatic_payment_methods: { enabled: true },
+            setup_future_usage: "off_session",
+            metadata: {
+              type: "plan_change_upgrade",
+              userId: String(user.id),
+              newPlanId,
+              prorationDate: String(effectiveProrationDate),
+              subscriptionId: subscription.id,
+            },
+          });
+
+          return res.json({
+            success: true,
+            subscriptionId: subscription.id,
+            clientSecret: paymentIntent.client_secret,
+            applied: false,
+            isDowngrade: false,
+            payToday: previewPayToday,
+            paymentRequired: true,
+            requiresPaymentMethod: true,
+            hasDefaultPaymentMethod: false,
+            subscriptionViaCoupon: Boolean(user.subscriptionViaCoupon),
+          });
+        }
+
+        // Stripe disallows `cancel_at_period_end` on the same update as
+        // `payment_behavior: pending_if_incomplete`. Clear a pending cancel first.
+        if (subscription.cancel_at_period_end) {
+          await stripe.subscriptions.update(subscription.id, {
+            cancel_at_period_end: false,
+          });
+        }
 
         const updated = await stripe.subscriptions.update(subscription.id, isDowngrade
           ? {
               items: nextItems,
-              // Downgrade: no proration credit, no immediate invoice/payment.
               proration_behavior: "none",
               expand: ["latest_invoice.payment_intent"],
             }
           : {
               items: nextItems,
-              // Upgrade: charge the prorated difference immediately (credit unused time + charge remaining time)
               proration_behavior: "always_invoice",
-              proration_date:
-                typeof prorationDate === "number" && Number.isFinite(prorationDate)
-                  ? Math.floor(prorationDate)
-                  : Math.floor(Date.now() / 1000),
-              // Only apply the plan change if the invoice can be paid (SCA/etc).
+              proration_date: effectiveProrationDate,
               payment_behavior: "pending_if_incomplete",
               expand: ["latest_invoice.payment_intent"],
             });
@@ -818,30 +953,163 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const latestInvoice: any = updated.latest_invoice;
         const paymentIntent = latestInvoice?.payment_intent ?? null;
         const clientSecret = paymentIntent?.client_secret ?? null;
+        const payToday =
+          typeof latestInvoice?.amount_due === "number"
+            ? latestInvoice.amount_due
+            : previewPayToday;
 
-        // If payment fails / requires action, Stripe will keep the change in `pending_update`.
-        // Don't update our DB plan until the invoice is paid.
-        const hasPendingUpdate = Boolean((updated as any).pending_update);
-        if (!hasPendingUpdate) {
-          // subscription_status is updated only from Stripe webhooks.
-          await storage.updateUser(user.id, {
-            subscriptionPlan: newPlanId,
-            stripeSubscriptionId: updated.id,
-            updatedAt: new Date(),
-          });
-        }
+        const hasPendingUpdate = await persistPlanChangeToUser(
+          user,
+          updated,
+          newPlanId,
+          payToday,
+        );
+
+        const paymentRequired = !isDowngrade && payToday > 0;
+        const requiresPaymentMethod = paymentRequired && !hasPm;
 
         res.json({
           success: true,
           subscriptionId: updated.id,
           status: updated.status,
+          cancelAtPeriodEnd: updated.cancel_at_period_end,
           clientSecret,
           applied: !hasPendingUpdate,
           isDowngrade,
+          payToday,
+          paymentRequired,
+          requiresPaymentMethod,
+          hasDefaultPaymentMethod: hasPm,
+          subscriptionViaCoupon: Boolean(user.subscriptionViaCoupon),
         });
       } catch (error) {
         console.error("❌ Error changing plan:", error);
         res.status(500).json({ message: "Failed to change plan." });
+      }
+    },
+  );
+
+  app.post(
+    "/api/stripe/complete-plan-change-payment",
+    isAuthenticatedAny,
+    async (req, res) => {
+      try {
+        const user: any = req.user;
+        const { paymentIntentId } = req.body as { paymentIntentId?: string };
+
+        if (!paymentIntentId) {
+          return res.status(400).json({ message: "paymentIntentId is required." });
+        }
+
+        const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
+        if (pi.metadata?.type !== "plan_change_upgrade") {
+          return res.status(400).json({ message: "Invalid payment for plan change." });
+        }
+        if (pi.metadata?.userId !== String(user.id)) {
+          return res.status(403).json({ message: "Payment does not belong to this user." });
+        }
+        if (pi.status !== "succeeded") {
+          return res.status(400).json({ message: "Payment has not completed yet." });
+        }
+
+        if (!pi.description) {
+          await stripe.paymentIntents.update(paymentIntentId, {
+            description: "Subscription update",
+          });
+        }
+
+        const newPlanId = pi.metadata.newPlanId;
+        const prorationDate = Number(pi.metadata.prorationDate);
+        const subscriptionId =
+          pi.metadata.subscriptionId || user.stripeSubscriptionId;
+
+        if (!newPlanId || !subscriptionId) {
+          return res.status(400).json({ message: "Missing plan change metadata." });
+        }
+
+        const pmId =
+          typeof pi.payment_method === "string" ? pi.payment_method : null;
+        if (!pmId) {
+          return res.status(400).json({ message: "No payment method on file." });
+        }
+
+        const customerId =
+          typeof pi.customer === "string"
+            ? pi.customer
+            : user.stripeCustomerId;
+        if (!customerId) {
+          return res.status(400).json({ message: "No Stripe customer found." });
+        }
+
+        await stripe.customers.update(customerId, {
+          invoice_settings: { default_payment_method: pmId },
+        });
+
+        // Proration was collected on the PaymentIntent; credit the customer so the
+        // subscription proration invoice does not charge again.
+        if (pi.amount > 0 && pi.currency) {
+          await stripe.customers.createBalanceTransaction(customerId, {
+            amount: -pi.amount,
+            currency: pi.currency,
+            description: "Subscription update",
+          });
+        }
+
+        const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
+          expand: ["items.data", "items.data.price"],
+        });
+
+        const { nextItems, isDowngrade } = await buildPlanChangeItemUpdates(
+          subscription,
+          newPlanId,
+        );
+
+        if (subscription.cancel_at_period_end) {
+          await stripe.subscriptions.update(subscription.id, {
+            cancel_at_period_end: false,
+          });
+        }
+
+        const updated = await stripe.subscriptions.update(
+          subscription.id,
+          isDowngrade
+            ? {
+                items: nextItems,
+                proration_behavior: "none",
+                expand: ["latest_invoice.payment_intent"],
+              }
+            : {
+                items: nextItems,
+                proration_behavior: "always_invoice",
+                proration_date:
+                  Number.isFinite(prorationDate) && prorationDate > 0
+                    ? Math.floor(prorationDate)
+                    : Math.floor(Date.now() / 1000),
+                payment_behavior: "pending_if_incomplete",
+                expand: ["latest_invoice.payment_intent"],
+              },
+        );
+
+        const latestInvoice: any = updated.latest_invoice;
+        const payToday =
+          typeof latestInvoice?.amount_due === "number" ? latestInvoice.amount_due : 0;
+
+        const hasPendingUpdate = await persistPlanChangeToUser(
+          user,
+          updated,
+          newPlanId,
+          payToday,
+        );
+
+        res.json({
+          success: true,
+          applied: !hasPendingUpdate,
+          subscriptionId: updated.id,
+          payToday,
+        });
+      } catch (error) {
+        console.error("❌ Error completing plan change payment:", error);
+        res.status(500).json({ message: "Failed to complete plan change." });
       }
     },
   );
@@ -1163,18 +1431,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         discountPercentage: validatedCoupon.percent_off ?? null,
       };
 
-      // 7. Handle 100% Discount (Free)
+      // 7. Handle 100% Discount (Free) — Stripe coupon `duration: once`; no renewal charge.
       if (finalAmount === 0) {
-        const inferredDays = days ?? 30;
-        const subscriptionEndDate = calculateSubscriptionEndDate(
-          user,
-          inferredDays,
-        );
+        const subNoRenew = await cancelSubscriptionAtPeriodEnd(subscription.id);
+        const periodEndMs = subNoRenew.current_period_end * 1000;
+        const subscriptionEndDate = new Date(periodEndMs);
 
-        // subscription_status is updated only from Stripe webhooks.
         await storage.updateUser(user.id, {
           subscriptionPlan: planId,
-          stripeSubscriptionId: subscription.id,
+          stripeSubscriptionId: subNoRenew.id,
+          subscriptionStatus: "active",
+          subscriptionViaCoupon: true,
           subscriptionEndDate,
           updatedAt: new Date(),
         });
@@ -1182,23 +1449,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({
           success: true,
           paymentRequired: false,
-          message: "Coupon applied successfully! Subscription activated.",
+          subscriptionViaCoupon: true,
+          cancelAtPeriodEnd: true,
+          message:
+            "Promo applied! You have full access until the end of this billing period. Add a payment method before then to keep your plan.",
           breakdown,
           subscriptionEndDate: subscriptionEndDate.toISOString(),
         });
       }
 
-      // 8. Handle Discounted Payment (Update DB with new ID)
-      // subscription_status is updated only from Stripe webhooks.
       await storage.updateUser(user.id, {
         subscriptionPlan: planId,
         stripeSubscriptionId: subscription.id,
+        subscriptionViaCoupon: false,
         updatedAt: new Date(),
       });
 
       return res.json({
         success: true,
         paymentRequired: true,
+        subscriptionViaCoupon: false,
         message: "Coupon applied successfully.",
         clientSecret: invoice.payment_intent.client_secret, // ✅ Send NEW client secret
         breakdown,
@@ -1277,16 +1547,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .json({ message: "No active subscription found" });
         }
 
-        const canceledSubscription = await stripe.subscriptions.cancel(
+        const sub = await cancelSubscriptionAtPeriodEnd(
           user.stripeSubscriptionId,
         );
 
-        // subscription_status and stripe_subscription_id are cleared when Stripe sends
-        // customer.subscription.deleted (see server/stripeWebhook.ts).
+        const periodEndMs = sub.current_period_end * 1000;
+
+        // Keep access until period end; Stripe still reports status "active".
+        await storage.updateUser(user.id, {
+          subscriptionStatus: "active",
+          subscriptionEndDate: new Date(periodEndMs),
+          stripeSubscriptionId: sub.id,
+        });
 
         res.json({
-          message: "Subscription canceled successfully",
-          status: canceledSubscription.status,
+          message:
+            "Your subscription will cancel at the end of the current billing period. You keep access until then.",
+          status: sub.status,
+          cancelAtPeriodEnd: sub.cancel_at_period_end,
+          currentPeriodEnd: new Date(periodEndMs),
         });
       } catch (error) {
         console.error("Error canceling subscription:", error);
@@ -1310,6 +1589,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             plan: user.subscriptionPlan,
             currentProductId: null,
             subscriptionEndDate: user.subscriptionEndDate,
+            subscriptionViaCoupon: Boolean(user.subscriptionViaCoupon),
+            hasDefaultPaymentMethod: false,
           });
         }
 
@@ -1317,6 +1598,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           user.stripeSubscriptionId,
           { expand: ["items.data.price.product"] },
         );
+
+        const hasDefaultPaymentMethod = user.stripeCustomerId
+          ? await customerHasPaymentMethod(
+              user.stripeCustomerId,
+              user.stripeSubscriptionId,
+            )
+          : false;
 
         let currentProductId: string | null = null;
         const pri: any = subscription.items.data[0]?.price;
@@ -1334,17 +1622,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
             typeof prod === "string" ? prod : prod?.id ?? null;
         }
 
+        const periodEndMs = subscription.current_period_end * 1000;
+        const stillInPaidPeriod = periodEndMs > Date.now();
+        const dbAccessActive = effectiveSubscriptionStatus(user) === "active";
+
         res.json({
           hasSubscription: true,
           subscriptionId: subscription.id,
           status: subscription.status,
+          cancelAtPeriodEnd: subscription.cancel_at_period_end,
           currentPeriodStart: new Date(
             subscription.current_period_start * 1000,
           ),
-          currentPeriodEnd: new Date(subscription.current_period_end * 1000),
+          currentPeriodEnd: new Date(periodEndMs),
           plan: user.subscriptionPlan,
           currentProductId,
           subscriptionEndDate: user.subscriptionEndDate,
+          subscriptionViaCoupon: Boolean(user.subscriptionViaCoupon),
+          hasDefaultPaymentMethod,
+          /** DB + Stripe: promo end date and cancel-at-period-end honored. */
+          hasAccess:
+            dbAccessActive &&
+            (subscription.status === "active" ||
+              subscription.status === "trialing" ||
+              (subscription.cancel_at_period_end && stillInPaidPeriod)),
         });
       } catch (error) {
         console.error("Error fetching subscription status:", error);

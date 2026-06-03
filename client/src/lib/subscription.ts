@@ -1,11 +1,20 @@
 export type StripeSubscriptionPayload = {
   hasSubscription?: boolean;
   status?: string | null;
+  cancelAtPeriodEnd?: boolean;
+  currentPeriodEnd?: string | Date | null;
+  hasAccess?: boolean;
+  /** Started on a 100% coupon without a card at signup. */
+  subscriptionViaCoupon?: boolean;
+  hasDefaultPaymentMethod?: boolean;
 };
 
-export type SubscriptionUser = {
-  subscriptionStatus?: string | null;
-  subscriptionEndDate?: string | Date | null;
+import {
+  effectiveSubscriptionStatus,
+  type SubscriptionAccessUser,
+} from "@shared/subscriptionAccess";
+
+export type SubscriptionUser = SubscriptionAccessUser & {
   stripeSubscriptionId?: string | null;
   subscriptionPlan?: string | null;
 };
@@ -16,9 +25,20 @@ const STRIPE_MEMBER_STATUSES = new Set(["active", "trialing", "past_due", "pause
 export function stripePayloadShowsManagingSubscription(
   payload: StripeSubscriptionPayload | null | undefined,
 ): boolean {
+  if (payload?.hasAccess === true) return true;
   if (!payload?.hasSubscription) return false;
   const lc = (payload.status ?? "").toString().toLowerCase();
-  return STRIPE_MEMBER_STATUSES.has(lc);
+  if (STRIPE_MEMBER_STATUSES.has(lc)) return true;
+  if (payload.cancelAtPeriodEnd && isPeriodEndInFuture(payload.currentPeriodEnd)) {
+    return true;
+  }
+  return false;
+}
+
+function isPeriodEndInFuture(end: string | Date | null | undefined): boolean {
+  if (!end) return false;
+  const d = typeof end === "string" || end instanceof Date ? new Date(end) : null;
+  return !!(d && !Number.isNaN(d.getTime()) && d > new Date());
 }
 
 /**
@@ -59,11 +79,11 @@ export function hasSubscriberAccess(opts: {
   const user = opts.user;
   if (!user) return false;
 
-  const dbStatus = (user.subscriptionStatus ?? "").toString().toLowerCase().trim();
-
-  if (dbStatus === "active") {
+  if (effectiveSubscriptionStatus(user) === "active") {
     return true;
   }
+
+  const dbStatus = (user.subscriptionStatus ?? "").toString().toLowerCase().trim();
 
   if (stripePayloadShowsManagingSubscription(opts.stripePayload)) {
     return true;
@@ -79,11 +99,12 @@ export function hasSubscriberAccess(opts: {
   return false;
 }
 
-/** Paid subscription only (`subscription_status === "active"`). */
+/** Paid access: effective DB status (promo end date honored), or grace until period end if webhooks lag. */
 export function hasActiveSubscription(user?: SubscriptionUser): boolean {
   if (!user) return false;
-  const status = (user.subscriptionStatus ?? "").toString().toLowerCase().trim();
-  return status === "active";
+  if (effectiveSubscriptionStatus(user) === "active") return true;
+  if (!user.stripeSubscriptionId) return false;
+  return isPeriodEndInFuture(user.subscriptionEndDate);
 }
 
 /** Where to send the user immediately after sign-in / sign-up. */

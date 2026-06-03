@@ -2,9 +2,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useQuery } from "@tanstack/react-query";
 import { Link } from 'wouter';
 import { useAuth } from '@/hooks/useAuth';
-import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { hasActiveSubscription } from '@/lib/subscription';
+import {
+    getJobProfileCompletion,
+    getProfileCompletionColors,
+    type JobProfileLike,
+} from '@/lib/profileCompletion';
+import { ProfileCompletionCard } from '@/components/ProfileCompletionCard';
 import {
     User, Briefcase, FileText, MapPin, GraduationCap,
     Code2, Globe, ChevronRight, Linkedin, Search, CheckCircle2,
@@ -78,45 +83,6 @@ interface ProfileData {
     profileCompletion?: number;
     createdAt?: string;
     updatedAt?: string;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-function calcProgress(p: ProfileData | null | undefined): number {
-    if (!p) return 0;
-    let score = 0;
-    if (p.firstName && p.lastName && p.email && p.phone) score += 20;
-    else if (p.firstName || p.lastName || p.email || p.phone) score += 10;
-    if (p.country && p.city) score += 10;
-    else if (p.country || p.city) score += 5;
-    if (p.experiences && p.experiences.length > 0) score += 15;
-    if (p.education && p.education.length > 0) score += 15;
-    const hasSkills = (p.skills?.length ?? 0) >= 3;
-    const hasLang = (p.languages?.length ?? 0) > 0;
-    if (hasSkills && hasLang) score += 15;
-    else if (hasSkills || hasLang) score += 7;
-    if (p.resume) score += 10;
-    if (p.recommendationLetter) score += 5;
-    if (p.certificates) score += 5;
-    if (p.achievements) score += 5;
-    if (p.expectedSalary && p.noticePeriod) score += 10;
-    else if (p.expectedSalary || p.noticePeriod) score += 5;
-    return Math.min(100, score);
-}
-
-function scoreColor(n: number) {
-    if (n < 40) return { text: 'text-red-500', bg: 'bg-red-500' };
-    if (n <= 70) return { text: 'text-amber-500', bg: 'bg-amber-500' };
-    return { text: 'text-green-600', bg: 'bg-green-500' };
-}
-
-function scoreLabel(n: number) {
-    if (n === 0) return 'Start building your profile to get started';
-    if (n < 40) return 'Just getting started — keep going!';
-    if (n <= 70) return 'Good progress – fill in the remaining sections';
-    if (n < 100) return "Almost complete — you're nearly there!";
-    return '🎉 Your profile is complete and ready!';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -636,8 +602,12 @@ export default function AutoJobApplyDashboard() {
         });
     };
 
-    const completion = useMemo(() => calcProgress(profileData), [profileData]);
-    const colors = scoreColor(completion);
+    const completionResult = useMemo(
+        () => getJobProfileCompletion(profileData as JobProfileLike | null),
+        [profileData]
+    );
+    const completion = completionResult.percent;
+    const colors = getProfileCompletionColors(completion);
 
     const fullName = [profileData?.firstName, profileData?.lastName].filter(Boolean).join(' ') || 'Not set';
     const location = [profileData?.city, profileData?.country].filter(Boolean).join(', ') || 'Not set';
@@ -749,7 +719,7 @@ export default function AutoJobApplyDashboard() {
   <iframe
     width="560"
     height="315"
-    src="https://www.youtube-nocookie.com/embed/O--eX6ahffM?si=SCsvpaJzCWwGZmjR&controls=0&autoplay=1&mute=1"
+    src="https://www.youtube-nocookie.com/embed/O--eX6ahffM?si=SCsvpaJzCWwGZmjR&controls=0&autoplay=1&mute=0"
     title="YouTube video player"
     frameBorder={0}
     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -848,34 +818,21 @@ export default function AutoJobApplyDashboard() {
                     </div>
 
                     {/* Completion Card */}
-                    <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-                        <div className="p-6 border-b border-gray-100">
-                            <div className="flex items-center justify-between mb-1">
-                                <h2 className="text-lg font-bold text-gray-900">Profile Completion</h2>
-                                <span className={`text-2xl font-extrabold ${colors.text}`}>
-                                    {isLoading ? '...' : `${completion}%`}
-                                </span>
-                            </div>
-                            <p className="text-sm text-gray-500 mb-4">{scoreLabel(completion)}</p>
-                            <Progress value={completion} className="h-3 rounded-full" />
-                            <p className="text-xs text-gray-400 mt-2">A complete profile significantly increases your auto-apply success rate.</p>
-                        </div>
-                        <div className="p-6">
-                            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Sections</h3>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                {sections.map(s => (
+                    <div className="lg:col-span-2 space-y-4">
+                        <ProfileCompletionCard
+                            completion={completionResult}
+                            isLoading={isLoading}
+                            editHref="/tools/auto-job-apply"
+                        />
+                        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                Sections
+                            </h3>
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                {sections.map((s) => (
                                     <SectionRow key={s.label} icon={s.icon} label={s.label} done={s.done} />
                                 ))}
                             </div>
-                            {completion < 100 && (
-                                <div className="mt-4 flex justify-end">
-                                    <Link href="/tools/auto-job-apply">
-                                        <button className="flex items-center gap-2 text-sm text-purple-600 hover:text-purple-800 font-semibold">
-                                            Complete profile <ChevronRight className="w-4 h-4" />
-                                        </button>
-                                    </Link>
-                                </div>
-                            )}
                         </div>
                     </div>
                 </div>
@@ -944,7 +901,6 @@ export default function AutoJobApplyDashboard() {
                 onProceed={handleProceedLaunch}
 
             />
-
             <InstallExtensionModal
                 isOpen={isInstallModalOpen}
                 onClose={() => setIsInstallModalOpen(false)}

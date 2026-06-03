@@ -95,7 +95,7 @@ export default function RecruiterOutreach() {
 
     } catch (error) {
       console.error("Error generating message:", error);
-      setGeneratedMessage(`Error: ${error.message}. Please check the console and try again.`);
+      setGeneratedMessage(`Error: ${error instanceof Error ? error.message : "Unknown error"}. Please check the console and try again.`);
     } finally {
       setIsGenerating(false);
     }
@@ -153,7 +153,7 @@ export default function RecruiterOutreach() {
   <iframe
     width="560"
     height="315"
-    src="https://www.youtube-nocookie.com/embed/HdGQ1lClP3E?si=3YVDf6AiestQJl0Z&controls=0&autoplay=1&mute=1"
+    src="https://www.youtube-nocookie.com/embed/HdGQ1lClP3E?si=3YVDf6AiestQJl0Z&controls=0&autoplay=1&mute=0"
     title="YouTube video player"
     frameBorder={0}
     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"

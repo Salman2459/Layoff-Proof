@@ -26,3 +26,4 @@ yarn-error.log*
 
 # Vite-specific (Only ignore the generated files, not the config itself)
 vite.config.ts.timestamp-*
+*.zip

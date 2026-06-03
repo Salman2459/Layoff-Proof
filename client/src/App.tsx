@@ -35,6 +35,7 @@ const GoogleOAuthCallback = lazy(() => import("@/pages/google-oauth-callback"));
 const ForgotPassword = lazy(() => import("@/pages/forgot-password"));
 const ResetPassword = lazy(() => import("@/pages/reset-password"));
 const Subscribe = lazy(() => import("@/pages/Subscribe"));
+const ManageSubscription = lazy(() => import("@/pages/manage-subscription"));
 const AutoJobApply = lazy(() => import("@/pages/auto-job-apply"));
 const AutoJobApplyDashboard = lazy(
   () => import("@/pages/auto-job-apply-dashboard")
@@ -80,6 +81,11 @@ function Router() {
       <Route path="/profile">
         <ProtectedRoute>
           <Profile />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/manage-subscription">
+        <ProtectedRoute>
+          <ManageSubscription />
         </ProtectedRoute>
       </Route>
       <Route path="/analytics">

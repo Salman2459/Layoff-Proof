@@ -40,6 +40,8 @@ export const users = pgTable("users", {
   stripeCustomerId: varchar("stripe_customer_id"),
   stripeSubscriptionId: varchar("stripe_subscription_id"),
   subscriptionStatus: varchar("subscription_status").default("inactive"), // active = paid subscriber
+  /** True when access started via 100% coupon (no card on file at signup). */
+  subscriptionViaCoupon: boolean("subscription_via_coupon").default(false),
   subscriptionEndDate: timestamp("subscription_end_date"),
   trialStartDate: timestamp("trial_start_date"),
   trialEndDate: timestamp("trial_end_date"),

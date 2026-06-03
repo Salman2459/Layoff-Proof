@@ -4,8 +4,12 @@ import { useLocation } from 'wouter';
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from '@/hooks/useAuth';
-import { Progress } from '@/components/ui/progress';
-import { CheckCircle2, AlertCircle, Bot, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
+import {
+    formValuesToJobProfile,
+    getJobProfileCompletion,
+} from '@/lib/profileCompletion';
+import { ProfileCompletionCard } from '@/components/ProfileCompletionCard';
 import { Formik } from 'formik';
 import * as Yup from 'yup';
 import PhoneInput from "react-phone-input-2";
@@ -881,31 +885,6 @@ console.log("profileData", profileData);
         window.setTimeout(() => setProfileLoaded(true), 0);
     }, [profileData, profileLoaded]);
 
-    // Profile completion from form values (used inside Formik)
-    const profileCompletionFromValues = (values: FormData) => {
-        let score = 0;
-        const p = values.personal;
-        if (p.firstName && p.lastName && p.email && p.phone) score += 20;
-        else if (p.firstName || p.lastName || p.email || p.phone) score += 10;
-        const r = values.residency;
-        if (r.country && r.city) score += 10;
-        else if (r.country || r.city) score += 5;
-        if (values.experience.experiences.length > 0) score += 15;
-        if (values.education.education.length > 0) score += 15;
-        const hasSkills = values.skillAndLanguages.skills.length >= 3;
-        const hasLanguage = values.skillAndLanguages.languages.length > 0;
-        if (hasSkills && hasLanguage) score += 15;
-        else if (hasSkills || hasLanguage) score += 7;
-        if (values.resume || values.resumeUrl) score += 10;
-        if (values.achievements.achievements) score += 5;
-        if (values.recommendationLetters && values.recommendationLetters.length > 0) score += 5;
-        if (values.certificates && values.certificates.length > 0) score += 5;
-        const g = values.general;
-        if (g.expectedSalary && g.noticePeriod) score += 10;
-        else if (g.expectedSalary || g.noticePeriod) score += 5;
-        return Math.min(100, score);
-    };
-
     const resumeFileRef = useRef<HTMLInputElement | null>(null);
     const recommendationFileRef = useRef<HTMLInputElement | null>(null);
     const certificatesFileRef = useRef<HTMLInputElement | null>(null);
@@ -1228,7 +1207,16 @@ console.log("profileData", profileData);
                     latestFormValuesRef.current = next;
                     setValues(next);
                 };
-                const profileCompletion = profileCompletionFromValues(values);
+                const mappedProfile = formValuesToJobProfile(values);
+                const profileCompletionResult = getJobProfileCompletion({
+                    ...mappedProfile,
+                    certificates:
+                        (profileData as { certificates?: string } | null)?.certificates ||
+                        mappedProfile.certificates,
+                    recommendationLetter:
+                        (profileData as { recommendationLetter?: string } | null)
+                            ?.recommendationLetter || mappedProfile.recommendationLetter,
+                });
                 const handleSaveAndNext = async () => {
                     // Use ref so we have the latest values (setValuesWithPrev updates ref synchronously; Formik state may be stale)
                     const latestValues = latestFormValuesRef.current;
@@ -1302,37 +1290,12 @@ console.log("profileData", profileData);
         <AutoJobApplyLocalDraftSync userId={id} values={values} enabled={profileLoaded} />
         <div className="min-h-screen lp-page-mesh">
         <div className="max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
-            {/* Sticky Profile Progress Bar */}
-            <div className="sticky top-0 z-40 bg-background/80 backdrop-blur-md pb-4 pt-2 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
-                <div className="bg-white rounded-2xl border border-border shadow-sm p-4 relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full -mr-12 -mt-12 transition-transform group-hover:scale-110 duration-500" />
-                    <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <div className="flex items-center gap-3">
-                            <div className={`p-2 rounded-xl ${profileCompletion === 100 ? 'bg-green-100 text-green-600' : 'bg-primary/15 text-primary'}`}>
-                                {profileCompletion === 100 ? <CheckCircle2 className="w-5 h-5" /> : <Bot className="w-5 h-5" />}
-                            </div>
-                            <div>
-                                <h3 className="text-sm font-bold text-gray-900 leading-tight">Profile Completion</h3>
-                                <p className="text-xs text-gray-500 font-medium">
-                                    {profileCompletion < 100 ? `${100 - profileCompletion}% more to reach 100%` : "Profile is ready for auto-apply!"}
-                                </p>
-                            </div>
-                        </div>
-                        <div className="flex-1 max-w-xs">
-                            <div className="flex items-center justify-between mb-1.5 px-1">
-                                <span className={`text-xs font-bold ${profileCompletion === 100 ? 'text-green-600' : 'text-primary'}`}>
-                                    {profileCompletion}% Complete
-                                </span>
-                                {profileCompletion < 40 && (
-                                    <span className="flex items-center gap-1 text-[10px] font-bold text-amber-500 uppercase tracking-wider">
-                                        <AlertCircle className="w-3 h-3" /> Basic
-                                    </span>
-                                )}
-                            </div>
-                            <Progress value={profileCompletion} className="h-2 rounded-full bg-muted" />
-                        </div>
-                    </div>
-                </div>
+            <div className="mb-6">
+                <ProfileCompletionCard
+                    completion={profileCompletionResult}
+                    compact
+                    maxPills={4}
+                />
             </div>
 
             {/* Step indicator */}

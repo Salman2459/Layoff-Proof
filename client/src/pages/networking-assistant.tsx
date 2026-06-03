@@ -114,7 +114,7 @@ export default function NetworkingAssistant() {
   });
 
   // Fetch network connections
-  const { data: connections = [] } = useQuery({
+  const { data: connections = [] as any} = useQuery({
     queryKey: ["/api/network-connections"],
     enabled: isAuthenticated,
   });
@@ -465,7 +465,7 @@ export default function NetworkingAssistant() {
   <iframe
     width="560"
     height="315"
-    src="https://www.youtube-nocookie.com/embed/czG6g6cId-0?si=USq-X550AMYm9ZK3&controls=0&autoplay=1&mute=1"
+    src="https://www.youtube-nocookie.com/embed/czG6g6cId-0?si=USq-X550AMYm9ZK3&controls=0&autoplay=1&mute=0"
     title="YouTube video player"
     frameBorder={0}
     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -585,7 +585,7 @@ export default function NetworkingAssistant() {
                         (c.notes || "").replace(/\r?\n/g, " "),
                       ]));
                       const csv = [headers, ...rows]
-                        .map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(","))
+                        .map(r => r.map((v: any) => `"${String(v).replace(/"/g, '""')}"`).join(","))
                         .join("\n");
                       const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
                       const url = URL.createObjectURL(blob);

@@ -17,7 +17,7 @@
  */
 import type { Request, Response } from "express";
 import type Stripe from "stripe";
-import { stripe } from "./stripe";
+import { stripe, cancelSubscriptionAtPeriodEnd } from "./stripe";
 import { storage } from "./storage";
 
 function customerIdOnly(
@@ -32,8 +32,16 @@ function customerIdOnly(
 /** Map Stripe Subscription.status → DB `subscription_status` (only `active` | `inactive`). */
 function mapStripeSubscriptionStatus(
   status: Stripe.Subscription.Status,
+  sub?: Pick<Stripe.Subscription, "cancel_at_period_end" | "current_period_end">,
 ): "active" | "inactive" {
   if (status === "active" || status === "trialing") return "active";
+
+  const periodEndSec = sub?.current_period_end;
+  if (periodEndSec && periodEndSec * 1000 > Date.now()) {
+    // Still inside a paid period (e.g. cancel_at_period_end until renewal date).
+    if (status === "canceled" || sub?.cancel_at_period_end) return "active";
+  }
+
   return "inactive";
 }
 
@@ -103,7 +111,7 @@ async function applySubscriptionStripeFields(
   await storage.updateUser(userId, {
     stripeCustomerId,
     stripeSubscriptionId: sub.id,
-    subscriptionStatus: mapStripeSubscriptionStatus(sub.status),
+    subscriptionStatus: mapStripeSubscriptionStatus(sub.status, sub),
     subscriptionEndDate: new Date(endMs),
     ...(productId ? { subscriptionPlan: productId } : {}),
   });
@@ -128,9 +136,21 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
   if (subId) {
     const sub = await stripe.subscriptions.retrieve(subId);
     await applySubscriptionStripeFields(userId, sub, cid!);
-    await storage.updateUser(userId, { subscriptionStatus: "active" });
+    const paidCents = typeof invoice.amount_paid === "number" ? invoice.amount_paid : 0;
+    const existing = await storage.getUser(userId);
+    if (paidCents === 0 && existing?.subscriptionViaCoupon && !sub.cancel_at_period_end) {
+      await cancelSubscriptionAtPeriodEnd(subId);
+    }
+    await storage.updateUser(userId, {
+      subscriptionStatus: "active",
+      ...(paidCents > 0 ? { subscriptionViaCoupon: false } : {}),
+    });
   } else {
-    await storage.updateUser(userId, { subscriptionStatus: "active" });
+    const paidCents = typeof invoice.amount_paid === "number" ? invoice.amount_paid : 0;
+    await storage.updateUser(userId, {
+      subscriptionStatus: "active",
+      ...(paidCents > 0 ? { subscriptionViaCoupon: false } : {}),
+    });
   }
 }
 
@@ -278,6 +298,7 @@ export const handleStripeWebhook = async (
 
         await storage.updateUser(userId, {
           subscriptionStatus: "inactive",
+          subscriptionViaCoupon: false,
           stripeSubscriptionId: null,
           stripeCustomerId: cid ?? undefined,
         });

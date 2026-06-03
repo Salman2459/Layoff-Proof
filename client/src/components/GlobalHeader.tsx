@@ -7,7 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { User, Menu, LogOut, Settings, Briefcase } from "lucide-react";
+import { User, Menu, LogOut, Settings, Briefcase, CreditCard } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { clearClientStorageOnLogout } from "@/lib/logoutStorage";
 
@@ -112,6 +112,15 @@ function GlobalHeader() {
                       Profile
                     </Link>
                   </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link
+                      href="/manage-subscription"
+                      className="flex w-full items-center gap-2"
+                    >
+                      <CreditCard className="h-4 w-4" />
+                      Manage Subscription
+                    </Link>
+                  </DropdownMenuItem>
                   {user &&  <DropdownMenuItem asChild>
                  <Link href="/job-board" className="flex w-full items-center gap-2">
                       <Briefcase className="h-4 w-4" />
@@ -154,6 +163,13 @@ function GlobalHeader() {
                       Subscribe
                     </Link>
                   </DropdownMenuItem>
+                  {isAuthenticated && (
+                    <DropdownMenuItem asChild>
+                      <Link href="/manage-subscription" className="w-full">
+                        Manage Subscription
+                      </Link>
+                    </DropdownMenuItem>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

@@ -1,8 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import PhoneInput from "react-phone-input-2";
 import "react-phone-input-2/lib/style.css";
 import { useAuth } from "@/hooks/useAuth";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ProfileCompletionCard } from "@/components/ProfileCompletionCard";
+import {
+  getJobProfileCompletion,
+  type JobProfileLike,
+} from "@/lib/profileCompletion";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
@@ -65,6 +70,30 @@ export default function Profile() {
     emailNotifications: true,
     smsNotifications: false,
   });
+
+  const { data: jobProfile, isLoading: jobProfileLoading } = useQuery({
+    queryKey: ["/api/profile/jobprofile", user?.id],
+    queryFn: async () => {
+      const res = await fetch(`/api/profile/jobprofile/${user!.id}`, {
+        credentials: "include",
+      });
+      const json = await res.json();
+      return (json.data ?? null) as JobProfileLike | null;
+    },
+    enabled: !!user?.id,
+  });
+
+  const completionResult = useMemo(() => {
+    const merged: JobProfileLike = {
+      ...(jobProfile ?? {}),
+      firstName: formData.firstName || jobProfile?.firstName,
+      lastName: formData.lastName || jobProfile?.lastName,
+      email: formData.email || jobProfile?.email,
+      phone: formData.phoneNumber || jobProfile?.phone,
+      jobTitle: formData.jobTitle || jobProfile?.jobTitle,
+    };
+    return getJobProfileCompletion(merged);
+  }, [jobProfile, formData]);
 
   // Update form when user data loads
   useEffect(() => {
@@ -190,6 +219,13 @@ export default function Profile() {
           </div>
 
           <div className="space-y-6">
+            <ProfileCompletionCard
+              completion={completionResult}
+              isLoading={jobProfileLoading}
+              editHref="/tools/auto-job-apply"
+              editLabel="Complete job profile"
+            />
+
             {/* Profile Information */}
             <Card>
               <CardHeader>

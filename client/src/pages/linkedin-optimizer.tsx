@@ -386,7 +386,7 @@ export default function LinkedInOptimizer() {
   <iframe
     width="560"
     height="315"
-    src="https://www.youtube-nocookie.com/embed/mjJMwMZeu10?si=mIU_NP5v-ei24Gqw&controls=0&autoplay=1&mute=1"
+    src="https://www.youtube-nocookie.com/embed/mjJMwMZeu10?si=mIU_NP5v-ei24Gqw&controls=0&autoplay=1&mute=0"
     title="YouTube video player"
     frameBorder={0}
     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"

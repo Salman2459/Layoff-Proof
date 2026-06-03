@@ -263,8 +263,9 @@ export default function ElevateLanding() {
     <div className="min-h-screen lp-page-mesh">
       <GlobalHeader />
 
-      {/* Hero Section */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-24" style={{ display: !isAuthenticated ? 'block' : 'none' }}>
+      {/* Hero Section — unmount when logged in so the YouTube iframe stops playing */}
+      {!isAuthenticated && (
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-24">
         <div className="grid lg:grid-cols-2 gap-12 items-center">
           {/* Left Column - Content */}
           <div className="space-y-8">
@@ -356,7 +357,7 @@ export default function ElevateLanding() {
   <iframe
     width="560"
     height="315"
-    src="https://www.youtube-nocookie.com/embed/odnex9mQJI4?si=hlcj1UlplWQDCLZB&controls=0&autoplay=1&mute=1"
+    src="https://www.youtube-nocookie.com/embed/odnex9mQJI4?si=hlcj1UlplWQDCLZB&controls=0&autoplay=1&mute=0"
     title="YouTube video player"
     frameBorder={0}
     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -367,6 +368,7 @@ export default function ElevateLanding() {
 </div>
         </div>
       </main>
+      )}
 
       {/* Tools Section */}
       <section className="border-y border-border/60 bg-card/80 py-20 backdrop-blur-sm">
@@ -437,10 +439,8 @@ export default function ElevateLanding() {
       </section>
 
       {/* CTA Section */}
-      <section
-        className="lp-gradient-cta relative py-20 md:py-24"
-        style={{ display: !isAuthenticated ? "block" : "none" }}
-      >
+      {!isAuthenticated && (
+      <section className="lp-gradient-cta relative py-20 md:py-24">
         <div
           className="pointer-events-none absolute -left-24 top-1/2 z-[1] h-[28rem] w-[28rem] -translate-y-1/2 rounded-full bg-cyan-300/25 blur-3xl motion-reduce:opacity-50"
           aria-hidden
@@ -471,6 +471,7 @@ export default function ElevateLanding() {
           </Link>
         </div>
       </section>
+      )}
 
       {/* Footer */}
       <footer className="lp-footer relative">

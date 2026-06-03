@@ -35,6 +35,35 @@ export async function getOrCreateStripeCustomer(user: {
   return customer.id;
 }
 
+/** Whether the Stripe customer (or their subscription) has a default payment method on file. */
+export async function customerHasPaymentMethod(
+  customerId: string,
+  subscriptionId?: string | null,
+): Promise<boolean> {
+  const customer = await stripe.customers.retrieve(customerId, {
+    expand: ["invoice_settings.default_payment_method"],
+  });
+  if (customer.deleted) return false;
+
+  const invoicePm = customer.invoice_settings?.default_payment_method;
+  if (invoicePm && typeof invoicePm === "object") return true;
+  if (typeof invoicePm === "string" && invoicePm) return true;
+
+  if (subscriptionId) {
+    const sub = await stripe.subscriptions.retrieve(subscriptionId);
+    const subPm = sub.default_payment_method;
+    if (subPm && typeof subPm === "string") return true;
+    if (subPm && typeof subPm === "object") return true;
+  }
+
+  const methods = await stripe.paymentMethods.list({
+    customer: customerId,
+    type: "card",
+    limit: 1,
+  });
+  return methods.data.length > 0;
+}
+
 // ✅ Added couponId parameter
 export async function createSubscription(
   customerId: string,
@@ -93,6 +122,7 @@ export async function createPaymentIntent(
     amount: Math.round(finalAmount * 100),
     currency,
     customer: customerId,
+    description: "Subscription creation",
     automatic_payment_methods: { enabled: true },
     metadata: {
       type: 'one_time_payment',
@@ -131,8 +161,13 @@ export async function createSetupIntent(customerId: string): Promise<Stripe.Setu
   });
 }
 
-export async function cancelSubscription(subscriptionId: string): Promise<Stripe.Subscription> {
-  return await stripe.subscriptions.cancel(subscriptionId);
+/** Schedule cancellation at end of current billing period (no immediate cut-off). */
+export async function cancelSubscriptionAtPeriodEnd(
+  subscriptionId: string,
+): Promise<Stripe.Subscription> {
+  return await stripe.subscriptions.update(subscriptionId, {
+    cancel_at_period_end: true,
+  });
 }
 
 export async function getSubscription(subscriptionId: string): Promise<Stripe.Subscription> {

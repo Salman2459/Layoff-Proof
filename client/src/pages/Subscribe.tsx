@@ -215,6 +215,134 @@ type PlanChangePreview = {
   }>;
 };
 
+const stripeCardElementOptions = {
+  style: {
+    base: {
+      fontSize: "16px",
+      color: "#111827",
+      "::placeholder": { color: "#9CA3AF" },
+    },
+    invalid: { color: "#EF4444", iconColor: "#EF4444" },
+  },
+};
+
+function PlanChangeCardPayment({
+  clientSecret,
+  payToday,
+  currency,
+  onSuccess,
+  onCancel,
+}: {
+  clientSecret: string;
+  payToday: number;
+  currency: string;
+  onSuccess: () => void;
+  onCancel: () => void;
+}) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const { toast } = useToast();
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  const handlePay = async () => {
+    if (!stripe || !elements) return;
+    const card = elements.getElement(CardNumberElement);
+    if (!card) {
+      toast({
+        title: "Error",
+        description: "Card field not ready. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      const { error, paymentIntent } = await stripe.confirmCardPayment(clientSecret, {
+        payment_method: { card },
+      });
+      if (error) throw error;
+      if (!paymentIntent?.id) {
+        throw new Error("Payment did not complete.");
+      }
+      await apiRequest("POST", "/api/stripe/complete-plan-change-payment", {
+        paymentIntentId: paymentIntent.id,
+      });
+      onSuccess();
+    } catch (error) {
+      toast({
+        title: "Payment failed",
+        description: getApiErrorMessage(error, "Could not complete payment."),
+        variant: "destructive",
+      });
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border p-4">
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">Due now</span>
+          <span className="font-semibold">{formatMoney(payToday, currency)}</span>
+        </div>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Enter your card to pay the prorated upgrade amount and save it for renewals.
+      </p>
+      <div className="p-4 border rounded-lg bg-white dark:bg-gray-800 space-y-4">
+        <div>
+          <label className="block text-sm font-medium mb-1">Card number</label>
+          <div className="p-3 border rounded-md dark:border-gray-600">
+            <CardNumberElement
+              options={{
+                ...stripeCardElementOptions,
+                showIcon: true,
+                placeholder: "1234 1234 1234 1234",
+              }}
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">Expiration</label>
+            <div className="p-3 border rounded-md dark:border-gray-600">
+              <CardExpiryElement
+                options={{ ...stripeCardElementOptions, placeholder: "MM / YY" }}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">CVC</label>
+            <div className="p-3 border rounded-md dark:border-gray-600">
+              <CardCvcElement
+                options={{ ...stripeCardElementOptions, placeholder: "CVC" }}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="flex gap-2 justify-end">
+        <Button type="button" variant="outline" onClick={onCancel} disabled={isProcessing}>
+          Back
+        </Button>
+        <Button type="button" onClick={handlePay} disabled={!stripe || isProcessing}>
+          {isProcessing ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Processing…
+            </>
+          ) : (
+            <>
+              <CreditCard className="mr-2 h-4 w-4" />
+              Pay & upgrade
+            </>
+          )}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 const formatMoney = (amount: number, currency: string) => {
   const value = (amount ?? 0) / 100;
   try {
@@ -480,21 +608,7 @@ const CheckoutForm = ({
     return () => clearTimeout(timer);
   }, [coupon, subscriptionDraftReady, defaultPriceCents, planId]);
 
-  const stripeElementOptions = {
-    style: {
-      base: {
-        fontSize: '16px',
-        color: '#111827',
-        '::placeholder': {
-          color: '#9CA3AF',
-        },
-      },
-      invalid: {
-        color: '#EF4444',
-        iconColor: '#EF4444',
-      },
-    },
-  };
+  const stripeElementOptions = stripeCardElementOptions;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -514,7 +628,15 @@ const CheckoutForm = ({
         setIsCouponApplied(true);
 
         if (data.paymentRequired === false) {
-          // free subscription flow...
+          if (data.breakdown) setPriceBreakdown(data.breakdown);
+          toast({
+            title: "Subscription activated",
+            description:
+              data.message ?? "Your promo code was applied. You now have full access.",
+          });
+          window.location.href = `${window.location.origin}/`;
+          setIsProcessing(false);
+          return;
         }
 
         if (data.clientSecret) {
@@ -646,7 +768,7 @@ const CheckoutForm = ({
         </div>
       </div>
 
-      {/* <div>
+      <div>
         <label htmlFor="coupon" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
           Coupon code (optional)
         </label>
@@ -682,7 +804,7 @@ const CheckoutForm = ({
             {couponError}
           </p>
         ) }
-      </div> */}
+      </div>
 
       <PriceBreakdown breakdown={priceBreakdown} isUpdating={breakdownLoading || isCheckingCoupon} />
 
@@ -1118,9 +1240,17 @@ export default function Subscribe() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const { data: checkoutStripeStatus } = useQuery<{
+  const [planChangePayment, setPlanChangePayment] = useState<{
+    clientSecret: string;
+    payToday: number;
+    currency: string;
+  } | null>(null);
+
+  const { data: checkoutStripeStatus, isFetched: stripeStatusFetched } = useQuery<{
     status?: string;
     hasSubscription?: boolean;
+    subscriptionViaCoupon?: boolean;
+    hasDefaultPaymentMethod?: boolean;
   } | null>({
     queryKey: ["/api/stripe/subscription-status"],
     queryFn: getQueryFn({ on401: "returnNull" }),
@@ -1151,10 +1281,19 @@ export default function Subscribe() {
   const [preview, setPreview] = useState<PlanChangePreview | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [isApplyingChange, setIsApplyingChange] = useState(false);
+  const [isPreparingCardPayment, setIsPreparingCardPayment] = useState(false);
+
+  const needsCardForPlanUpgrade =
+    stripeStatusFetched &&
+    Boolean(preview) &&
+    !preview?.isDowngrade &&
+    (preview?.payToday ?? 0) > 0 &&
+    !checkoutStripeStatus?.hasDefaultPaymentMethod;
 
   const openPreview = async (plan: StripeCatalogProduct) => {
     setPreviewTarget(plan);
     setPreview(null);
+    setPlanChangePayment(null);
     setIsPreviewOpen(true);
     setIsLoadingPreview(true);
     try {
@@ -1181,14 +1320,87 @@ export default function Subscribe() {
     }
   };
 
+  const finishPlanChangeSuccess = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/stripe/subscription-status"] });
+    window.location.href = `${window.location.origin}/`;
+  };
+
+  const startPlanChangeCardPayment = useCallback(async () => {
+    if (!previewTarget || !preview || planChangePayment) return;
+    setIsPreparingCardPayment(true);
+    try {
+      const data = await apiRequest("POST", "/api/stripe/change-plan", {
+        newPlanId: previewTarget.id,
+        prorationDate: preview.prorationDate,
+      });
+
+      if (data?.clientSecret && data?.requiresPaymentMethod) {
+        setPlanChangePayment({
+          clientSecret: data.clientSecret,
+          payToday: typeof data.payToday === "number" ? data.payToday : preview.payToday,
+          currency: preview.currency,
+        });
+        return;
+      }
+
+      if (data?.applied || data?.isDowngrade) {
+        finishPlanChangeSuccess();
+        return;
+      }
+
+      throw new Error("Could not start card payment for this upgrade.");
+    } catch (error) {
+      toast({
+        title: "Payment setup failed",
+        description: getApiErrorMessage(error, "Failed to prepare card payment."),
+        variant: "destructive",
+      });
+    } finally {
+      setIsPreparingCardPayment(false);
+    }
+  }, [previewTarget, preview, planChangePayment, toast]);
+
+  useEffect(() => {
+    if (!isPreviewOpen || isLoadingPreview || !preview || planChangePayment) return;
+    if (!needsCardForPlanUpgrade || isPreparingCardPayment) return;
+    void startPlanChangeCardPayment();
+  }, [
+    isPreviewOpen,
+    isLoadingPreview,
+    preview,
+    planChangePayment,
+    needsCardForPlanUpgrade,
+    isPreparingCardPayment,
+    startPlanChangeCardPayment,
+  ]);
+
   const applyPlanChange = async () => {
     if (!previewTarget || !preview) return;
+    if (needsCardForPlanUpgrade) {
+      await startPlanChangeCardPayment();
+      return;
+    }
     setIsApplyingChange(true);
     try {
       const data = await apiRequest("POST", "/api/stripe/change-plan", {
         newPlanId: previewTarget.id,
         prorationDate: preview.prorationDate,
       });
+
+      if (data?.applied || data?.isDowngrade) {
+        finishPlanChangeSuccess();
+        return;
+      }
+
+      if (data?.clientSecret && data?.requiresPaymentMethod) {
+        setPlanChangePayment({
+          clientSecret: data.clientSecret,
+          payToday: typeof data.payToday === "number" ? data.payToday : preview.payToday,
+          currency: preview.currency,
+        });
+        return;
+      }
 
       if (data?.clientSecret) {
         const stripe = await stripePromise;
@@ -1197,7 +1409,7 @@ export default function Subscribe() {
         if (result.error) throw result.error;
       }
 
-      window.location.href = `${window.location.origin}/`;
+      finishPlanChangeSuccess();
     } catch (error) {
       toast({
         title: "Plan change failed",
@@ -1371,16 +1583,44 @@ export default function Subscribe() {
           )}
         </div>
       </div>
-      <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
-        <DialogContent>
+      <Dialog
+        open={isPreviewOpen}
+        onOpenChange={(open) => {
+          setIsPreviewOpen(open);
+          if (!open) setPlanChangePayment(null);
+        }}
+      >
+        <DialogContent className={planChangePayment ? "max-w-lg" : undefined}>
           <DialogHeader>
-            <DialogTitle>Plan change preview</DialogTitle>
+            <DialogTitle>
+              {planChangePayment ? "Add payment method" : "Plan change preview"}
+            </DialogTitle>
             <DialogDescription>
-              {previewTarget ? `Switch to ${previewTarget.name}.` : "Review your changes."}
+              {planChangePayment
+                ? `Pay ${formatMoney(planChangePayment.payToday, planChangePayment.currency)} now to upgrade.`
+                : previewTarget
+                  ? `Switch to ${previewTarget.name}.`
+                  : "Review your changes."}
             </DialogDescription>
           </DialogHeader>
 
-          {isLoadingPreview ? (
+          {planChangePayment ? (
+            <Elements
+              stripe={stripePromise}
+              options={{ clientSecret: planChangePayment.clientSecret }}
+            >
+              <PlanChangeCardPayment
+                clientSecret={planChangePayment.clientSecret}
+                payToday={planChangePayment.payToday}
+                currency={planChangePayment.currency}
+                onCancel={() => {
+                  setPlanChangePayment(null);
+                  setIsPreviewOpen(false);
+                }}
+                onSuccess={finishPlanChangeSuccess}
+              />
+            </Elements>
+          ) : isLoadingPreview ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading preview…
             </div>
@@ -1437,6 +1677,13 @@ export default function Subscribe() {
                 </div>
               ) : null}
 
+              {needsCardForPlanUpgrade && isPreparingCardPayment ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Preparing secure card payment…
+                </div>
+              ) : null}
+
               <p className="text-xs text-muted-foreground">
                 Due now is the prorated difference for the current billing period. Next renewal is shown separately.
               </p>
@@ -1445,30 +1692,47 @@ export default function Subscribe() {
             <div className="text-sm text-muted-foreground">No preview available.</div>
           )}
 
-          <DialogFooter>
-            <Button
-              variant="outline"
-              type="button"
-              onClick={() => setIsPreviewOpen(false)}
-              disabled={isApplyingChange}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              onClick={applyPlanChange}
-              disabled={!previewTarget || !preview || isApplyingChange}
-            >
-              {isApplyingChange ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Applying…
-                </>
-              ) : (
-                "Confirm change"
-              )}
-            </Button>
-          </DialogFooter>
+          {!planChangePayment && !needsCardForPlanUpgrade ? (
+            <DialogFooter>
+              <Button
+                variant="outline"
+                type="button"
+                onClick={() => setIsPreviewOpen(false)}
+                disabled={isApplyingChange}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={applyPlanChange}
+                disabled={!previewTarget || !preview || isApplyingChange}
+              >
+                {isApplyingChange ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Applying…
+                  </>
+                ) : preview?.isDowngrade ? (
+                  "Confirm downgrade"
+                ) : preview?.payToday === 0 ? (
+                  "Confirm change"
+                ) : (
+                  "Confirm change"
+                )}
+              </Button>
+            </DialogFooter>
+          ) : !planChangePayment && needsCardForPlanUpgrade ? (
+            <DialogFooter>
+              <Button
+                variant="outline"
+                type="button"
+                onClick={() => setIsPreviewOpen(false)}
+                disabled={isPreparingCardPayment}
+              >
+                Cancel
+              </Button>
+            </DialogFooter>
+          ) : null}
         </DialogContent>
       </Dialog>
       <GlobalFooter />
