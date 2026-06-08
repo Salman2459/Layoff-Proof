@@ -39,7 +39,7 @@ export default function GlobalFooter() {
             <ul className="space-y-2 text-muted-foreground">
               <li>
                 <Link
-                  href="/tools/resume-builder"
+                  href="/resume-builder"
                   className="transition-colors hover:text-primary"
                 >
                   Resume Builder
@@ -47,7 +47,7 @@ export default function GlobalFooter() {
               </li>
               <li>
                 <Link
-                  href="/tools/cover-letter"
+                  href="/cover-letter"
                   className="transition-colors hover:text-primary"
                 >
                   Cover Letter Generator
@@ -55,7 +55,7 @@ export default function GlobalFooter() {
               </li>
               <li>
                 <Link
-                  href="/tools/interview-preparation"
+                  href="/interview-preparation"
                   className="transition-colors hover:text-primary"
                 >
                   Interview Prep
@@ -63,7 +63,7 @@ export default function GlobalFooter() {
               </li>
               <li>
                 <Link
-                  href="/tools/linkedin-optimizer"
+                  href="/linkedin-optimizer"
                   className="transition-colors hover:text-primary"
                 >
                   LinkedIn Optimizer
@@ -71,7 +71,7 @@ export default function GlobalFooter() {
               </li>
               <li>
                 <Link
-                  href="/dashboard"
+                  href="/lay-offs"
                   className="transition-colors hover:text-primary"
                 >
                   Layoff Tracker

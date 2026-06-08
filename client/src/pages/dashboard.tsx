@@ -22,7 +22,8 @@ import {
   Building2, ShoppingCart, DollarSign,
   Activity, Factory, Loader2, Search, Car, Newspaper, Clock
 } from "lucide-react";
-import GlobalHeader from "@/components/GlobalHeader";
+import { LayoffProofLayout } from "@/components/layoffproof/LayoffProofLayout";
+import { LayoffProofDashboardHeader } from "@/components/layoffproof/LayoffProofDashboardHeader";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { apiRequest, getApiErrorMessage } from "@/lib/queryClient";
@@ -70,6 +71,13 @@ interface PaginationInfo {
   hasNextPage: boolean;
   hasPreviousPage: boolean;
 }
+
+function greeting(first?: string | null, last?: string | null): string {
+  return first?.trim() || last?.trim() || "there";
+}
+
+const primaryBtnClass =
+  "h-12 border-0 bg-[#8b5cf6] px-8 text-white hover:bg-[#7c3aed] sm:w-auto";
 
 export default function Dashboard() {
   const { toast } = useToast();
@@ -198,37 +206,30 @@ export default function Dashboard() {
 
   if (isLoading || !user) {
     return (
-      <div className="flex min-h-screen items-center justify-center lp-page-mesh">
-        <div className="text-center">
-          <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-primary" />
-          <p className="text-muted-foreground">Loading dashboard...</p>
+      <LayoffProofLayout activeNavId="job-tracker">
+        <div className="flex flex-1 items-center justify-center py-24">
+          <Loader2 className="h-8 w-8 animate-spin text-[#8b5cf6]" />
         </div>
-      </div>
+      </LayoffProofLayout>
     );
   }
 
-  return (
-    <div className="min-h-screen lp-page-mesh">
-      <GlobalHeader />
+  const name = greeting(user.firstName, user.lastName);
 
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        {/* Welcome Section */}
-        <div className="mb-8">
-          <div className="lp-gradient-cta relative overflow-hidden rounded-2xl p-8 text-white shadow-2xl shadow-teal-900/15">
-            <div
-              className="pointer-events-none absolute -right-16 top-0 h-48 w-48 rounded-full bg-white/10 blur-3xl"
-              aria-hidden
-            />
-            <h2 className="relative text-3xl font-bold tracking-tight drop-shadow-sm sm:text-4xl">
-              Welcome back, {user?.firstName || "User"}! 👋
-            </h2>
-            <p className="relative mt-2 max-w-2xl text-lg text-white/90">
-              Real-time layoff tracking across industries • Updated hourly with
-              AI-powered data extraction
-            </p>
-          </div>
+  return (
+    <LayoffProofLayout activeNavId="job-tracker">
+      <LayoffProofDashboardHeader greeting={name} />
+
+      <main className="flex-1 bg-white px-4 pb-10 sm:px-6 lg:px-8">
+        <div className="py-6">
+          <h1 className="text-[26px] font-bold tracking-tight text-[#0f172a]">Job Tracker</h1>
+          <p className="mt-1 max-w-3xl text-sm text-[#64748b]">
+            Real-time layoff tracking across industries • Updated hourly with AI-powered data
+            extraction
+          </p>
         </div>
 
+      <div className="mx-auto max-w-7xl">
         {/* Search Bar */}
         <div className="mb-8">
           <div className="flex flex-col gap-3 sm:flex-row">
@@ -245,7 +246,7 @@ export default function Dashboard() {
             </div>
             <Button
               onClick={handleSearch}
-              className="h-12 border-0 px-8 text-primary-foreground lp-gradient-fill sm:w-auto"
+              className={primaryBtnClass}
               disabled={loading}
             >
               {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : "Search"}
@@ -274,8 +275,8 @@ export default function Dashboard() {
             Select Industry
           </h3>
 <Button
-            variant="outline"
-            className="h-12 px-8 text-primary-foreground lp-gradient-fill sm:w-auto"
+            type="button"
+            className={primaryBtnClass}
             onClick={() => setNotifyDialogOpen(true)}
           >
 
@@ -373,7 +374,7 @@ export default function Dashboard() {
                     </Button>
                     <Button
                       type="submit"
-                      className="lp-gradient-fill"
+                      className="bg-[#8b5cf6] hover:bg-[#7c3aed] text-white"
                       disabled={notifySaving}
                     >
                       {notifySaving ? (
@@ -741,6 +742,7 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
-    </div>
+      </main>
+    </LayoffProofLayout>
   );
 }

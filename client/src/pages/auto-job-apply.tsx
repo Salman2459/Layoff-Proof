@@ -4,12 +4,30 @@ import { useLocation } from 'wouter';
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from '@/hooks/useAuth';
-import { Loader2 } from 'lucide-react';
+import {
+    Building2,
+    Globe,
+    Home,
+    Loader2,
+    Mail,
+    MapPin,
+} from 'lucide-react';
 import {
     formValuesToJobProfile,
     getJobProfileCompletion,
 } from '@/lib/profileCompletion';
-import { ProfileCompletionCard } from '@/components/ProfileCompletionCard';
+import { AutoJobApplyProfileCompletion } from '@/components/layoffproof/auto-job-apply/AutoJobApplyProfileCompletion';
+import { AutoJobApplyStepTabs } from '@/components/layoffproof/auto-job-apply/AutoJobApplyStepTabs';
+import {
+    ajaCardClass,
+    ajaComboboxTriggerClass,
+    ajaInputClass,
+    ajaLabelClass,
+    ajaOutlineBtnClass,
+    ajaPrimaryBtnClass,
+} from '@/components/layoffproof/auto-job-apply/auto-job-apply-ui';
+import { LayoffProofDashboardHeader } from '@/components/layoffproof/LayoffProofDashboardHeader';
+import { LayoffProofLayout } from '@/components/layoffproof/LayoffProofLayout';
 import { Formik } from 'formik';
 import * as Yup from 'yup';
 import PhoneInput from "react-phone-input-2";
@@ -646,6 +664,10 @@ const AutoJobApply: React.FC = () => {
     const [uploadingDocument, setUploadingDocument] = useState<'resume' | 'certificate' | 'recommendation' | null>(null);
     const { user } = useAuth();
     const id = user && typeof user === 'object' && 'id' in user ? (user as { id: string }).id : undefined;
+    const greetingName =
+        (user && typeof user === 'object' && 'firstName' in user && (user as { firstName?: string }).firstName?.trim()) ||
+        (user && typeof user === 'object' && 'lastName' in user && (user as { lastName?: string }).lastName?.trim()) ||
+        'there';
     // Ref so resume parse (async) can read latest Formik values and call setValues with merged result
     const latestFormValuesRef = useRef<FormData>(defaultInitialValues);
     // Initialize from profile only once so refetches (e.g. after save) don't overwrite unsaved Education/Skills
@@ -1277,7 +1299,7 @@ console.log("profileData", profileData);
                                 );
                                 setMaxUnlockedStep((prev) => Math.max(prev, unlockedIndex));
                                 if (savedStep >= STORED_STEP_WHEN_WIZARD_COMPLETE) {
-                                    setLocation('/tools/auto-job-apply-dashboard');
+                                    setLocation('/auto-job-apply-dashboard');
                                 } else {
                                     setCurrentStep(s => Math.min(s + 1, TOTAL_STEPS - 1));
                                 }
@@ -1288,55 +1310,32 @@ console.log("profileData", profileData);
                 return (
         <>
         <AutoJobApplyLocalDraftSync userId={id} values={values} enabled={profileLoaded} />
-        <div className="min-h-screen lp-page-mesh">
-        <div className="max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
-            <div className="mb-6">
-                <ProfileCompletionCard
-                    completion={profileCompletionResult}
-                    compact
-                    maxPills={4}
-                />
-            </div>
+        <LayoffProofLayout activeNavId="auto-apply">
+        <LayoffProofDashboardHeader greeting={greetingName} />
+        <main className="flex-1 px-4 pb-10 pt-6 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-5xl">
+            <AutoJobApplyProfileCompletion
+                completion={profileCompletionResult}
+                profile={mappedProfile}
+            />
 
-            {/* Step indicator */}
-            <div className="flex flex-wrap gap-2 mb-6">
-                {STEP_CONFIG.map((step, idx) => (
-                    (() => {
-                        const locked = idx > maxUnlockedStep;
-                        const isActive = currentStep === idx;
-                        return (
-                    <button
-                        key={idx}
-                        type="button"
-                        disabled={locked}
-                        onClick={() => {
-                            if (locked) {
-                                toast({
-                                    title: "Complete previous step",
-                                    description:
-                                        "Please save the current step before moving to the next one.",
-                                    variant: "destructive",
-                                });
-                                return;
-                            }
-                            setErrors([]);
-                            setFieldErrors({});
-                            setCurrentStep(idx);
-                        }}
-                        className={[
-                            "px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
-                            isActive
-                                ? "lp-gradient-fill text-primary-foreground border-0"
-                                : "bg-white border border-gray-200 text-gray-600 hover:border-primary/35",
-                            locked ? "opacity-50 cursor-not-allowed hover:border-gray-200" : "",
-                        ].join(" ")}
-                    >
-                        {idx + 1}. {step.label}
-                    </button>
-                        );
-                    })()
-                ))}
-            </div>
+            <AutoJobApplyStepTabs
+                steps={STEP_CONFIG}
+                currentStep={currentStep}
+                maxUnlockedStep={maxUnlockedStep}
+                onStepClick={(idx) => {
+                    setErrors([]);
+                    setFieldErrors({});
+                    setCurrentStep(idx);
+                }}
+                onLockedClick={() => {
+                    toast({
+                        title: "Complete previous step",
+                        description: "Please save the current step before moving to the next one.",
+                        variant: "destructive",
+                    });
+                }}
+            />
 
           
             {/* Step 0: Resume & Personal */}
@@ -1351,7 +1350,7 @@ console.log("profileData", profileData);
                     disabled={resumeParseLoading}
                     onChange={(e) => { void handleFileChange(e, 'resume', setValues); }}
                 />
-                <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+                <div className={ajaCardClass}>
                     <div className='flex justify-between items-center mb-2'>
                         <h4 className="text-lg font-semibold text-gray-900 mb-4">Your Resume</h4>
                         {resumeParseLoading && (
@@ -1431,7 +1430,7 @@ console.log("profileData", profileData);
                 </div>
 
             {/* Personal Details (same step) */}
-            <div className="bg-white rounded-lg shadow-sm p-6 mb-6 mt-6">
+            <div className={cn(ajaCardClass, "mt-6")}>
                 <h4 className="text-lg font-semibold text-gray-900 mb-4">Your Details</h4>
                 <p className="text-sm text-gray-600 mb-4">Manually fill out all details to auto-populate job applications and generate a professional cover letter based on your information.</p>
                 <div className="text-sm text-gray-500 mb-4">Required fields are marked <span className="text-red-500">*</span></div>
@@ -1537,31 +1536,48 @@ console.log("profileData", profileData);
 
             {/* Step 1: Residency */}
             {currentStep === 1 && (
-            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-                <h4 className="text-lg font-semibold text-gray-900 mb-4">Residency</h4>
+            <div className={ajaCardClass}>
+                <div className="mb-6 flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#ede9fe]">
+                        <Building2 className="h-5 w-5 text-[#8b5cf6]" strokeWidth={2} />
+                    </div>
+                    <div>
+                        <h4 className="text-base font-bold text-[#0f172a]">Residency</h4>
+                        <p className="mt-0.5 text-sm text-[#64748b]">Tell us where you currently live</p>
+                    </div>
+                </div>
                 <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Street</label>
-                            <input type="text" value={values.residency.street} onChange={(e) => handleUpdate('residency', 'street', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Street" />
+                            <label className={ajaLabelClass}>Street</label>
+                            <div className="relative">
+                                <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#94a3b8]" />
+                                <input type="text" value={values.residency.street} onChange={(e) => handleUpdate('residency', 'street', e.target.value, setValuesWithPrev)} className={cn(ajaInputClass, "pl-9")} placeholder="Enter street" />
+                            </div>
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Building No</label>
-                            <input type="text" value={values.residency.buildingNo} onChange={(e) => handleUpdate('residency', 'buildingNo', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Building No" />
+                            <label className={ajaLabelClass}>Building No</label>
+                            <div className="relative">
+                                <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#94a3b8]" />
+                                <input type="text" value={values.residency.buildingNo} onChange={(e) => handleUpdate('residency', 'buildingNo', e.target.value, setValuesWithPrev)} className={cn(ajaInputClass, "pl-9")} placeholder="Enter building number" />
+                            </div>
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Apartment No</label>
-                            <input type="text" value={values.residency.apartmentNo} onChange={(e) => handleUpdate('residency', 'apartmentNo', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Apartment No" />
+                            <label className={ajaLabelClass}>Apartment No</label>
+                            <div className="relative">
+                                <Home className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#94a3b8]" />
+                                <input type="text" value={values.residency.apartmentNo} onChange={(e) => handleUpdate('residency', 'apartmentNo', e.target.value, setValuesWithPrev)} className={cn(ajaInputClass, "pl-9")} placeholder="Enter apartment number" />
+                            </div>
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Country <span className="text-red-500">*</span></label>
+                            <label className={ajaLabelClass}>Country <span className="text-[#ef4444]">*</span></label>
                             <Popover open={countryOpen} onOpenChange={setCountryOpen}>
                                 <PopoverTrigger asChild>
                                     <Button
                                         variant="outline"
                                         role="combobox"
                                         aria-expanded={countryOpen}
-                                        className="w-full justify-between px-3 py-2 h-auto border-gray-300"
+                                        className={ajaComboboxTriggerClass}
                                     >
                                         <span className="truncate">
                                             {values.residency.countryId
@@ -1619,7 +1635,7 @@ console.log("profileData", profileData);
                             )}
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">State <span className="text-red-500">*</span></label>
+                            <label className={ajaLabelClass}>State <span className="text-[#ef4444]">*</span></label>
                             <Popover open={stateOpen} onOpenChange={(open) => values.residency.countryId && setStateOpen(open)}>
                                 <PopoverTrigger asChild>
                                     <Button
@@ -1627,7 +1643,7 @@ console.log("profileData", profileData);
                                         role="combobox"
                                         aria-expanded={stateOpen}
                                         disabled={!values.residency.countryId}
-                                        className="w-full justify-between px-3 py-2 h-auto border-gray-300 disabled:bg-gray-50"
+                                        className={cn(ajaComboboxTriggerClass, "disabled:bg-[#f8fafc]")}
                                     >
                                         <span className="truncate">
                                             {values.residency.state || (values.residency.countryId ? "Select state..." : "Select country first")}
@@ -1682,7 +1698,7 @@ console.log("profileData", profileData);
                             )}
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">City <span className="text-red-500">*</span></label>
+                            <label className={ajaLabelClass}>City <span className="text-[#ef4444]">*</span></label>
                             <Popover open={cityOpen} onOpenChange={(open) => values.residency.countryId && values.residency.stateId && setCityOpen(open)}>
                                 <PopoverTrigger asChild>
                                     <Button
@@ -1690,7 +1706,7 @@ console.log("profileData", profileData);
                                         role="combobox"
                                         aria-expanded={cityOpen}
                                         disabled={!values.residency.countryId || !values.residency.stateId}
-                                        className="w-full justify-between px-3 py-2 h-auto border-gray-300 disabled:bg-gray-50"
+                                        className={cn(ajaComboboxTriggerClass, "disabled:bg-[#f8fafc]")}
                                     >
                                         <span className="truncate">
                                             {values.residency.city || (values.residency.stateId ? "Select city..." : "Select state first")}
@@ -1735,20 +1751,24 @@ console.log("profileData", profileData);
                             )}
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">ZIP</label>
-                            <input type="text" value={values.residency.zip} onChange={(e) => handleUpdate('residency', 'zip', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="ZIP" />
+                            <label className={ajaLabelClass}>ZIP</label>
+                            <div className="relative">
+                                <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#94a3b8]" />
+                                <input type="text" value={values.residency.zip} onChange={(e) => handleUpdate('residency', 'zip', e.target.value, setValuesWithPrev)} className={cn(ajaInputClass, "pl-9")} placeholder="Enter ZIP code" />
+                            </div>
                         </div>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">I legally authorized to work in</label>
-                        <div className="border border-gray-300 rounded-md p-2 flex flex-wrap gap-2">
+                        <label className={ajaLabelClass}>I legally authorized to work in</label>
+                        <div className={cn(ajaInputClass, "flex min-h-[42px] flex-wrap items-center gap-2 py-2")}>
+                            <Globe className="pointer-events-none h-4 w-4 shrink-0 text-[#94a3b8]" />
                             {values.residency.authorizedCountries.map((country, idx) => (
                                 <span key={idx} className="inline-flex items-center bg-primary/15 text-primary px-2 py-1 rounded-md text-sm">
                                     {country}
                                     <button type="button" onClick={() => handleUpdate('residency', 'authorizedCountries', values.residency.authorizedCountries.filter(c => c !== country), setValuesWithPrev)} className="ml-1 text-primary hover:text-primary">×</button>
                                 </span>
                             ))}
-                            <input type="text" placeholder="Add country..." className="flex-1 outline-none text-sm" onKeyDown={(e) => {
+                            <input type="text" placeholder="Add country..." className="min-w-[120px] flex-1 border-0 bg-transparent text-sm outline-none placeholder:text-[#94a3b8]" onKeyDown={(e) => {
                                 if (e.key === 'Enter' && e.currentTarget.value.trim()) {
                                     e.preventDefault();
                                     handleUpdate('residency', 'authorizedCountries', [...values.residency.authorizedCountries, e.currentTarget.value.trim()], setValuesWithPrev);
@@ -1791,7 +1811,7 @@ console.log("profileData", profileData);
 
             {/* Step 2: Working Experience */}
             {currentStep === 2 && (
-            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <div className={ajaCardClass}>
                 <h4 className="text-lg font-semibold text-gray-900 mb-4">Working Experience</h4>
                 <div className="space-y-4">
                     <div>
@@ -2072,7 +2092,7 @@ console.log("profileData", profileData);
 
             {/* Step 3: Education */}
             {currentStep === 3 && (
-            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <div className={ajaCardClass}>
                 <h4 className="text-lg font-semibold text-gray-900 mb-4">Education</h4>
                 {values.education.education.length === 0 &&
                     fieldErrors["education.education"] && (
@@ -2255,7 +2275,7 @@ console.log("profileData", profileData);
 
             {/* Step 4: Skills & Languages */}
             {currentStep === 4 && (
-            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <div className={ajaCardClass}>
                 <h4 className="text-lg font-semibold text-gray-900 mb-4">Skills & Languages</h4>
                 <div className="space-y-6">
                     <div className="space-y-4">
@@ -2316,7 +2336,7 @@ console.log("profileData", profileData);
 
             {/* Step 5: General */}
             {currentStep === 5 && (
-            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <div className={ajaCardClass}>
                 <h4 className="text-lg font-semibold text-gray-900 mb-4">General</h4>
                 <div className="space-y-4">
                     <div>
@@ -2369,7 +2389,7 @@ console.log("profileData", profileData);
 
             {/* Step 6: Achievements */}
             {currentStep === 6 && (
-            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <div className={ajaCardClass}>
                 <h4 className="text-lg font-semibold text-gray-900 mb-4">Achievements</h4>
                 <textarea required rows={6} value={values.achievements.achievements} onChange={(e) => handleUpdate('achievements', 'achievements', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Enter your achievements or let AI generate them for you..." />
             </div>
@@ -2378,7 +2398,7 @@ console.log("profileData", profileData);
             {/* Step 7: Documents (Certificates + Recommendation Letters) */}
             {currentStep === 7 && (
             <>
-            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <div className={ajaCardClass}>
                 <div className="flex justify-between items-center mb-4">
                     <h4 className="text-lg font-semibold text-gray-900">Courses & certificates</h4>
                     <button type="button" disabled={uploadingDocument === 'certificate'} onClick={async () => {
@@ -2430,7 +2450,7 @@ console.log("profileData", profileData);
             </div>
 
             {/* Recommendation Letters (Step 7) */}
-            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <div className={ajaCardClass}>
                 <div className="flex justify-between items-center">
                     <h4 className="text-lg font-semibold text-gray-900">Recommendation letters</h4>
                     <button type="button" disabled={uploadingDocument === 'recommendation'} onClick={async () => {
@@ -2486,21 +2506,31 @@ console.log("profileData", profileData);
       
 
             {/* Back / Save & Next — Back only from step 2 onward */}
-            <div className="flex justify-between items-center mt-8 pt-6 border-t border-border">
+            <div className="mt-8 flex items-center justify-between border-t border-[#e8ecf4] pt-6">
                 {currentStep >= 1 ? (
-                    <button type="button" onClick={() => { setErrors([]); setCurrentStep(s => Math.max(0, s - 1)); }} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50">
+                    <button
+                        type="button"
+                        onClick={() => { setErrors([]); setCurrentStep(s => Math.max(0, s - 1)); }}
+                        className={ajaOutlineBtnClass}
+                    >
                         Back
                     </button>
                 ) : (
                     <div />
                 )}
-                <button type="button" onClick={handleSaveAndNext} disabled={!!savingSection} className="px-6 py-2 lp-gradient-fill text-primary-foreground border-0 rounded-md hover:opacity-[0.97] disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2">
-                    {savingSection ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                <button
+                    type="button"
+                    onClick={handleSaveAndNext}
+                    disabled={!!savingSection}
+                    className={ajaPrimaryBtnClass}
+                >
+                    {savingSection ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                     {currentStep < TOTAL_STEPS - 1 ? (savingSection ? 'Saving…' : 'Save & Next') : (savingSection ? 'Saving…' : 'Finish')}
                 </button>
             </div>
         </div>
-        </div>
+        </main>
+        </LayoffProofLayout>
         </>
                 );
             }}

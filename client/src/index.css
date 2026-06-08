@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -77,6 +79,21 @@
   }
 }
 
+.layoffproof-root .react-tel-input .flag-dropdown {
+  border-radius: 0.5rem 0 0 0.5rem;
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+
+.layoffproof-root .react-tel-input .selected-flag:hover,
+.layoffproof-landing {
+  scroll-behavior: smooth;
+}
+
+.layoffproof-root .react-tel-input .selected-flag:focus {
+  background: #f1f5f9;
+}
+
 @layer utilities {
   .text-success {
     color: var(--success);
@@ -100,6 +117,62 @@
 
   .bg-warning\/10 {
     background-color: color-mix(in srgb, var(--warning) 12%, transparent);
+  }
+
+  /** LayoffProof full-page loader — indigo/violet mesh + gradient ring */
+  .layoffproof-page-loader {
+    background-color: #f4f6fb;
+    background-image: radial-gradient(
+        900px circle at 15% -5%,
+        rgba(99, 102, 241, 0.2),
+        transparent 52%
+      ),
+      radial-gradient(
+        820px circle at 88% 8%,
+        rgba(124, 58, 237, 0.16),
+        transparent 50%
+      ),
+      radial-gradient(
+        760px circle at 50% 100%,
+        rgba(67, 56, 202, 0.12),
+        transparent 55%
+      ),
+      linear-gradient(
+        165deg,
+        rgba(238, 242, 255, 0.9) 0%,
+        rgba(245, 243, 255, 0.95) 48%,
+        rgba(237, 233, 254, 0.9) 100%
+      );
+  }
+
+  .layoffproof-loader-ring {
+    width: 46px;
+    height: 46px;
+    border-radius: 9999px;
+    background: conic-gradient(
+      from 0deg,
+      #6366f1 0%,
+      #7c3aed 38%,
+      #c4b5fd 62%,
+      transparent 72%
+    );
+    -webkit-mask: radial-gradient(
+      farthest-side,
+      transparent calc(100% - 4px),
+      #000 calc(100% - 4px)
+    );
+    mask: radial-gradient(
+      farthest-side,
+      transparent calc(100% - 4px),
+      #000 calc(100% - 4px)
+    );
+    animation: layoffproof-loader-spin 0.85s linear infinite;
+  }
+
+  @keyframes layoffproof-loader-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   /** Full-page soft mesh behind content */

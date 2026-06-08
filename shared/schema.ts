@@ -158,6 +158,24 @@ export const companyActivities = pgTable("company_activities", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+/** Per-user activity feed for LayoffProof dashboard (applications, tools, profile, etc.). */
+export const userActivities = pgTable(
+  "user_activities",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    activityType: varchar("activity_type").notNull(),
+    title: varchar("title").notNull(),
+    detail: text("detail"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    occurredAt: timestamp("occurred_at").defaultNow().notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => [index("IDX_user_activities_user_occurred").on(table.userId, table.occurredAt)],
+);
+
 // User company subscriptions table for paid users
 export const userCompanySubscriptions = pgTable("user_company_subscriptions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -174,6 +192,11 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   }),
   notifications: many(notifications),
   companySubscriptions: many(userCompanySubscriptions),
+  activities: many(userActivities),
+}));
+
+export const userActivitiesRelations = relations(userActivities, ({ one }) => ({
+  user: one(users, { fields: [userActivities.userId], references: [users.id] }),
 }));
 
 export const companiesRelations = relations(companies, ({ many }) => ({
@@ -324,8 +347,13 @@ export interface ParsedResumeData {
   email: string;
   phone: string;
   profession: string;
-  /** Optional profile photo as a data URL (e.g. "data:image/png;base64,...") */
+  /**
+   * Profile photo for resume templates that support a headshot.
+   * Accepts a data URL (e.g. "data:image/png;base64,...") or an https image URL.
+   */
   profileImageDataUrl?: string;
+  /** Account avatar URL fallback when no uploaded resume photo is set */
+  profileImageUrl?: string;
   summary: string;
   experience: Array<{
     title: string;

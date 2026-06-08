@@ -9,11 +9,15 @@ import {
     getProfileCompletionColors,
     type JobProfileLike,
 } from '@/lib/profileCompletion';
-import { ProfileCompletionCard } from '@/components/ProfileCompletionCard';
+import { LayoffProofLayout } from '@/components/layoffproof/LayoffProofLayout';
+import { LayoffProofDashboardHeader } from '@/components/layoffproof/LayoffProofDashboardHeader';
+import { ProfileCompletionLayoffProof } from '@/components/layoffproof/ProfileCompletionLayoffProof';
+import { AutoJobApplyHero } from '@/components/layoffproof/AutoJobApplyHero';
+import { AutoJobApplySectionTile } from '@/components/layoffproof/AutoJobApplySectionTile';
 import {
     User, Briefcase, FileText, MapPin, GraduationCap,
     Code2, Globe, ChevronRight, Linkedin, Search, CheckCircle2,
-    Clock, AlertTriangle, Bot, Settings, Phone, Mail, Award,
+    Clock, Award, ArrowLeft, Bell, TrendingUp, Eye, MessageSquare, Mail,
     X, Calendar, AlertCircle, Building2, Rocket, DownloadCloud, ExternalLink
 } from 'lucide-react';
 
@@ -86,24 +90,6 @@ interface ProfileData {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Section checklist row
-// ─────────────────────────────────────────────────────────────────────────────
-function SectionRow({ icon: Icon, label, done }: { icon: any; label: string; done: boolean }) {
-    return (
-        <div className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${done ? 'bg-green-50' : 'bg-gray-50 hover:bg-gray-100'}`}>
-            <div className={`p-1.5 rounded-md ${done ? 'bg-green-100' : 'bg-white border border-gray-200'}`}>
-                <Icon className={`w-4 h-4 ${done ? 'text-green-600' : 'text-gray-400'}`} />
-            </div>
-            <span className={`text-sm font-medium flex-1 ${done ? 'text-green-800' : 'text-gray-600'}`}>{label}</span>
-            {done
-                ? <CheckCircle2 className="w-4 h-4 text-green-500" />
-                : <AlertTriangle className="w-4 h-4 text-amber-400" />
-            }
-        </div>
-    );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Platform card
 // ─────────────────────────────────────────────────────────────────────────────
 interface PlatformCardProps {
@@ -120,7 +106,7 @@ interface PlatformCardProps {
 function PlatformCard({ name, icon, description, gradient, badgeColor, status, features, onLaunch }: PlatformCardProps) {
     const isAvailable = status === 'available';
     return (
-        <div className={`relative bg-white rounded-2xl border border-gray-200 overflow-hidden hover:shadow-xl transition-all duration-300 ${isAvailable ? 'cursor-pointer hover:-translate-y-1' : 'opacity-80'}`}>
+        <div className={`relative bg-white rounded-2xl border border-[#e8ecf4] overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 ${isAvailable ? 'cursor-pointer hover:-translate-y-1' : 'opacity-80'}`}>
             <div className={`h-2 w-full ${gradient}`} />
             <div className="p-6">
                 <div className="flex items-start justify-between mb-4">
@@ -147,8 +133,8 @@ function PlatformCard({ name, icon, description, gradient, badgeColor, status, f
                         Launch <ChevronRight className="w-4 h-4" />
                     </button>
                 ) : (
-                    <button disabled className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gray-100 text-gray-400 text-sm font-semibold cursor-not-allowed">
-                        <Clock className="w-4 h-4" /> Coming Soon
+                    <button disabled className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#f8fafc] text-[#94a3b8] text-sm font-semibold cursor-not-allowed border border-[#e8ecf4]">
+                        <Clock className="w-4 h-4" /> Notify Me
                     </button>
                 )}
             </div>
@@ -609,8 +595,21 @@ export default function AutoJobApplyDashboard() {
     const completion = completionResult.percent;
     const colors = getProfileCompletionColors(completion);
 
-    const fullName = [profileData?.firstName, profileData?.lastName].filter(Boolean).join(' ') || 'Not set';
-    const location = [profileData?.city, profileData?.country].filter(Boolean).join(', ') || 'Not set';
+    const greeting =
+        profileData?.firstName?.trim() ||
+        user?.firstName?.trim() ||
+        user?.lastName?.trim() ||
+        (user as { email?: string })?.email?.split('@')[0] ||
+        'there';
+
+    const displayName = greeting;
+
+    const overviewStats = [
+        { label: 'Applications Sent', value: '0', sub: 'This Month', trend: '0%', icon: TrendingUp },
+        { label: 'Profile Views', value: '0', sub: 'This Month', trend: '0%', icon: Eye },
+        { label: 'Interviews', value: '0', sub: 'This Month', trend: '0%', icon: MessageSquare },
+        { label: 'Response Rate', value: '0%', sub: 'This Month', trend: '0%', icon: Award },
+    ];
 
     const sections = [
         { icon: User, label: 'Personal Details', done: !!(profileData?.firstName && profileData?.email && profileData?.phone) },
@@ -679,232 +678,142 @@ export default function AutoJobApplyDashboard() {
     ];
 
     return (
-        <div className="min-h-screen bg-gray-50">
+        <LayoffProofLayout activeNavId="auto-apply">
+            <LayoffProofDashboardHeader greeting={greeting} />
 
-            {/* ── Header ── */}
-            <div className="bg-gradient-to-r from-purple-700 via-purple-600 to-indigo-600 text-white">
-                <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-                    <div className="flex items-center justify-between flex-wrap gap-4">
-                        <div>
-                            <div className="flex items-center gap-2 mb-1">
-                                <Bot className="w-5 h-5 opacity-80" />
-                                <span className="text-sm font-medium text-purple-200">AI Auto Apply</span>
-                            </div>
-                            <h1 className="text-3xl font-bold">Auto Job Apply Dashboard</h1>
-                            <p className="text-purple-200 mt-1 text-sm">
-                                Welcome back, {profileData?.firstName || (user as any)?.email?.split('@')[0] || 'there'} 👋 — let AI handle the applications.
-                            </p>
-                        </div>
-                        <Link href="/tools/auto-job-apply">
-                            <button className="flex items-center gap-2 bg-white text-purple-700 font-semibold px-5 py-2.5 rounded-xl hover:bg-purple-50 transition-colors text-sm">
-                                <Settings className="w-4 h-4" /> Edit Profile
-                            </button>
+            <main className="flex-1 space-y-8 px-8 py-6">
+                <AutoJobApplyHero displayName={displayName} />
+
+                {/* Overview */}
+                <section>
+                    <h2 className="mb-4 text-base font-bold text-[#0f172a]">Overview</h2>
+                    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+                        {overviewStats.map((stat) => {
+                            const Icon = stat.icon;
+                            return (
+                                <div
+                                    key={stat.label}
+                                    className="rounded-2xl border border-[#e8ecf4] bg-white p-5 shadow-sm"
+                                >
+                                    <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-[#f5f3ff] text-[#6366f1]">
+                                        <Icon className="h-4 w-4" strokeWidth={2} />
+                                    </div>
+                                    <p className="text-2xl font-bold text-[#0f172a]">{stat.value}</p>
+                                    <p className="mt-0.5 text-[13px] font-medium text-[#64748b]">{stat.label}</p>
+                                    <p className="mt-1 text-[11px] text-[#94a3b8]">
+                                        {stat.sub} · {stat.trend}
+                                    </p>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </section>
+
+                <ProfileCompletionLayoffProof
+                    completion={completionResult}
+                    isLoading={isLoading}
+                    completeHref="/auto-job-apply"
+                />
+
+                {/* Sections grid */}
+                <section>
+                    <div className="mb-4 flex items-center justify-between gap-4">
+                        <h2 className="text-base font-bold text-[#0f172a]">Sections</h2>
+                        <Link
+                            href="/auto-job-apply"
+                            className="text-[13px] font-semibold text-[#6366f1] no-underline hover:text-[#4f46e5]"
+                        >
+                            Go to profile →
                         </Link>
                     </div>
-                </div>
-            </div>
-
-            <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-                <div className="grid gap-8 lg:grid-cols-2 lg:items-center lg:gap-10">
-                    <div className="space-y-3 lg:pr-4">
-                        <p className="text-sm font-semibold text-purple-600">Walkthrough</p>
-                        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-                            See AI auto-apply in action
-                        </h2>
-                        <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed max-w-md">
-                            A quick tour of the dashboard and supported job boards before you start applying.
-                        </p>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                        {sections.map((s) => (
+                            <AutoJobApplySectionTile
+                                key={s.label}
+                                icon={s.icon}
+                                label={s.label}
+                                done={s.done}
+                            />
+                        ))}
                     </div>
-                    <div className="relative mx-auto w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-black shadow-sm aspect-video dark:border-gray-700 sm:max-w-lg lg:mx-0 lg:max-w-none">
-  <iframe
-    width="560"
-    height="315"
-    src="https://www.youtube-nocookie.com/embed/O--eX6ahffM?si=SCsvpaJzCWwGZmjR&controls=0&autoplay=1&mute=0"
-    title="YouTube video player"
-    frameBorder={0}
-    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-    referrerPolicy="strict-origin-when-cross-origin"
-    allowFullScreen
-    className="absolute inset-0 h-full w-full border-0"
-  />
-</div>
-                </div>
+                </section>
 
-                {/* ── Profile Summary + Completion (side-by-side on large screens) ── */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-                    {/* Profile Info Card — shows real DB data */}
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 flex flex-col gap-4">
-                        {/* Avatar + name */}
-                        <div className="flex items-center gap-3">
-                            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white text-xl font-bold shrink-0">
-                                {profileData?.firstName?.[0]?.toUpperCase() || (user as any)?.email?.[0]?.toUpperCase() || '?'}
-                            </div>
-                            <div>
-                                <h2 className="font-bold text-gray-900 text-lg leading-tight">
-                                    {isLoading ? '...' : fullName}
-                                </h2>
-                                <p className="text-sm text-gray-500 flex items-center gap-1">
-                                    <MapPin className="w-3.5 h-3.5 shrink-0" />
-                                    {isLoading ? '...' : location}
-                                </p>
-                            </div>
-                        </div>
-
-                        {/* Contact details */}
-                        <div className="space-y-2 text-sm border-t border-gray-100 pt-3">
-                            <div className="flex items-center gap-2 text-gray-600">
-                                <Mail className="w-4 h-4 text-purple-400 shrink-0" />
-                                <span className="truncate">{profileData?.email || <span className="text-gray-300 italic">Not provided</span>}</span>
-                            </div>
-                            <div className="flex items-center gap-2 text-gray-600">
-                                <Phone className="w-4 h-4 text-purple-400 shrink-0" />
-                                <span>
-                                    {profileData?.phone
-                                        ? `${profileData.phoneCode ?? ''} ${profileData.phone}`.trim()
-                                        : <span className="text-gray-300 italic">Not provided</span>
-                                    }
-                                </span>
-                            </div>
-                            <div className="flex items-center gap-2 text-gray-600">
-                                <Briefcase className="w-4 h-4 text-purple-400 shrink-0" />
-                                <span>
-                                    {profileData?.totalExperience
-                                        ? `${profileData.totalExperience} yrs experience`
-                                        : <span className="text-gray-300 italic">Experience not set</span>
-                                    }
-                                </span>
-                            </div>
-                            {profileData?.linkedin && (
-                                <div className="flex items-center gap-2 text-gray-600">
-                                    <Linkedin className="w-4 h-4 text-purple-400 shrink-0" />
-                                    <a href={profileData.linkedin} className="text-blue-600 hover:underline truncate text-xs" target="_blank" rel="noreferrer">
-                                        LinkedIn Profile
-                                    </a>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Skills — schema: [{name: string}] */}
-                        {(profileData?.skills?.length ?? 0) > 0 && (
-                            <div className="border-t border-gray-100 pt-3">
-                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Skills</p>
-                                <div className="flex flex-wrap gap-1.5">
-                                    {profileData!.skills!.slice(0, 8).map((s) => (
-                                        <span key={s.name} className="text-xs bg-purple-50 text-purple-700 border border-purple-200 rounded-full px-2.5 py-0.5 font-medium">
-                                            {s.name}
-                                        </span>
-                                    ))}
-                                    {(profileData?.skills?.length ?? 0) > 8 && (
-                                        <span className="text-xs text-gray-400 self-center">+{profileData!.skills!.length - 8} more</span>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Languages — schema: [{language: string, proficiency: string}] */}
-                        {(profileData?.languages?.length ?? 0) > 0 && (
-                            <div className="border-t border-gray-100 pt-3">
-                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Languages</p>
-                                <div className="flex flex-wrap gap-1.5">
-                                    {profileData!.languages!.map((l) => (
-                                        <span key={l.language} className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-2.5 py-0.5 font-medium">
-                                            {l.language} · {l.proficiency}
-                                        </span>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Completion Card */}
-                    <div className="lg:col-span-2 space-y-4">
-                        <ProfileCompletionCard
-                            completion={completionResult}
-                            isLoading={isLoading}
-                            editHref="/tools/auto-job-apply"
-                        />
-                        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-                            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                Sections
-                            </h3>
-                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                                {sections.map((s) => (
-                                    <SectionRow key={s.label} icon={s.icon} label={s.label} done={s.done} />
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* ── Quick Stats ── */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                {/* Summary stats */}
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                     {[
                         {
-                            label: 'Profile Score', icon: <Award className="w-5 h-5" />,
-                            value: `${completion}%`, sub: 'Based on saved data', color: colors.text,
+                            label: 'Profile Score',
+                            icon: <Award className="w-5 h-5" />,
+                            value: `${completion}%`,
+                            sub: 'Based on saved data',
+                            color: colors.text,
                         },
                         {
-                            label: 'Resume', icon: <FileText className="w-5 h-5" />,
-                            value: profileData?.resume ? '✓ Uploaded' : '✗ Missing',
+                            label: 'Resume',
+                            icon: <FileText className="w-5 h-5" />,
+                            value: profileData?.resume ? 'Uploaded' : 'Missing',
                             sub: profileData?.resume ? 'Ready to apply' : 'Upload in profile',
-                            color: profileData?.resume ? 'text-green-600' : 'text-red-500',
+                            color: profileData?.resume ? 'text-emerald-600' : 'text-red-500',
                         },
                         {
-                            label: 'Skills', icon: <Code2 className="w-5 h-5" />,
+                            label: 'Skills',
+                            icon: <Code2 className="w-5 h-5" />,
                             value: `${profileData?.skills?.length ?? 0}`,
                             sub: 'Need at least 3 to score',
-                            color: (profileData?.skills?.length ?? 0) >= 3 ? 'text-green-600' : 'text-amber-500',
+                            color: (profileData?.skills?.length ?? 0) >= 3 ? 'text-emerald-600' : 'text-amber-500',
                         },
                         {
-                            label: 'Experience', icon: <Briefcase className="w-5 h-5" />,
+                            label: 'Experience',
+                            icon: <Briefcase className="w-5 h-5" />,
                             value: `${profileData?.experiences?.length ?? 0}`,
                             sub: profileData?.totalExperience ? `${profileData.totalExperience} yrs total` : 'Entries added',
-                            color: (profileData?.experiences?.length ?? 0) > 0 ? 'text-green-600' : 'text-gray-400',
+                            color: (profileData?.experiences?.length ?? 0) > 0 ? 'text-emerald-600' : 'text-[#94a3b8]',
                         },
-                    ].map(stat => (
-                        <div key={stat.label} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
-                            <div className="p-2 bg-purple-50 rounded-lg text-purple-600 shrink-0">{stat.icon}</div>
+                    ].map((stat) => (
+                        <div
+                            key={stat.label}
+                            className="flex items-center gap-3 rounded-xl border border-[#e8ecf4] bg-white p-4 shadow-sm"
+                        >
+                            <div className="shrink-0 rounded-lg bg-[#f5f3ff] p-2 text-[#6366f1]">{stat.icon}</div>
                             <div className="min-w-0">
-                                <p className="text-xs text-gray-400 font-medium uppercase tracking-wide truncate">{stat.label}</p>
-                                <p className={`text-lg font-bold ${stat.color}`}>{isLoading ? '...' : stat.value}</p>
-                                <p className="text-xs text-gray-400 truncate">{stat.sub}</p>
+                                <p className="truncate text-[11px] font-medium uppercase tracking-wide text-[#94a3b8]">
+                                    {stat.label}
+                                </p>
+                                <p className={`text-lg font-bold ${stat.color}`}>
+                                    {isLoading ? '...' : stat.value}
+                                </p>
+                                <p className="truncate text-[11px] text-[#94a3b8]">{stat.sub}</p>
                             </div>
                         </div>
                     ))}
                 </div>
 
-                {/* ── Platform Cards ── */}
-                <div>
-                    <div className="mb-4">
-                        <h2 className="text-xl font-bold text-gray-900">Auto-Apply Platforms</h2>
-                        <p className="text-sm text-gray-500 mt-1">Choose a platform and let AI apply to hundreds of jobs for you.</p>
+                {/* Platform cards */}
+                <section>
+                    <div className="mb-5">
+                        <h2 className="text-xl font-bold text-[#0f172a]">Auto-Apply Platforms</h2>
+                        <p className="mt-1 text-sm text-[#64748b]">
+                            Choose a platform and let AI apply to hundreds of jobs for you.
+                        </p>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {platforms.map(p => (
-                            <PlatformCard
-                                key={p.name}
-                                {...p}
-                                onLaunch={handleLaunch}
-
-                            />
+                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                        {platforms.map((p) => (
+                            <PlatformCard key={p.name} {...p} onLaunch={handleLaunch} />
                         ))}
                     </div>
-                </div>
-
-            </div>
+                </section>
+            </main>
 
             <LaunchFilterModal
                 isOpen={isLaunchModalOpen}
                 onClose={() => setIsLaunchModalOpen(false)}
                 platformName={selectedPlatform}
                 onProceed={handleProceedLaunch}
-
             />
             <InstallExtensionModal
                 isOpen={isInstallModalOpen}
                 onClose={() => setIsInstallModalOpen(false)}
             />
-        </div>
+        </LayoffProofLayout>
     );
 }

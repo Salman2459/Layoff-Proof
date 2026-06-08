@@ -1,4 +1,3 @@
-import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type PageLoaderProps = {
@@ -14,12 +13,13 @@ export function PageLoader({ overlay = false, className }: PageLoaderProps) {
       aria-live="polite"
       aria-label="Loading"
       className={cn(
-        "flex items-center justify-center lp-page-mesh",
+        "flex items-center justify-center layoffproof-page-loader",
         overlay ? "fixed inset-0 z-[100]" : "min-h-screen w-full",
-        className
+        className,
       )}
     >
-      <Loader2 className="h-10 w-10 animate-spin text-primary" aria-hidden />
+      <div className="layoffproof-loader-ring" aria-hidden />
+      <span className="sr-only">Loading</span>
     </div>
   );
 }

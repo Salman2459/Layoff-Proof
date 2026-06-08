@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect } from "react";
-import { Switch, Route } from "wouter";
+import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -9,7 +9,10 @@ import { PageLoader } from "@/components/PageLoader";
 
 const NotFound = lazy(() => import("@/pages/not-found"));
 const ElevateLanding = lazy(() => import("@/pages/elevate-landing"));
+const LayoffProofLandingPage = lazy(() => import("@/pages/layoffproof-landing"));
 const Dashboard = lazy(() => import("@/pages/dashboard"));
+const LayoffProofDashboard = lazy(() => import("@/pages/layoffproof-dashboard"));
+const AllActivitiesPage = lazy(() => import("@/pages/all-activities"));
 const Profile = lazy(() => import("@/pages/profile"));
 const Analytics = lazy(() => import("@/pages/analytics"));
 const Subscription = lazy(() => import("@/pages/subscription"));
@@ -75,8 +78,21 @@ function Router() {
       </Route>
       <Route path="/dashboard">
         <ProtectedRoute>
+          <LayoffProofDashboard />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/all-activities">
+        <ProtectedRoute>
+          <AllActivitiesPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/lay-offs">
+        <ProtectedRoute>
           <Dashboard />
         </ProtectedRoute>
+      </Route>
+      <Route path="/dashboard">
+        <Redirect to="/lay-offs" />
       </Route>
       <Route path="/profile">
         <ProtectedRoute>
@@ -109,77 +125,93 @@ function Router() {
         </ProtectedRoute>
       </Route>
 
-      {/* Career Tools — paid subscription required */}
-      <Route path="/tools/resume-builder">
+      {/* Career tools — paid subscription required */}
+      <Route path="/resume-builder">
         <ProtectedRoute requireSubscription>
           <ResumeBuilder />
         </ProtectedRoute>
       </Route>
-      <Route path="/tools/cover-letter">
+      <Route path="/cover-letter">
         <ProtectedRoute requireSubscription>
           <CoverLetter />
         </ProtectedRoute>
       </Route>
-      <Route path="/tools/interview-preparation">
+      <Route path="/interview-preparation">
         <ProtectedRoute requireSubscription>
           <InterviewPreparation />
         </ProtectedRoute>
       </Route>
-      <Route path="/tools/linkedin-optimizer">
+      <Route path="/linkedin-optimizer">
         <ProtectedRoute requireSubscription>
           <LinkedInOptimizer />
         </ProtectedRoute>
       </Route>
-      <Route path="/tools/recruiter-outreach">
+      <Route path="/recruiter-outreach">
         <ProtectedRoute requireSubscription>
           <RecruiterOutreach />
         </ProtectedRoute>
       </Route>
-      <Route path="/tools/promotion-planner">
+      <Route path="/promotion-planner">
         <ProtectedRoute requireSubscription>
           <PromotionPlanner />
         </ProtectedRoute>
       </Route>
-      <Route path="/tools/job-search-optimizer">
+      <Route path="/job-search-optimizer">
         <ProtectedRoute requireSubscription>
           <JobSearchOptimizer />
         </ProtectedRoute>
       </Route>
-      <Route path="/tools/salary-negotiator">
+      <Route path="/salary-negotiator">
         <ProtectedRoute requireSubscription>
           <SalaryNegotiator />
         </ProtectedRoute>
       </Route>
-      <Route path="/tools/career-path-analyzer">
+      <Route path="/career-path-analyzer">
         <ProtectedRoute requireSubscription>
           <CareerPathAnalyzer />
         </ProtectedRoute>
       </Route>
-      <Route path="/tools/skills-assessment">
+      <Route path="/skills-assessment">
         <ProtectedRoute requireSubscription>
           <SkillsAssessment />
         </ProtectedRoute>
       </Route>
-      <Route path="/tools/portfolio-builder">
+      <Route path="/portfolio-builder">
         <ProtectedRoute requireSubscription>
           <PortfolioBuilder />
         </ProtectedRoute>
       </Route>
-      <Route path="/tools/networking-assistant">
+      <Route path="/networking-assistant">
         <ProtectedRoute requireSubscription>
           <NetworkingAssistant />
         </ProtectedRoute>
       </Route>
-      <Route path="/tools/auto-job-apply">
+      <Route path="/auto-job-apply">
         <ProtectedRoute requireSubscription>
           <AutoJobApply />
         </ProtectedRoute>
       </Route>
-      <Route path="/tools/auto-job-apply-dashboard">
+      <Route path="/auto-job-apply-dashboard">
         <ProtectedRoute requireSubscription>
           <AutoJobApplyDashboard />
         </ProtectedRoute>
       </Route>
+
+      {/* Legacy /tools/* redirects */}
+      <Route path="/tools/resume-builder"><Redirect to="/resume-builder" /></Route>
+      <Route path="/tools/cover-letter"><Redirect to="/cover-letter" /></Route>
+      <Route path="/tools/interview-preparation"><Redirect to="/interview-preparation" /></Route>
+      <Route path="/tools/linkedin-optimizer"><Redirect to="/linkedin-optimizer" /></Route>
+      <Route path="/tools/recruiter-outreach"><Redirect to="/recruiter-outreach" /></Route>
+      <Route path="/tools/promotion-planner"><Redirect to="/promotion-planner" /></Route>
+      <Route path="/tools/job-search-optimizer"><Redirect to="/job-search-optimizer" /></Route>
+      <Route path="/tools/salary-negotiator"><Redirect to="/salary-negotiator" /></Route>
+      <Route path="/tools/career-path-analyzer"><Redirect to="/career-path-analyzer" /></Route>
+      <Route path="/tools/skills-assessment"><Redirect to="/skills-assessment" /></Route>
+      <Route path="/tools/portfolio-builder"><Redirect to="/portfolio-builder" /></Route>
+      <Route path="/tools/networking-assistant"><Redirect to="/networking-assistant" /></Route>
+      <Route path="/tools/auto-job-apply-dashboard"><Redirect to="/auto-job-apply-dashboard" /></Route>
+      <Route path="/tools/auto-job-apply"><Redirect to="/auto-job-apply" /></Route>
       <Route path="/job-board">
         <ProtectedRoute requireSubscription>
           <JobBoardPage />
@@ -188,8 +220,9 @@ function Router() {
 
       <Route path="/privacy-policy" component={PrivacyPolicyPage} />
 
-      {/* Main homepage - accessible to all users */}
-      <Route path="/" component={ElevateLanding} />
+      {/* Main homepage - LayoffProof marketing landing */}
+      <Route path="/" component={LayoffProofLandingPage} />
+      <Route path="/layoff-proof" component={ElevateLanding} />
       <Route component={NotFound} />
     </Switch>
     </Suspense>

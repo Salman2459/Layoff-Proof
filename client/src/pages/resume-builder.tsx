@@ -14,14 +14,20 @@ import {
   Trash2,
   Loader2,
   Sparkles,
+  User as UserIcon,
+  Link2,
+  X,
 } from "lucide-react";
 import { MdLocationOn } from "react-icons/md";
 import { SiGithub, SiLinkedin } from "react-icons/si";
 import {
-  linkedInPdfLinkHtml,
-  resumeLocationSvg,
-  resumeSocialSvg,
-} from "@shared/resumeSocialIcons";
+  getResumeProfileImageSrc,
+  RESUME_PHOTO_TEMPLATE_NAMES,
+  templateSupportsProfilePhoto,
+  templateSupportsProjects,
+} from "@shared/resumeTemplates";
+import { loadResumeDraft, saveResumeDraft } from "@/lib/resumeDraft";
+import type { User } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -42,7 +48,25 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import GlobalHeader from "@/components/GlobalHeader";
+import { LayoffProofLayout } from "@/components/layoffproof/LayoffProofLayout";
+import { ResumeBuilderChrome } from "@/components/layoffproof/ResumeBuilderChrome";
+import { ResumeBuilderChooseMethod } from "@/components/layoffproof/ResumeBuilderChooseMethod";
+import { ResumeBuilderLinkedInImport } from "@/components/layoffproof/ResumeBuilderLinkedInImport";
+import { ResumeEditorStepper } from "@/components/layoffproof/ResumeEditorStepper";
+import { LayoffProofTemplateStrip } from "@/components/layoffproof/LayoffProofTemplateStrip";
+import { LayoffProofLivePreview } from "@/components/layoffproof/LayoffProofLivePreview";
+import { ResumePreviewModal } from "@/components/layoffproof/ResumePreviewModal";
+import {
+  layoffproofInputClass,
+  layoffproofLabelClass,
+  nextSection,
+  type ResumeEditorSection,
+} from "@/components/layoffproof/resume-builder-ui";
+import { cn } from "@/lib/utils";
+import {
+  normalizeStoredLinkedInProfileUrl,
+  shouldCoalesceBareLinkedInToFullUrl,
+} from "@/lib/linkedinProfileUrl";
 import PhoneInput from "react-phone-input-2";
 import "react-phone-input-2/lib/style.css";
 
@@ -65,53 +89,6 @@ interface ParsedResumeData {
   linkedin: string;
   github: string;
   website: string;
-}
-
-/** Canonical prefix for public LinkedIn profiles (stored value always includes full URL). */
-const LINKEDIN_PROFILE_PREFIX = "https://www.linkedin.com/in/";
-
-/** Extract the /in/ vanity slug from a full URL, pasted input, or plain handle. */
-function linkedInVanityFromStored(stored: string): string {
-  const t = (stored || "").trim();
-  if (!t) return "";
-  const fromPath = t.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
-  if (fromPath) return decodeURIComponent(fromPath[1]);
-  if (!/^https?:\/\//i.test(t)) {
-    return t.replace(/^@/, "").replace(/^\/*/, "").replace(/\/*$/, "");
-  }
-  return "";
-}
-
-/** Build stored `linkedin` field from what the user types in the profile slug box. */
-function linkedInUrlFromVanityInput(input: string): string {
-  const vanity = linkedInVanityFromStored(input);
-  if (!vanity) return "";
-  return `${LINKEDIN_PROFILE_PREFIX}${vanity}`;
-}
-
-/** Normalize legacy/plain values (e.g. from resume upload) to a full profile URL when possible. */
-function normalizeStoredLinkedInProfileUrl(stored: string): string {
-  const t = (stored || "").trim();
-  if (!t) return "";
-  const built = linkedInUrlFromVanityInput(t);
-  return built || t;
-}
-
-/**
- * When the user types a bare profile slug (not a partial `https`/`www`), coalesce to a full
- * `https://www.linkedin.com/in/...` URL so one input shows route + name together.
- */
-function shouldCoalesceBareLinkedInToFullUrl(raw: string): boolean {
-  const t = raw.trim();
-  if (t.length < 3) return false;
-  if (/linkedin\.com/i.test(t) || /^https?:\/\//i.test(t)) return false;
-  if (/[:/]/.test(t)) return false;
-  const lower = t.toLowerCase();
-  if (lower.length < 10) {
-    if ("https://".startsWith(lower) || "http://".startsWith(lower)) return false;
-    if (lower.length < 5 && "www.".startsWith(lower)) return false;
-  }
-  return /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(t);
 }
 
 interface ResumeTemplate {
@@ -356,21 +333,26 @@ const resumeTemplates: ResumeTemplate[] = [
     preview: "/api/template-preview/creative",
     style: "creative",
   },
-  
+  {
+    id: "techie",
+    name: "Techie",
+    description: "Dark terminal-inspired layout for developers.",
+    preview: "/api/template-preview/techie",
+    style: "creative",
+  },
 ];
 
-/** Layouts that include a Projects block (keep in sync with server generateResumeHTML). */
-const RESUME_TEMPLATES_WITH_PROJECTS = new Set([
-  "photo-classic",
-  "brand-split",
-]);
-
-/** Non-empty achievement lines for resume preview and PDF. */
-function nonEmptyAchievements(achievements: unknown): string[] {
-  if (!Array.isArray(achievements)) return [];
-  return achievements
-    .map((a) => String(a ?? "").trim())
-    .filter(Boolean);
+function buildResumePayload(
+  data: ParsedResumeData,
+  user?: User,
+): ParsedResumeData {
+  const profileImageDataUrl = getResumeProfileImageSrc({
+    profileImageDataUrl: data.profileImageDataUrl,
+    profileImageUrl: user?.profileImageUrl,
+  });
+  return profileImageDataUrl
+    ? { ...data, profileImageDataUrl }
+    : { ...data, profileImageDataUrl: data.profileImageDataUrl ?? "" };
 }
 
 const initialResumeData: ParsedResumeData = {
@@ -401,22 +383,67 @@ const ResumeEditorForm = ({
   setExtractedData,
   onAISuggestion,
   selectedTemplateId = "",
+  activeTab = "personal",
+  onTabChange,
+  variant = "default",
+  hideTabList = false,
+  onSaveContinue,
+  showProTip = false,
+  onDismissProTip,
 }: {
   extractedData: ParsedResumeData;
   setExtractedData: React.Dispatch<React.SetStateAction<ParsedResumeData>>;
   onAISuggestion: (fieldName: string, suggestion: string) => void;
   /** When set, used to show the Projects tab only for templates that render that section. */
   selectedTemplateId?: string;
+  activeTab?: string;
+  onTabChange?: (tab: string) => void;
+  variant?: "default" | "layoffproof";
+  hideTabList?: boolean;
+  onSaveContinue?: () => void;
+  showProTip?: boolean;
+  onDismissProTip?: () => void;
 }) => {
+  const isLayoffProof = variant === "layoffproof";
+  const fieldInputClass = isLayoffProof ? layoffproofInputClass : undefined;
+  const fieldLabelClass = isLayoffProof ? layoffproofLabelClass : undefined;
   const { toast } = useToast();
+  const saveContinueFooter =
+    isLayoffProof && onSaveContinue ? (
+      <div className="flex justify-end pt-2">
+        <Button
+          type="button"
+          onClick={onSaveContinue}
+          className="h-11 rounded-lg bg-[#6366f1] px-6 text-sm font-semibold text-white hover:bg-[#4f46e5]"
+        >
+          Save & Continue
+          <ArrowRight className="ml-2 h-4 w-4" />
+        </Button>
+      </div>
+    ) : null;
   // --- NEW: Add constants and derived state for clarity ---
   const MAX_SKILLS = 15;
   const skillsList = extractedData.skills || [];
   const skillCount = skillsList.length;
   const isSkillLimitReached = skillCount >= MAX_SKILLS;
+  const [skillsInput, setSkillsInput] = useState(() => skillsList.join(", "));
+
+  useEffect(() => {
+    const parsedFromInput = skillsInput
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (JSON.stringify(parsedFromInput) !== JSON.stringify(skillsList)) {
+      setSkillsInput(skillsList.join(", "));
+    }
+  }, [skillsList, skillsInput]);
   const showProjectsTab =
-    !!selectedTemplateId &&
-    RESUME_TEMPLATES_WITH_PROJECTS.has(selectedTemplateId);
+    !!selectedTemplateId && templateSupportsProjects(selectedTemplateId);
+  const supportsPhoto =
+    !!selectedTemplateId && templateSupportsProfilePhoto(selectedTemplateId);
+  const hasProfilePhoto = !!getResumeProfileImageSrc({
+    profileImageDataUrl: extractedData.profileImageDataUrl,
+  });
   // --- END NEW ---
 
   useEffect(() => {
@@ -428,10 +455,9 @@ const ResumeEditorForm = ({
     }
   }, [extractedData.linkedin, setExtractedData]);
 
-  return (
-    <Card>
-      <CardContent className="p-4 sm:p-6 lg:p-8">
-        <Tabs defaultValue="personal" className="w-full">
+  const formBody = (
+    <Tabs value={activeTab} onValueChange={onTabChange} className="w-full">
+          {!hideTabList ? (
           <TabsList
             className={`grid w-full mb-6 sm:mb-8 ${showProjectsTab ? "grid-cols-2 sm:grid-cols-4 lg:grid-cols-7" : "grid-cols-2 sm:grid-cols-4 lg:grid-cols-6"}`}
           >
@@ -445,19 +471,45 @@ const ResumeEditorForm = ({
               <TabsTrigger value="projects">Projects</TabsTrigger>
             ) : null}
           </TabsList>
+          ) : null}
 
-          <TabsContent value="personal" className="space-y-6">
-            <h3 className="text-lg font-semibold sm:text-xl">Personal Information</h3>
-            <div className="rounded-xl border border-border bg-card p-4 sm:p-5">
+          <TabsContent value="personal" className="space-y-6 mt-0">
+            {isLayoffProof ? (
+              <div>
+                <h3 className="text-base font-bold text-[#0f172a]">Personal Information</h3>
+                <p className="mt-0.5 text-xs text-[#64748b]">
+                  Add your basic details to get started
+                </p>
+              </div>
+            ) : (
+              <h3 className="text-lg font-semibold sm:text-xl">Personal Information</h3>
+            )}
+            <div
+              className={cn(
+                "rounded-xl border p-4 sm:p-5",
+                isLayoffProof
+                  ? "border-dashed border-[#e2e8f0] bg-[#fafbfc]"
+                  : "border-border bg-card"
+              )}
+            >
               <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between md:gap-6">
                 <div className="flex flex-col items-center gap-3 text-center sm:flex-row sm:items-center sm:gap-4 sm:text-left">
-                  <div className="h-20 w-20 shrink-0 overflow-hidden rounded-full border border-border bg-muted sm:h-16 sm:w-16">
+                  <div
+                    className={cn(
+                      "flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full border sm:h-[72px] sm:w-[72px]",
+                      isLayoffProof
+                        ? "border-[#e2e8f0] bg-[#f1f5f9]"
+                        : "border-border bg-muted"
+                    )}
+                  >
                     {extractedData.profileImageDataUrl ? (
                       <img
                         src={extractedData.profileImageDataUrl}
                         alt="Profile"
                         className="h-full w-full object-cover"
                       />
+                    ) : isLayoffProof ? (
+                      <UserIcon className="h-8 w-8 text-[#cbd5e1]" strokeWidth={1.5} />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] leading-tight text-muted-foreground sm:text-xs">
                         No photo
@@ -465,12 +517,37 @@ const ResumeEditorForm = ({
                     )}
                   </div>
                   <div className="min-w-0 max-w-md">
-                    <div className="text-sm font-semibold text-foreground">
-                      Profile photo
+                    <div
+                      className={cn(
+                        "text-sm font-semibold",
+                        isLayoffProof ? "text-[#334155]" : "text-foreground"
+                      )}
+                    >
+                      {isLayoffProof ? "Profile Photo" : "Profile photo"}
                     </div>
-                    <div className="text-xs text-muted-foreground">
-                      Optional. Used in some templates (e.g. Emerald Sidebar).
+                    <div
+                      className={cn(
+                        "text-xs",
+                        isLayoffProof ? "text-[#94a3b8]" : "text-muted-foreground"
+                      )}
+                    >
+                      {isLayoffProof
+                        ? `Upload a professional photo (JPG, PNG, max 1MB). Shown on ${RESUME_PHOTO_TEMPLATE_NAMES}.`
+                        : `Optional. Shown on ${RESUME_PHOTO_TEMPLATE_NAMES}.`}
                     </div>
+                    {hasProfilePhoto && supportsPhoto ? (
+                      <p className="mt-1 text-xs font-medium text-emerald-600">
+                        Photo will appear on your resume preview.
+                      </p>
+                    ) : hasProfilePhoto && !supportsPhoto ? (
+                      <p className="mt-1 text-xs text-amber-600">
+                        Photo saved. Switch to {RESUME_PHOTO_TEMPLATE_NAMES} to show it on your resume.
+                      </p>
+                    ) : supportsPhoto ? (
+                      <p className="mt-1 text-xs text-[#64748b]">
+                        This template supports a profile photo — upload one to display it.
+                      </p>
+                    ) : null}
                   </div>
                 </div>
 
@@ -510,9 +587,14 @@ const ResumeEditorForm = ({
                   <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-center md:justify-end">
                     <Label
                       htmlFor="profile-photo"
-                      className="inline-flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-border bg-card px-4 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-muted sm:h-9 sm:w-auto sm:min-w-[8.5rem]"
+                      className={cn(
+                        "inline-flex h-10 w-full cursor-pointer items-center justify-center rounded-lg border px-4 text-sm font-semibold shadow-sm transition-colors sm:w-auto sm:min-w-[8.5rem]",
+                        isLayoffProof
+                          ? "border-[#6366f1] bg-white text-[#6366f1] hover:bg-[#eef2ff]"
+                          : "border-border bg-card font-medium text-foreground hover:bg-muted"
+                      )}
                     >
-                      Upload photo
+                      {isLayoffProof ? "Upload Photo" : "Upload photo"}
                     </Label>
                     {extractedData.profileImageDataUrl ? (
                       <Button
@@ -535,21 +617,24 @@ const ResumeEditorForm = ({
                   </p>
                 </div>
               </div>
-              {extractedData.profileImageDataUrl ? null : (
+              {!isLayoffProof && extractedData.profileImageDataUrl ? null : !isLayoffProof ? (
                 <div className="mt-3 text-center text-xs text-muted-foreground sm:text-left">
                   Tip: use a square image for best results.
                 </div>
-              )}
+              ) : null}
+              {!isLayoffProof ? (
               <div className="mt-2 text-center text-xs text-muted-foreground sm:text-left">
                 If your image is larger than 1MB, compress it first.
               </div>
+              ) : null}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div>
-                <Label htmlFor="fullName">Full Name</Label>
+                <Label htmlFor="fullName" className={fieldLabelClass}>Full Name</Label>
                 <Input
                   id="fullName"
+                  className={fieldInputClass}
                   value={extractedData.name}
                   onChange={(e) =>
                     setExtractedData({ ...extractedData, name: e.target.value })
@@ -557,11 +642,31 @@ const ResumeEditorForm = ({
                   placeholder="John Doe"
                 />
               </div>
+              {isLayoffProof ? (
+                <div>
+                  <Label htmlFor="profession-personal" className={fieldLabelClass}>
+                    Professional Title
+                  </Label>
+                  <Input
+                    id="profession-personal"
+                    className={fieldInputClass}
+                    value={extractedData.profession}
+                    onChange={(e) =>
+                      setExtractedData({
+                        ...extractedData,
+                        profession: e.target.value,
+                      })
+                    }
+                    placeholder="Software Engineer"
+                  />
+                </div>
+              ) : null}
               <div>
-                <Label htmlFor="email">Email Address</Label>
+                <Label htmlFor="email" className={fieldLabelClass}>Email Address</Label>
                 <Input
                   id="email"
                   type="email"
+                  className={fieldInputClass}
                   value={extractedData.email}
                   onChange={(e) =>
                     setExtractedData({
@@ -573,7 +678,7 @@ const ResumeEditorForm = ({
                 />
               </div>
               <div>
-                <Label htmlFor="phone">Phone Number</Label>
+                <Label htmlFor="phone" className={fieldLabelClass}>Phone Number</Label>
                 <PhoneInput
                   country="us"
                   value={extractedData.phone?.replace(/\D/g, "") ?? ""}
@@ -589,21 +694,26 @@ const ResumeEditorForm = ({
                     autoComplete: "tel",
                   }}
                   containerClass="w-full"
-                  inputClass="!w-full !h-10  !py-2 !border !border-gray-300 !rounded-md !shadow-sm focus:!ring-primary focus:!border-primary"
+                  inputClass={
+                    isLayoffProof
+                      ? "!w-full !h-11 !rounded-lg !border-[#e2e8f0] !text-sm !shadow-sm focus:!border-[#a5b4fc] focus:!ring-2 focus:!ring-[#c7d2fe]/50"
+                      : "!w-full !h-10 !py-2 !border !border-gray-300 !rounded-md !shadow-sm focus:!ring-primary focus:!border-primary"
+                  }
                   dropdownClass="!z-[60]"
-                  placeholder="Enter your phone number..."
+                  placeholder="(555) 123-4567"
                 />
               </div>
               <div>
                 <Label
                   htmlFor="location"
-                  className="inline-flex items-center gap-2"
+                  className={cn("inline-flex items-center gap-2", fieldLabelClass)}
                 >
                   <MdLocationOn className="h-4 w-4 shrink-0 text-emerald-700" aria-hidden />
                   Location
                 </Label>
                 <Input
                   id="location"
+                  className={fieldInputClass}
                   value={extractedData.location}
                   onChange={(e) =>
                     setExtractedData({
@@ -611,19 +721,43 @@ const ResumeEditorForm = ({
                       location: e.target.value,
                     })
                   }
-                  placeholder="New York, NY"
+                  placeholder="San Francisco, CA"
                 />
               </div>
+              {isLayoffProof ? (
+                <div>
+                  <Label
+                    htmlFor="website"
+                    className={cn("inline-flex items-center gap-2", fieldLabelClass)}
+                  >
+                    <Link2 className="h-4 w-4 shrink-0 text-[#6366f1]" aria-hidden />
+                    Portfolio / Website
+                  </Label>
+                  <Input
+                    id="website"
+                    className={fieldInputClass}
+                    value={extractedData.website}
+                    onChange={(e) =>
+                      setExtractedData({
+                        ...extractedData,
+                        website: e.target.value,
+                      })
+                    }
+                    placeholder="https://johndoe.com"
+                  />
+                </div>
+              ) : null}
               <div>
                 <Label
                   htmlFor="linkedin"
-                  className="inline-flex items-center gap-2"
+                  className={cn("inline-flex items-center gap-2", fieldLabelClass)}
                 >
                   <SiLinkedin className="h-4 w-4 shrink-0 text-[#0A66C2]" aria-hidden />
                   LinkedIn Profile
                 </Label>
                 <Input
                   id="linkedin"
+                  className={fieldInputClass}
                   value={extractedData.linkedin}
                   onChange={(e) =>
                     setExtractedData({
@@ -639,7 +773,7 @@ const ResumeEditorForm = ({
                       return { ...prev, linkedin: n };
                     });
                   }}
-                  placeholder="https://www.linkedin.com/in/your-profile"
+                  placeholder="linkedin.com/in/johndoe"
                   autoComplete="url"
                   inputMode="url"
                 />
@@ -647,13 +781,14 @@ const ResumeEditorForm = ({
               <div>
                 <Label
                   htmlFor="github"
-                  className="inline-flex items-center gap-2"
+                  className={cn("inline-flex items-center gap-2", fieldLabelClass)}
                 >
                   <SiGithub className="h-4 w-4 shrink-0 text-[#24292f]" aria-hidden />
                   GitHub Profile
                 </Label>
                 <Input
                   id="github"
+                  className={fieldInputClass}
                   value={extractedData.github}
                   onChange={(e) =>
                     setExtractedData({
@@ -661,13 +796,23 @@ const ResumeEditorForm = ({
                       github: e.target.value,
                     })
                   }
-                  placeholder="https://github.com/johndoe"
+                  placeholder="github.com/johndoe"
                 />
               </div>
             </div>
+
+            {saveContinueFooter}
           </TabsContent>
-          <TabsContent value="summary" className="space-y-6">
-            <h3 className="text-xl font-semibold">Professional Summary</h3>
+          <TabsContent value="summary" className="space-y-6 mt-0">
+            <h3
+              className={cn(
+                "font-semibold",
+                isLayoffProof ? "text-base font-bold text-[#0f172a]" : "text-xl"
+              )}
+            >
+              Professional Summary
+            </h3>
+            {!isLayoffProof ? (
             <div>
               <Label htmlFor="profession">Professional Title</Label>
               <AIInputWrapper
@@ -690,8 +835,9 @@ const ResumeEditorForm = ({
                 />
               </AIInputWrapper>
             </div>
+            ) : null}
             <div>
-              <Label htmlFor="summary-text">Summary</Label>
+              <Label htmlFor="summary-text" className={fieldLabelClass}>Summary</Label>
               <AIInputWrapper
                 fieldName="summary"
                 currentValue={extractedData.summary}
@@ -708,10 +854,11 @@ const ResumeEditorForm = ({
                     })
                   }
                   placeholder="Briefly describe your career, skills, and goals..."
-                  className="min-h-[120px] pr-10"
+                  className={cn("min-h-[120px] pr-10", isLayoffProof && layoffproofInputClass)}
                 />
               </AIInputWrapper>
             </div>
+            {saveContinueFooter}
           </TabsContent>
 
           <TabsContent value="skills" className="space-y-2">
@@ -722,18 +869,20 @@ const ResumeEditorForm = ({
             </p>
             <AIInputWrapper
               fieldName="skills"
-              currentValue={skillsList.join(", ")}
+              currentValue={skillsInput}
               resumeData={extractedData}
               onSuggestion={onAISuggestion}
             >
               <Textarea
-                value={skillsList.join(", ")}
+                value={skillsInput}
                 onChange={(e) => {
-                  const skillsArray = e.target.value
+                  const raw = e.target.value;
+                  setSkillsInput(raw);
+                  const skillsArray = raw
                     .split(",")
                     .map((s) => s.trim())
                     .filter(Boolean)
-                    .slice(0, MAX_SKILLS); // Enforce limit
+                    .slice(0, MAX_SKILLS);
                   setExtractedData({ ...extractedData, skills: skillsArray });
                 }}
                 placeholder="React, JavaScript, Node.js, Project Management..."
@@ -751,6 +900,7 @@ const ResumeEditorForm = ({
             >
               {skillCount} / {MAX_SKILLS} skills
             </p>
+            {saveContinueFooter}
           </TabsContent>
 
           <TabsContent value="experience" className="space-y-6">
@@ -873,6 +1023,7 @@ const ResumeEditorForm = ({
                 </Button>
               </Card>
             ))}
+            {saveContinueFooter}
           </TabsContent>
           <TabsContent value="education" className="space-y-6">
             <div className="flex justify-between items-center">
@@ -956,6 +1107,7 @@ const ResumeEditorForm = ({
                 </Button>
               </Card>
             ))}
+            {saveContinueFooter}
           </TabsContent>
 
           <TabsContent value="achievements" className="space-y-6">
@@ -1025,6 +1177,7 @@ const ResumeEditorForm = ({
                 awards, or milestones.
               </p>
             ) : null}
+            {saveContinueFooter}
           </TabsContent>
 
           {showProjectsTab ? (
@@ -1148,7 +1301,38 @@ const ResumeEditorForm = ({
             </TabsContent>
           ) : null}
         </Tabs>
-      </CardContent>
+  );
+
+  if (isLayoffProof) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-2xl border border-[#e8ecf4] bg-white p-6 shadow-sm">
+          {formBody}
+        </div>
+        {showProTip && onDismissProTip ? (
+          <div className="relative flex items-start gap-3 rounded-xl border border-[#c7d2fe] bg-[#eef2ff] px-4 py-3">
+            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-[#6366f1]" />
+            <p className="pr-6 text-xs leading-relaxed text-[#4338ca]">
+              <span className="font-semibold">Pro Tip:</span> A professional photo can
+              increase your profile views by up to 14x on LinkedIn.
+            </p>
+            <button
+              type="button"
+              onClick={onDismissProTip}
+              className="absolute right-3 top-3 text-[#94a3b8] hover:text-[#64748b]"
+              aria-label="Dismiss tip"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <Card>
+      <CardContent className="p-4 sm:p-6 lg:p-8">{formBody}</CardContent>
     </Card>
   );
 };
@@ -1161,21 +1345,26 @@ export default function ResumeBuilder() {
     | "manual-edit"
     | "templates"
     | "editor-preview"
-  >("select");
+  >("editor-preview");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [extractedData, setExtractedData] =
     useState<ParsedResumeData>(initialResumeData);
-  const [selectedTemplate, setSelectedTemplate] = useState<string>("");
+  const [selectedTemplate, setSelectedTemplate] = useState<string>("emerald-sidebar");
+  const [selectedCatalogId, setSelectedCatalogId] = useState<string>("modern-professional");
   const [linkedinUrl, setLinkedinUrl] = useState<string>("");
   const [previewHtml, setPreviewHtml] = useState<string>("");
   const [buildMethod, setBuildMethod] = useState<
     "upload" | "linkedin" | "manual" | null
-  >(null);
+  >("manual");
   const { toast } = useToast();
-  const user = useAuth();
+  const { user } = useAuth();
   const [debouncedExtractedData, setDebouncedExtractedData] =
     useState<ParsedResumeData>(extractedData);
   const prevStepRef = useRef<string | null>(null);
+  const [editorSection, setEditorSection] = useState<ResumeEditorSection>("personal");
+  const [showProTip, setShowProTip] = useState(true);
+  const [previewViewMode, setPreviewViewMode] = useState<"desktop" | "mobile">("desktop");
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
 
   const handleAISuggestion = (fieldName: string, suggestion: string) => {
     setExtractedData((prevData) => {
@@ -1231,11 +1420,64 @@ export default function ResumeBuilder() {
     prevStepRef.current = currentStep;
   }, [currentStep, extractedData]);
 
+  useEffect(() => {
+    if (!user?.id) return;
+    const draft = loadResumeDraft(user.id);
+    if (draft) {
+      setExtractedData({
+        ...initialResumeData,
+        ...(draft.data as Partial<ParsedResumeData>),
+      });
+      if (draft.selectedTemplate) setSelectedTemplate(draft.selectedTemplate);
+      if (draft.selectedCatalogId) setSelectedCatalogId(draft.selectedCatalogId);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user) return;
+    setExtractedData((prev) => {
+      const name =
+        [user.firstName, user.lastName].filter(Boolean).join(" ").trim() ||
+        prev.name;
+      const email = user.email?.trim() || prev.email;
+      const accountPhoto = user.profileImageUrl?.trim() || "";
+      const hasPhoto = !!getResumeProfileImageSrc({
+        profileImageDataUrl: prev.profileImageDataUrl,
+      });
+      const nextPhoto =
+        hasPhoto || !accountPhoto ? prev.profileImageDataUrl : accountPhoto;
+      if (
+        name === prev.name &&
+        email === prev.email &&
+        nextPhoto === prev.profileImageDataUrl
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        name: name || prev.name,
+        email: email || prev.email,
+        profileImageDataUrl: nextPhoto,
+      };
+    });
+  }, [user]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const timer = window.setTimeout(() => {
+      saveResumeDraft(user.id, extractedData as Record<string, unknown>, {
+        selectedTemplate,
+        selectedCatalogId,
+      });
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [extractedData, selectedTemplate, selectedCatalogId, user?.id]);
+
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
       const formData = new FormData();
       formData.append("resume", file);
-      formData.append("id", user?.user?.id || "");
+      formData.append("id", user?.id || "");
       const response = await fetch("/api/upload-resume", {
         method: "POST",
         body: formData,
@@ -1267,7 +1509,7 @@ export default function ResumeBuilder() {
       const response = await fetch("/api/import-linkedin-resume", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profileUrl, id: user?.user?.id }),
+        body: JSON.stringify({ profileUrl, id: user?.id }),
       });
       if (!response.ok) throw new Error(await response.text());
       return response.json();
@@ -1304,507 +1546,18 @@ export default function ResumeBuilder() {
       templateId: string;
       resumeData: ParsedResumeData;
     }) => {
-      // MOCK API: In a real app, this logic would be on your server and use the full generateResumeHTML function.
-      return new Promise<string>((resolve) => {
-        const { resumeData, templateId } = data;
-        let html = "";
-
-        const formatTextForHtml = (text: string = "") => {
-          if (!text) return "";
-          const escapedText = text
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#039;");
-          return escapedText.replace(/\n/g, "<br />");
-        };
-
-        const renderExperience = (exp: any[]) =>
-          exp
-            .map(
-              (e) => `
-            <div class="job">
-                <h4>${e.title || ""} at ${e.company || ""}</h4>
-                <em>${e.duration || ""}</em>
-                <p>${formatTextForHtml(e.description)}</p> 
-            </div>`,
-            )
-            .join("");
-
-        const renderEducation = (edu: any[]) =>
-          edu
-            .map(
-              (e) => `
-            <div class="education-item">
-                <h4>${e.degree || ""}</h4>
-                <em>${e.school || ""} (${e.duration || ""})</em>
-            </div>`,
-            )
-            .join("");
-
-        const renderSkills = (skills: string[] = []) =>
-          skills.slice(0, 15).join(", ");
-
-        const achievementLines = nonEmptyAchievements(resumeData.achievements);
-
-        switch (templateId) {
-          case "emerald-sidebar":
-            html = `
-              <html><head><style>
-                * { box-sizing: border-box; }
-                body { font-family: Arial, sans-serif; margin: 0; font-size: 12px; color: #1f2937; }
-                .page { display: flex; min-height: 100vh; background: #f3f4f6; padding: 18px; }
-                .sheet { display: flex; width: 100%; max-width: 900px; margin: 0 auto; background: white; border: 1px solid #e5e7eb; }
-                .sidebar { width: 34%; padding: 18px 16px; background: #f8fafc; border-right: 1px solid #e5e7eb; }
-                .main { width: 66%; padding: 18px 18px; }
-                .avatar { width: 64px; height: 64px; border-radius: 999px; background: #e5e7eb; margin: 2px auto 10px; border: 3px solid #10b98133; }
-                .avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 999px; display: block; }
-                .name { text-align: center; font-weight: 800; font-size: 18px; letter-spacing: 0.5px; color: #0f766e; }
-                .title { text-align: center; margin-top: 2px; color: #64748b; font-weight: 600; font-size: 11px; text-transform: uppercase; }
-                .contact { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; color: #475569; font-size: 10px; }
-                .pill { display: inline-flex; gap: 4px; align-items: center; padding: 3px 8px; border-radius: 999px; background: #ecfeff; border: 1px solid #99f6e4; }
-                .s-h { font-size: 10px; letter-spacing: 2px; font-weight: 800; color: #059669; text-transform: uppercase; margin: 12px 0 8px; }
-                .divider { height: 2px; background: linear-gradient(90deg,#10b981,#22c55e); margin: 8px 0 14px; border-radius: 999px; }
-                .box { border: 1px dashed #cbd5e1; border-radius: 10px; padding: 10px; background: #ffffff; }
-                .qr { width: 72px; height: 72px; border: 2px solid #10b98155; border-radius: 12px; display:flex; align-items:center; justify-content:center; margin: 8px 0; background: repeating-linear-gradient(45deg,#0f766e 0,#0f766e 2px,transparent 2px,transparent 6px); opacity: .15; }
-                .list { margin: 0; padding-left: 14px; }
-                .list li { margin: 4px 0; }
-                .h2 { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #0f766e; font-weight: 900; margin: 0 0 8px; }
-                .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
-                .card .bar { height: 6px; border-radius: 999px; background: linear-gradient(90deg,#10b981,#22c55e); margin-bottom: 10px; }
-                .muted { color: #64748b; }
-              </style></head><body>
-                <div class="page">
-                  <div class="sheet">
-                    <aside class="sidebar">
-                      <div class="avatar">${resumeData.profileImageDataUrl ? `<img src="${resumeData.profileImageDataUrl}" alt="Profile"/>` : ``}</div>
-                      <div class="name">${resumeData.name || "YOUR NAME"}</div>
-                      <div class="title">${resumeData.profession || "Your Title"}</div>
-                      <div class="contact">
-                        ${resumeData.phone ? `<span class="pill">📞 ${resumeData.phone}</span>` : ""}
-                        ${resumeData.email ? `<span class="pill">✉️ ${resumeData.email}</span>` : ""}
-                        ${resumeData.location ? `<span class="pill">${resumeLocationSvg({ size: 12, fill: "#047857" })}${resumeData.location}</span>` : ""}
-                      </div>
-                      <div class="s-h">My Portfolio</div>
-                      <div class="box">
-                        <div class="muted" style="font-size:10px;">Click here to view</div>
-                        <div style="font-weight:700; color:#0f766e;">${resumeData.website || resumeData.linkedin || "my_portfolio"}</div>
-                      </div>
-                      <div class="s-h">Area of Expertise</div>
-                      <ul class="list">${(resumeData.skills || [])
-                        .map((s: string) => `<li>${s}</li>`)
-                        .join("")}</ul>
-                      <div class="s-h">Education</div>
-                      <div class="box">${
-                        (resumeData.education || [])
-                          .slice(0, 1)
-                          .map(
-                            (e: any) =>
-                              `${e.degree || ""}<div class="muted" style="font-size:10px;">${e.school || ""}</div>`,
-                          )
-                          .join("") || "<span class='muted'>—</span>"
-                      }</div>
-                    </aside>
-                    <main class="main">
-                      <div class="divider"></div>
-                      <div class="card">
-                        <div class="bar"></div>
-                        <div class="h2">Professional Highlights</div>
-                        <div class="muted">${(resumeData.summary || "").slice(0, 260) || "Add a short, punchy highlight summary here."}</div>
-                      </div>
-                      <div class="card">
-                        <div class="bar"></div>
-                        <div class="h2">Work Experience</div>
-                        ${renderExperience(resumeData.experience || []) || `<div class="muted">Add your experience to see it here.</div>`}
-                      </div>
-                      ${
-                        achievementLines.length
-                          ? `<div class="card"><div class="bar"></div><div class="h2">Achievements</div><ul class="list">${achievementLines
-                              .slice(0, 6)
-                              .map(
-                                (a: string) =>
-                                  `<li>${formatTextForHtml(a)}</li>`,
-                              )
-                              .join("")}</ul></div>`
-                          : ""
-                      }
-                    </main>
-                  </div>
-                </div>
-              </body></html>`;
-            break;
-          case "photo-classic":
-            html = `
-              <html><head><style>
-                * { box-sizing: border-box; }
-                body { font-family: Georgia, 'Times New Roman', serif; margin: 0; color: #111827; background: white; }
-                .page { max-width: 980px; margin: 0 auto; }
-                .top { display: grid; grid-template-columns: 140px 1fr; gap: 18px; padding: 22px 24px 16px; align-items: start; }
-                .photo { width: 120px; height: 120px; border-radius: 999px; overflow: hidden; background: #e5e7eb; border: 4px solid #ffffff; box-shadow: 0 10px 22px rgba(0,0,0,0.08); }
-                .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
-                .name { font-size: 30px; font-weight: 800; margin: 0; font-family: Georgia, 'Times New Roman', serif; }
-                .role { margin-top: 4px; font-weight: 700; font-size: 14px; font-family: Arial, sans-serif; }
-                .summary { margin-top: 8px; color: #374151; font-size: 12px; line-height: 1.4; font-family: Arial, sans-serif; }
-                .band { background: #f3f4f6; border-top: 1px solid #e5e7eb; border-bottom: none; padding: 10px 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 10px; font-family: Arial, sans-serif; font-size: 11px; color: #111827; }
-                .band span { display: inline-flex; gap: 8px; align-items: center; min-width: 0; }
-                .icon { width: 18px; height: 18px; border-radius: 6px; background: #111827; color: white; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; flex: 0 0 auto; }
-                .icon svg { display: block; }
-                .grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 26px; padding: 18px 24px 24px; }
-                h2 { font-size: 14px; letter-spacing: 0.02em; margin: 0 0 10px; font-weight: 900; }
-                .section { margin-bottom: 18px; }
-                .job { margin-bottom: 12px; }
-                .job h4 { margin: 0; font-size: 12px; font-weight: 900; }
-                .job .meta { font-size: 10px; color: #6b7280; font-style: italic; margin: 1px 0 6px; font-family: Arial, sans-serif; }
-                .job ul { margin: 0; padding-left: 18px; font-size: 11px; font-family: Arial, sans-serif; }
-                .job li { margin: 4px 0; }
-                .chips { display: flex; flex-wrap: wrap; gap: 6px; font-family: Arial, sans-serif; }
-                .chip { border: 1px solid #d1d5db; background: #f9fafb; border-radius: 6px; padding: 4px 8px; font-size: 11px; line-height: 1.25; white-space: normal; word-break: break-word; max-width: 100%; }
-                .links { font-family: Arial, sans-serif; font-size: 11px; display: grid; gap: 6px; }
-                .muted { color: #6b7280; font-family: Arial, sans-serif; font-size: 11px; }
-                .edu h4 { margin: 0; font-size: 12px; font-weight: 900; }
-                .edu .meta { font-size: 10px; color: #6b7280; font-style: italic; margin-top: 3px; font-family: Arial, sans-serif; }
-                .two { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-              </style></head><body>
-                <div class="page">
-                  <div class="top">
-                    <div class="photo">${resumeData.profileImageDataUrl ? `<img src="${resumeData.profileImageDataUrl}" alt="Profile" />` : ``}</div>
-                    <div>
-                      <div class="name">${resumeData.name || "Your Name"}</div>
-                      <div class="role">${resumeData.profession || "Your Title"}</div>
-                      <div class="summary">${formatTextForHtml(resumeData.summary || "").slice(0, 520) || ""}</div>
-                    </div>
-                  </div>
-                  <div class="band">
-                    ${resumeData.email ? `<span><span class="icon">✉</span><span>${resumeData.email}</span></span>` : ""}
-                    ${resumeData.location ? `<span><span class="icon">${resumeLocationSvg({ size: 12, fill: "#ffffff" })}</span><span>${resumeData.location}</span></span>` : ""}
-                    ${resumeData.phone ? `<span><span class="icon">☎</span><span>${resumeData.phone}</span></span>` : ""}
-                    ${resumeData.linkedin ? linkedInPdfLinkHtml(resumeData.linkedin, { iconSize: 12, iconFill: "#ffffff", linkColor: "#111827", bandLayout: true }) : ""}
-                    ${resumeData.github ? `<span><span class="icon">${resumeSocialSvg("github", { size: 12, fill: "#ffffff" })}</span><span>${(resumeData.github || "").replace(/^https?:\/\//, "")}</span></span>` : ""}
-                  </div>
-                  <div class="grid">
-                    <div>
-                      <div class="section">
-                        <h2>WORK EXPERIENCE</h2>
-                        ${
-                          ((resumeData.experience || []) as any[])
-                            .map(
-                              (e: any) => `
-                          <div class="job">
-                            <h4>${e.title || ""}</h4>
-                            <div class="meta">${e.company || ""} ${e.duration ? ` • ${e.duration}` : ""}</div>
-                            <ul>${String(e.description || "")
-                              .split(/\\n+/)
-                              .filter(Boolean)
-                              .slice(0, 5)
-                              .map((x: string) => `<li>${x}</li>`)
-                              .join("")}</ul>
-                          </div>
-                        `,
-                            )
-                            .join("") ||
-                          `<div class="muted">Add experience to see it here.</div>`
-                        }
-                      </div>
-                      <div class="section edu">
-                        <h2>EDUCATION</h2>
-                        ${
-                          ((resumeData.education || []) as any[])
-                            .slice(0, 2)
-                            .map(
-                              (e: any) => `
-                          <div style="margin-bottom:10px;">
-                            <h4>${e.degree || ""}</h4>
-                            <div class="meta">${e.school || e.institution || ""}${e.duration ? ` • ${e.duration}` : e.year ? ` • ${e.year}` : ""}</div>
-                          </div>
-                        `,
-                            )
-                            .join("") || `<div class="muted">—</div>`
-                        }
-                      </div>
-                    </div>
-                    <div>
-                      <div class="section">
-                        <h2>SKILLS</h2>
-                        <div class="chips">${(resumeData.skills || [])
-                          .slice(0, 15)
-                          .map((s: string) => `<span class="chip">${s}</span>`)
-                          .join("")}</div>
-                      </div>
-                      <div class="section">
-                        <h2>PROJECTS</h2>
-                        <div class="links">
-                          ${
-                            Array.isArray(resumeData.projects)
-                              ? (resumeData.projects as any[])
-                                  .slice(0, 6)
-                                  .map((p: any) => {
-                                    const url =
-                                      typeof p === "string"
-                                        ? p
-                                        : p?.url || p?.name || "";
-                                    return url
-                                      ? `<div>${String(url)}</div>`
-                                      : "";
-                                  })
-                                  .join("")
-                              : ""
-                          }
-                          ${Array.isArray(resumeData.projects) && (resumeData.projects as any[]).length ? "" : `<div class="muted">Add project links.</div>`}
-                        </div>
-                      </div>
-                      ${
-                        achievementLines.length
-                          ? `<div class="section"><h2>ACHIEVEMENTS</h2><div class="muted">${achievementLines
-                              .slice(0, 6)
-                              .map((a: string) => formatTextForHtml(a))
-                              .join("<br/>")}</div></div>`
-                          : ""
-                      }
-                      <div class="section">
-                        <h2>LANGUAGES</h2>
-                        <div class="two">${(resumeData.languages || [])
-                          .slice(0, 4)
-                          .map(
-                            (l: string) =>
-                              `<div><div style="font-weight:800;">${l}</div><div class="muted">Full/Professional Proficiency</div></div>`,
-                          )
-                          .join("")}</div>
-                      </div>
-                      <div class="section">
-                        <h2>INTERESTS</h2>
-                        <div class="chips">${
-                          (resumeData.skills || [])
-                            .slice(0, 3)
-                            .map(
-                              (s: string) => `<span class="chip">${s}</span>`,
-                            )
-                            .join("") || ""
-                        }</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </body></html>`;
-            break;
-          case "brand-split":
-            html = `
-              <html><head><style>
-                * { box-sizing: border-box; }
-                body { margin: 0; background: #ffffff; color: #0f172a; font-family: Arial, sans-serif; }
-                .page { width: 100%; max-width: 980px; margin: 0 auto; }
-                .hero { position: relative; padding: 22px 26px 18px; overflow: hidden; }
-                .hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(800px circle at 8% 0%, rgba(45,212,191,0.22), transparent 55%), radial-gradient(700px circle at 92% 10%, rgba(167,139,250,0.20), transparent 55%), linear-gradient(135deg, rgba(13,148,136,0.10), rgba(99,102,241,0.10)); }
-                .hero-inner { position: relative; display: grid; grid-template-columns: 96px 1fr; gap: 16px; align-items: center; }
-                .photo { width: 86px; height: 86px; border-radius: 999px; overflow: hidden; background: #e5e7eb; border: 4px solid #ffffff; box-shadow: 0 14px 28px rgba(2,6,23,0.10); }
-                .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
-                .name { font-size: 28px; font-weight: 900; letter-spacing: 0.02em; }
-                .role { margin-top: 2px; color: #0f766e; font-weight: 800; text-transform: uppercase; letter-spacing: 0.12em; font-size: 11px; }
-                .meta { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; color: #334155; }
-                .pill { padding: 4px 10px; border-radius: 999px; border: 1px solid #cbd5e1; background: rgba(255,255,255,0.75); }
-                .grid { display: grid; grid-template-columns: 1.25fr 0.95fr; gap: 22px; padding: 18px 26px 26px; align-items: start; }
-                .section { margin-bottom: 16px; }
-                .h { font-size: 12px; font-weight: 900; letter-spacing: 0.22em; text-transform: uppercase; margin: 0 0 10px; }
-                .h span { background: linear-gradient(90deg, #0d9488, #6366f1); -webkit-background-clip: text; background-clip: text; color: transparent; }
-                .card { border: 1px solid #e5e7eb; border-radius: 14px; padding: 12px 12px; background: #ffffff; }
-                .summary { color: #334155; font-size: 12px; line-height: 1.5; }
-                .job { margin-bottom: 12px; }
-                .job-title { font-weight: 900; font-size: 12px; }
-                .job-meta { color: #64748b; font-size: 10px; margin-top: 2px; font-style: italic; }
-                .job ul { margin: 6px 0 0; padding-left: 18px; color: #0f172a; font-size: 11px; }
-                .job li { margin: 4px 0; }
-                .skills { display: flex; flex-wrap: wrap; gap: 8px; }
-                .skill { border: 1px solid #d1d5db; background: #f8fafc; border-radius: 10px; padding: 7px 10px; font-size: 11px; line-height: 1.25; white-space: normal; word-break: break-word; max-width: 100%; }
-                .side { display: grid; gap: 14px; align-content: start; align-items: start; }
-                .links { display: grid; gap: 6px; font-size: 11px; color: #0f172a; }
-                .muted { color: #64748b; font-size: 11px; }
-              </style></head><body>
-                <div class="page">
-                  <div class="hero">
-                    <div class="hero-inner">
-                      <div class="photo">${resumeData.profileImageDataUrl ? `<img src="${resumeData.profileImageDataUrl}" alt="Profile" />` : ``}</div>
-                      <div>
-                        <div class="name">${resumeData.name || "Your Name"}</div>
-                        <div class="role">${resumeData.profession || "Your Title"}</div>
-                        <div class="meta">
-                          ${resumeData.email ? `<span class="pill">✉ ${resumeData.email}</span>` : ``}
-                          ${resumeData.phone ? `<span class="pill">☎ ${resumeData.phone}</span>` : ``}
-                          ${resumeData.location ? `<span class="pill" style="display:inline-flex;align-items:center;gap:6px;">${resumeLocationSvg({ size: 14, fill: "#0f766e" })}${resumeData.location}</span>` : ``}
-                          ${resumeData.linkedin ? linkedInPdfLinkHtml(resumeData.linkedin, { iconSize: 14, linkColor: "#0f766e", pillLayout: true }) : ``}
-                          ${resumeData.github ? `<span class="pill" style="display:inline-flex;align-items:center;gap:6px;">${resumeSocialSvg("github", { size: 14, fill: "#24292f" })}${(resumeData.github || "").replace(/^https?:\/\//, "")}</span>` : ``}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="grid">
-                    <div class="side">
-                      <div class="section card">
-                        <div class="h"><span>Summary</span></div>
-                        <div class="summary">${formatTextForHtml(resumeData.summary || "") || `<span class="muted">Add a short summary.</span>`}</div>
-                      </div>
-
-                      <div class="section card">
-                        <div class="h"><span>Experience</span></div>
-                        ${
-                          ((resumeData.experience || []) as any[])
-                            .map((e: any) => {
-                              const bullets = String(e.description || "")
-                                .split(/\\n+/)
-                                .map((x: string) => x.trim())
-                                .filter(Boolean)
-                                .slice(0, 5)
-                                .map((x: string) => `<li>${x}</li>`)
-                                .join("");
-                              return `
-                                <div class="job">
-                                  <div class="job-title">${e.title || ""}</div>
-                                  <div class="job-meta">${e.company || ""}${e.duration ? ` • ${e.duration}` : ""}</div>
-                                  ${bullets ? `<ul>${bullets}</ul>` : ``}
-                                </div>
-                              `;
-                            })
-                            .join("") || `<div class="muted">Add experience to see it here.</div>`
-                        }
-                      </div>
-                    </div>
-
-                    <div class="side">
-                      <div class="section card">
-                        <div class="h"><span>Skills</span></div>
-                        <div class="skills">${(resumeData.skills || []).slice(0, 15).map((s: string) => `<div class="skill">${s}</div>`).join("")}</div>
-                      </div>
-
-                      <div class="section card">
-                        <div class="h"><span>Education</span></div>
-                        ${
-                          ((resumeData.education || []) as any[])
-                            .slice(0, 3)
-                            .map((e: any) => `<div style="margin-bottom:10px;"><div style="font-weight:900;">${e.degree || ""}</div><div class="muted">${e.school || e.institution || ""}${e.year ? ` • ${e.year}` : ""}</div></div>`)
-                            .join("") || `<div class="muted">—</div>`
-                        }
-                      </div>
-
-                      <div class="section card">
-                        <div class="h"><span>Projects</span></div>
-                        <div class="links">
-                          ${
-                            Array.isArray(resumeData.projects)
-                              ? (resumeData.projects as any[])
-                                  .slice(0, 7)
-                                  .map((p: any) => {
-                                    const url = typeof p === "string" ? p : p?.url || p?.name || "";
-                                    return url ? `<div>${String(url)}</div>` : "";
-                                  })
-                                  .join("")
-                              : ""
-                          }
-                          ${Array.isArray(resumeData.projects) && (resumeData.projects as any[]).length ? "" : `<div class="muted">Add project links.</div>`}
-                        </div>
-                      </div>
-                      ${
-                        achievementLines.length
-                          ? `<div class="section card"><div class="h"><span>Achievements</span></div><ul style="margin:0;padding-left:18px;font-size:11px;">${achievementLines
-                              .map(
-                                (a: string) =>
-                                  `<li style="margin:4px 0;">${formatTextForHtml(a)}</li>`,
-                              )
-                              .join("")}</ul></div>`
-                          : ""
-                      }
-                    </div>
-                  </div>
-                </div>
-              </body></html>`;
-            break;
-          case "harvard":
-            html = `
-              <html><head><style>
-                body { font-family: 'Times New Roman', serif; margin: 2rem; color: #333; } p { white-space: normal; }
-                .header { text-align: center; border-bottom: none; padding-bottom: 10px; margin-bottom: 20px;}
-                .header h1 { margin: 0; font-size: 2.5rem; text-transform: uppercase; } .header p { margin: 5px 0 0; font-size: 1rem; }
-                .section h2 { text-transform: uppercase; border-bottom: none; padding-bottom: 5px; margin-top: 20px; font-size: 1.2rem; }
-                .job, .education-item { margin-bottom: 15px; } h4 { margin: 0 0 5px; }
-              </style></head><body>
-                <div class="header"><h1>${resumeData.name || "YOUR NAME"}</h1><p>${resumeData.location ? `<span style="display:inline-flex;align-items:center;gap:5px;vertical-align:middle;">${resumeLocationSvg({ size: 14, fill: "#333333" })}${resumeData.location}</span>` : ""}${resumeData.location && (resumeData.email || resumeData.phone) ? " | " : ""}${resumeData.email || ""}${resumeData.email && resumeData.phone ? " | " : ""}${resumeData.phone || ""}</p>${resumeData.linkedin ? `<p style="margin-top:6px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;justify-content:center;">${linkedInPdfLinkHtml(resumeData.linkedin, { iconSize: 14, linkColor: "#000000" })}</p>` : ""}${resumeData.github ? `<p style="margin-top:4px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;justify-content:center;">${resumeSocialSvg("github", { size: 14, fill: "#24292f" })}${resumeData.github}</p>` : ""}</div>
-                <div class="section"><h2>Summary</h2><p>${formatTextForHtml(resumeData.summary)}</p></div>
-                <div class="section"><h2>Skills</h2><p>${renderSkills(resumeData.skills)}</p></div>
-                <div class="section"><h2>Experience</h2>${renderExperience(resumeData.experience)}</div>
-                <div class="section"><h2>Education</h2>${renderEducation(resumeData.education)}</div>
-                ${
-                  achievementLines.length
-                    ? `<div class="section"><h2>Achievements</h2><ul>${achievementLines
-                        .map((a: string) => `<li>${formatTextForHtml(a)}</li>`)
-                        .join("")}</ul></div>`
-                    : ""
-                }
-              </body></html>`;
-            break;
-
-          case "creative":
-            html = `
-              <html><head><style>
-                body { font-family: 'Helvetica Neue', sans-serif; margin: 0; font-size: 14px; display: flex; } p { white-space: normal; }
-                .sidebar { background-color: #1e3a8a; color: white; width: 35%; padding: 2rem; } .sidebar h1 { font-size: 2rem; margin-top: 0; }
-                .sidebar h2 { border-bottom: none; padding-bottom: 5px; font-size: 1.1rem; } .sidebar p, .sidebar li { font-size: 0.9rem; }
-                .main { width: 65%; padding: 2rem; } .main h2 { color: #1e3a8a; border-bottom: none; padding-bottom: 5px; }
-                .job, .education-item { margin-bottom: 20px; } h4 { margin: 0 0 5px; }
-              </style></head><body>
-                <div class="sidebar">
-                  <h1>${resumeData.name || "Your Name"}</h1><p>${resumeData.profession || "Your Profession"}</p>
-                  <h2>Contact</h2><p>${resumeData.email}<br/>${resumeData.phone}${resumeData.location ? `<br/><span style="display:inline-flex;align-items:center;gap:8px;">${resumeLocationSvg({ size: 18, fill: "#ffffff" })}<span>${resumeData.location}</span></span>` : ""}</p>
-                  ${resumeData.linkedin ? `<p style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:0.9rem;">${linkedInPdfLinkHtml(resumeData.linkedin, { iconSize: 18, iconFill: "#ffffff", linkColor: "#ffffff" })}</p>` : ""}
-                  ${resumeData.github ? `<p style="display:flex;align-items:flex-start;gap:8px;margin-top:8px;font-size:0.9rem;">${resumeSocialSvg("github", { size: 18, fill: "#ffffff" })}<span style="word-break:break-all;">${resumeData.github}</span></p>` : ""}
-                  ${
-                    achievementLines.length
-                      ? `<h2 style="margin-top:20px;">Achievements</h2><ul>${achievementLines
-                          .map(
-                            (a: string) =>
-                              `<li>${formatTextForHtml(a)}</li>`,
-                          )
-                          .join("")}</ul>`
-                      : ""
-                  }
-                </div>
-                <div class="main">
-                  <h2>Summary</h2><p>${formatTextForHtml(resumeData.summary)}</p>
-                  <h2>Skills</h2><ul>${(resumeData.skills || [])
-                    .slice(0, 15)
-                    .map((s) => `<li>${s}</li>`)
-                    .join("")}</ul>
-                  <h2>Experience</h2>${renderExperience(resumeData.experience)}
-                  <h2>Education</h2>${renderEducation(resumeData.education)}
-                </div>
-              </body></html>`;
-            break;
-
-          case "professional":
-          default:
-            html = `
-              <html><head><style>
-                body { font-family: Arial, sans-serif; margin: 2rem; } p { white-space: normal; }
-                .header { text-align: center; border-bottom: none; padding-bottom: 10px; margin-bottom: 20px; }
-                .header h1 { color: #2563eb; margin: 0; font-size: 2.5rem; } .header p { margin: 5px 0; color: #555; }
-                .section h2 { color: #2563eb; border-bottom: none; padding-bottom: 5px; margin-top: 20px; }
-                .job, .education-item { margin-bottom: 15px; } h4 { margin: 0 0 5px; }
-              </style></head><body>
-                <div class="header"><h1>${resumeData.name || "YOUR NAME"}</h1><p>${resumeData.profession || "Your Profession"}</p><p>${resumeData.email || ""}${resumeData.email && resumeData.phone ? " | " : ""}${resumeData.phone || ""}${(resumeData.email || resumeData.phone) && resumeData.location ? " | " : ""}${resumeData.location ? `<span style="display:inline-flex;align-items:center;gap:5px;">${resumeLocationSvg({ size: 14, fill: "#555555" })}${resumeData.location}</span>` : ""}</p>${resumeData.linkedin ? `<p style="margin-top:8px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;">${linkedInPdfLinkHtml(resumeData.linkedin, { iconSize: 15, linkColor: "#2563eb" })}</p>` : ""}${resumeData.github ? `<p style="margin-top:4px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;">${resumeSocialSvg("github", { size: 15, fill: "#24292f" })}<a href="${resumeData.github}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;">GitHub</a></p>` : ""}</div>
-                <div class="section"><h2>Summary</h2><p>${formatTextForHtml(resumeData.summary)}</p></div>
-                <div class="section"><h2>Skills</h2><p>${renderSkills(resumeData.skills)}</p></div>
-                <div class="section"><h2>Experience</h2>${renderExperience(resumeData.experience)}</div>
-                <div class="section"><h2>Education</h2>${renderEducation(resumeData.education)}</div>
-                ${
-                  achievementLines.length
-                    ? `<div class="section"><h2>Achievements</h2><ul>${achievementLines
-                        .map((a: string) => `<li>${formatTextForHtml(a)}</li>`)
-                        .join("")}</ul></div>`
-                    : ""
-                }
-              </body></html>`;
-            break;
-        }
-        resolve(html);
+      const response = await fetch("/api/generate-resume-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
       });
+      if (!response.ok) {
+        const err = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(err.error || response.statusText);
+      }
+      const payload = (await response.json()) as { html?: string };
+      if (!payload.html) throw new Error("Preview HTML missing from response");
+      return payload.html;
     },
     onSuccess: (htmlContent: string) => setPreviewHtml(htmlContent),
     onError: () =>
@@ -1873,10 +1626,10 @@ export default function ResumeBuilder() {
     if (currentStep === "editor-preview" && selectedTemplate) {
       generatePreviewMutation.mutate({
         templateId: selectedTemplate,
-        resumeData: debouncedExtractedData,
+        resumeData: buildResumePayload(debouncedExtractedData, user),
       });
     }
-  }, [debouncedExtractedData, selectedTemplate, currentStep]);
+  }, [debouncedExtractedData, selectedTemplate, currentStep, user]);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) =>
     setSelectedFile(event.target.files?.[0] || null);
@@ -1892,8 +1645,8 @@ export default function ResumeBuilder() {
     extractedData && selectedTemplate
       ? downloadPdfMutation.mutate({
           templateId: selectedTemplate,
-          resumeData: extractedData,
-          id: user?.user?.id,
+          resumeData: buildResumePayload(extractedData, user),
+          id: user?.id,
           isManual: true,
         })
       : toast({ title: "Missing Information", variant: "destructive" });
@@ -1922,164 +1675,34 @@ export default function ResumeBuilder() {
   };
 
   const renderSelectStep = () => (
-    <div className="max-w-4xl mx-auto space-y-8">
-      <ProgressStepper steps={steps} currentStepIndex={getCurrentStepIndex()} />
-      <div className="grid gap-8 lg:grid-cols-2 lg:items-center lg:gap-10">
-        <div className="space-y-3 lg:pr-4">
-          <p className="text-sm font-semibold text-purple-600 dark:text-purple-400">
-            Walkthrough
-          </p>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-            See the AI resume builder in action
-          </h2>
-          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed max-w-md">
-            A quick tour of Layoff Proof before you upload, import from LinkedIn, or start from scratch.
-          </p>
-        </div>
-        <div className="relative mx-auto w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-black shadow-sm aspect-video dark:border-gray-700 sm:max-w-lg lg:mx-0 lg:max-w-none">
-  <iframe
-    width="560"
-    height="315"
-    src="https://www.youtube-nocookie.com/embed/WXevDBbbB9Y?si=UgspCe-piClvB3ry&controls=0&autoplay=1&mute=0"
-    title="YouTube video player"
-    frameBorder={0}
-    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-    referrerPolicy="strict-origin-when-cross-origin"
-    allowFullScreen
-    className="absolute inset-0 h-full w-full border-0"
-  />
-</div>
-      </div>
-      <div className="text-center">
-        <div className="bg-blue-50 dark:bg-blue-950 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
-          <FileText className="w-8 h-8 text-blue-600 dark:text-blue-400" />
-        </div>
-        <h1 className="text-3xl font-bold">Build Your Resume</h1>
-        <p className="text-lg text-gray-600">
-          Choose how you'd like to get started
-        </p>
-      </div>
-      <div className="grid md:grid-cols-2 gap-6">
-        <Card
-          className="border-2 border-dashed hover:border-blue-400 cursor-pointer group"
-          onClick={() => {
-            setBuildMethod("upload");
-            setCurrentStep("upload");
-          }}
-        >
-          <CardContent className="p-8 text-center">
-            <div className="bg-blue-50 group-hover:bg-blue-100 rounded-full w-12 h-12 flex items-center justify-center mx-auto mb-4">
-              <Upload className="w-6 h-6 text-blue-600" />
-            </div>
-            <h3 className="text-xl font-semibold mb-2">
-              Upload Existing Resume
-            </h3>
-            <p className="text-gray-600 mb-4">
-              We'll extract the info to get you started fast.
-            </p>
-            <Button variant="outline" className="mt-2">
-              Upload Resume
-            </Button>
-          </CardContent>
-        </Card>
-        <Card
-          className="border-2 border-dashed hover:border-blue-400 cursor-pointer group"
-          onClick={() => {
-            setBuildMethod("linkedin");
-            setCurrentStep("linkedin-url");
-          }}
-        >
-          <CardContent className="p-8 text-center">
-            <div className="bg-blue-50 group-hover:bg-blue-100 rounded-full w-12 h-12 flex items-center justify-center mx-auto mb-4">
-              <Linkedin className="w-6 h-6 text-blue-600" />
-            </div>
-            <h3 className="text-xl font-semibold mb-2">Import from LinkedIn</h3>
-            <p className="text-gray-600 mb-4">
-              Pull info directly from your LinkedIn profile.
-            </p>
-            <Button variant="outline" className="mt-2">
-              Connect LinkedIn
-            </Button>
-          </CardContent>
-        </Card>
-        <Card
-          className="md:col-span-2 border-2 border-dashed hover:border-green-400 cursor-pointer group"
-          onClick={() => {
-            setBuildMethod("manual");
-            setExtractedData(initialResumeData);
-            setCurrentStep("manual-edit");
-          }}
-        >
-          <CardContent className="p-8 text-center">
-            <div className="bg-green-50 group-hover:bg-green-100 rounded-full w-12 h-12 flex items-center justify-center mx-auto mb-4">
-              <FileText className="w-6 h-6 text-green-600" />
-            </div>
-            <h3 className="text-xl font-semibold mb-2">Start From Scratch</h3>
-            <p className="text-gray-600 mb-4">
-              Fill in your details manually with our guided form.
-            </p>
-            <Button variant="outline" className="mt-2">
-              Start Building
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
+    <ResumeBuilderChooseMethod
+      steps={steps}
+      currentStepIndex={getCurrentStepIndex()}
+      onUpload={() => {
+        setBuildMethod("upload");
+        setCurrentStep("upload");
+      }}
+      onLinkedIn={() => {
+        setBuildMethod("linkedin");
+        setCurrentStep("linkedin-url");
+      }}
+      onScratch={() => {
+        setBuildMethod("manual");
+        setExtractedData(initialResumeData);
+        setCurrentStep("manual-edit");
+      }}
+    />
   );
   const renderLinkedinUrlStep = () => (
-    <div className="max-w-2xl mx-auto space-y-8">
-      <ProgressStepper steps={steps} currentStepIndex={getCurrentStepIndex()} />
-      <div className="text-center">
-        <div className="bg-blue-50 dark:bg-blue-950 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
-          <Linkedin className="w-8 h-8 text-blue-600 dark:text-blue-400" />
-        </div>
-        <h1 className="text-3xl font-bold">Import from LinkedIn</h1>
-        <p className="text-lg text-gray-600">
-          Enter your public profile URL to get started.
-        </p>
-      </div>
-      <Card>
-        <CardContent className="p-8 space-y-6">
-          <div>
-            <Label htmlFor="linkedin-url" className="text-left block">
-              LinkedIn Profile URL
-            </Label>
-            <Input
-              id="linkedin-url"
-              type="url"
-              placeholder="https://www.linkedin.com/in/your-profile"
-              value={linkedinUrl}
-              onChange={(e) => setLinkedinUrl(e.target.value)}
-            />
-          </div>
-          <div className="flex gap-4">
-            <Button
-              onClick={() => setCurrentStep("select")}
-              variant="outline"
-              className="flex-1"
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" /> Back
-            </Button>
-            <Button
-              onClick={handleLinkedinImport}
-              disabled={linkedinImportMutation.isPending || !linkedinUrl}
-              className="flex-1"
-            >
-              {linkedinImportMutation.isPending ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Importing...
-                </>
-              ) : (
-                <>
-                  <ExternalLink className="w-4 h-4 mr-2" /> Import
-                </>
-              )}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+    <ResumeBuilderLinkedInImport
+      steps={steps}
+      currentStepIndex={getCurrentStepIndex()}
+      linkedinUrl={linkedinUrl}
+      onLinkedinUrlChange={setLinkedinUrl}
+      onBack={() => setCurrentStep("select")}
+      onImport={handleLinkedinImport}
+      isImporting={linkedinImportMutation.isPending}
+    />
   );
   const renderUploadStep = () => (
     <div className="max-w-4xl mx-auto space-y-8">
@@ -2477,7 +2100,10 @@ export default function ResumeBuilder() {
           <ArrowLeft className="w-4 h-4 mr-2" /> Back
         </Button>
         <Button
-          onClick={() => setCurrentStep("editor-preview")}
+          onClick={() => {
+            if (!selectedTemplate) setSelectedTemplate("professional");
+            setCurrentStep("editor-preview");
+          }}
           disabled={!selectedTemplate}
         >
           Proceed to Editor <ArrowRight className="w-4 h-4 ml-2" />
@@ -2515,93 +2141,118 @@ export default function ResumeBuilder() {
     </div>
   );
 
+  const handleEditorSaveContinue = () => {
+    const next = nextSection(editorSection);
+    if (next) {
+      setEditorSection(next);
+      return;
+    }
+    toast({
+      title: "Section complete",
+      description: "Your resume details are ready to preview and download.",
+    });
+  };
+
+  const handleTemplateSelect = (serverTemplateId: string, catalogId?: string) => {
+    setSelectedTemplate(serverTemplateId);
+    if (catalogId) setSelectedCatalogId(catalogId);
+    if (currentStep !== "editor-preview") {
+      setCurrentStep("editor-preview");
+    }
+  };
+
+  const refreshPreview = () => {
+    const payload = buildResumePayload(extractedData, user);
+    setDebouncedExtractedData(extractedData);
+    if (selectedTemplate) {
+      generatePreviewMutation.mutate({
+        templateId: selectedTemplate,
+        resumeData: payload,
+      });
+    }
+  };
+
+  const handleOpenPreviewModal = () => {
+    refreshPreview();
+    setPreviewModalOpen(true);
+  };
+
   const renderEditorPreviewStep = () => (
-    <div className="max-w-full mx-auto space-y-4">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-full">
-        <div className="h-[calc(100vh-100px)] overflow-y-auto pr-2">
-          <div className="flex justify-between items-center mb-4">
-            <h1 className="text-2xl font-bold">Review Your Details</h1>
-            <Button
-              variant="outline"
-              onClick={() => setCurrentStep("templates")}
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" /> Back to Templates
-            </Button>
+    <>
+      <ResumeBuilderChrome
+        isSaving={generatePreviewMutation.isPending}
+        onImportResume={() => setCurrentStep("select")}
+        onPreview={handleOpenPreviewModal}
+        onDownloadPdf={handleDownloadPdf}
+        downloadPending={downloadPdfMutation.isPending}
+      />
+      <ResumePreviewModal
+        open={previewModalOpen}
+        onOpenChange={setPreviewModalOpen}
+        previewHtml={previewHtml}
+        isLoading={generatePreviewMutation.isPending}
+        viewMode={previewViewMode}
+        onViewModeChange={setPreviewViewMode}
+        onRefresh={refreshPreview}
+      />
+      <ResumeEditorStepper
+        activeSection={editorSection}
+        onSectionChange={setEditorSection}
+      />
+      <div className="px-8 py-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
+          <div className="min-w-0 lg:pr-3">
+            <ResumeEditorForm
+              extractedData={extractedData}
+              setExtractedData={setExtractedData}
+              onAISuggestion={handleAISuggestion}
+              selectedTemplateId={selectedTemplate}
+              activeTab={editorSection}
+              onTabChange={(tab) => setEditorSection(tab as ResumeEditorSection)}
+              variant="layoffproof"
+              hideTabList
+              onSaveContinue={handleEditorSaveContinue}
+              showProTip={showProTip && editorSection === "personal"}
+              onDismissProTip={() => setShowProTip(false)}
+            />
           </div>
-          <ResumeEditorForm
-            extractedData={extractedData}
-            setExtractedData={setExtractedData}
-            onAISuggestion={handleAISuggestion}
-            selectedTemplateId={selectedTemplate}
-          />
-        </div>
-        <div className="h-[calc(100vh-100px)] flex flex-col sticky top-[50px]">
-          <div className="flex items-baseline justify-between gap-2 mb-4">
-            <h2 className="text-2xl font-bold">Live Preview</h2>
-            <p className="text-xs text-muted-foreground hidden sm:block">
-              Updates {RESUME_PREVIEW_DEBOUNCE_MS / 1000}s after you stop typing
-            </p>
-          </div>
-          <div className="flex-1 bg-gray-200 p-4 rounded-lg flex items-center justify-center dark:bg-gray-700">
-            <div className="relative w-full h-full bg-white shadow-lg min-h-[480px]">
-              {previewHtml ? (
-                <>
-                  <iframe
-                    srcDoc={previewHtml}
-                    className="w-full h-full min-h-[480px] border-0"
-                    title="Resume Preview"
-                  />
-                  {generatePreviewMutation.isPending && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-white/70 dark:bg-gray-900/60 backdrop-blur-[1px]">
-                      <div className="flex items-center gap-2 rounded-lg bg-white/95 px-4 py-2 text-sm text-gray-700 shadow-md dark:bg-gray-800 dark:text-gray-200">
-                        <Loader2 className="h-5 w-5 animate-spin shrink-0" />
-                        <span>Updating preview…</span>
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : generatePreviewMutation.isPending ? (
-                <div className="flex items-center justify-center h-full min-h-[480px] text-gray-500">
-                  <Loader2 className="w-8 h-8 animate-spin mr-2" /> Loading
-                  preview…
-                </div>
-              ) : (
-                <div className="flex items-center justify-center h-full min-h-[480px] text-gray-500">
-                  <p>Preview will appear here.</p>
-                </div>
-              )}
-            </div>
-          </div>
-          <div className="mt-4">
-            <Button
-              onClick={handleDownloadPdf}
-              disabled={!selectedTemplate || downloadPdfMutation.isPending}
-              className="w-full"
-            >
-              {downloadPdfMutation.isPending
-                ? "Generating..."
-                : "Download as PDF"}
-              <Download className="w-4 h-4 ml-2" />
-            </Button>
+          <div className="min-w-0 space-y-4 lg:pl-3 lg:sticky lg:top-6 lg:self-start">
+            <LayoffProofTemplateStrip
+              selectedTemplateId={selectedTemplate}
+              selectedCatalogId={selectedCatalogId}
+              onSelect={handleTemplateSelect}
+            />
+            <LayoffProofLivePreview
+              previewHtml={previewHtml}
+              isLoading={generatePreviewMutation.isPending}
+              viewMode={previewViewMode}
+              onViewModeChange={setPreviewViewMode}
+              onRefresh={refreshPreview}
+            />
           </div>
         </div>
+      </div>
+    </>
+  );
+
+  const renderOnboardingContent = () => (
+    <div className="px-8 py-6">
+      <ResumeBuilderChrome downloadPending={downloadPdfMutation.isPending} />
+      <div className="mt-6">
+        {currentStep === "select" && renderSelectStep()}
+        {currentStep === "upload" && renderUploadStep()}
+        {currentStep === "linkedin-url" && renderLinkedinUrlStep()}
+        {currentStep === "manual-edit" && renderManualEditStep()}
+        {currentStep === "templates" && renderTemplatesStep()}
       </div>
     </div>
   );
 
   return (
-    <>
-      <GlobalHeader />
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 py-6 px-4">
-        <div className="container mx-auto">
-          {currentStep === "select" && renderSelectStep()}
-          {currentStep === "upload" && renderUploadStep()}
-          {currentStep === "linkedin-url" && renderLinkedinUrlStep()}
-          {currentStep === "manual-edit" && renderManualEditStep()}
-          {currentStep === "templates" && renderTemplatesStep()}
-          {currentStep === "editor-preview" && renderEditorPreviewStep()}
-        </div>
-      </div>
-    </>
+    <LayoffProofLayout activeNavId="resume">
+      {currentStep === "editor-preview"
+        ? renderEditorPreviewStep()
+        : renderOnboardingContent()}
+    </LayoffProofLayout>
   );
 }

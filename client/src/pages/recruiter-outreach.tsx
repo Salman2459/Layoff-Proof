@@ -1,35 +1,45 @@
 import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  MessageSquare,
+  ChevronRight,
+  Clock,
   Copy,
-  Send,
-  Sparkles,
-  Mail,
   Linkedin,
-  Users,
-  Target,
+  Loader2,
+  Lock,
+  Mail,
+  MessageSquare,
   RefreshCw,
-  CheckCircle,
-  Clock
+  Sparkles,
+  Target,
+  Users,
 } from "lucide-react";
-import GlobalHeader from "@/components/GlobalHeader";
+import { LayoffProofLayout } from "@/components/layoffproof/LayoffProofLayout";
+import { LayoffProofDashboardHeader } from "@/components/layoffproof/LayoffProofDashboardHeader";
+import { LayoffProofSelect } from "@/components/layoffproof/LayoffProofSelect";
+import { OutreachBestPractices } from "@/components/layoffproof/outreach/OutreachBestPractices";
+import { OutreachHeroIllustration } from "@/components/layoffproof/outreach/OutreachHeroIllustration";
+import { OutreachMessageEmpty } from "@/components/layoffproof/outreach/OutreachMessageEmpty";
+import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import { cn } from "@/lib/utils";
 
 const messageTypes = [
-  { id: "linkedin-dm", name: "LinkedIn DM", icon: Linkedin },
-  { id: "email", name: "Cold Email", icon: Mail },
-  { id: "referral", name: "Referral Request", icon: Users }
-];
+  { id: "linkedin-dm", name: "LinkedIn DM", shortName: "LinkedIn DM", icon: Linkedin },
+  { id: "email", name: "Cold Email", shortName: "Cold Email", icon: Mail },
+  { id: "referral", name: "Referral Request", shortName: "Referral Request", icon: Users },
+] as const;
 
 const industries = [
-  "Technology", "Finance", "Healthcare", "Marketing", "Sales",
-  "Consulting", "Education", "Manufacturing", "Retail", "Media"
+  "Technology",
+  "Finance",
+  "Healthcare",
+  "Marketing",
+  "Sales",
+  "Consulting",
+  "Education",
+  "Manufacturing",
+  "Retail",
+  "Media",
 ];
 
 const experienceLevels = [
@@ -37,15 +47,31 @@ const experienceLevels = [
   "Mid Level (3-5 years)",
   "Senior Level (6-10 years)",
   "Lead/Manager (10+ years)",
-  "Executive (15+ years)"
+  "Executive (15+ years)",
 ];
 
+const featurePills = [
+  { label: "Personalized", icon: Target, bg: "bg-[#ede9fe]", text: "text-[#7c3aed]" },
+  { label: "AI Powered", icon: Sparkles, bg: "bg-[#f3e8ff]", text: "text-[#9333ea]" },
+  { label: "Multi-platform", icon: MessageSquare, bg: "bg-[#fce7f3]", text: "text-[#db2777]" },
+] as const;
+
+const inputClass =
+  "w-full rounded-xl border border-[#e2e8f0] bg-white px-3 py-2.5 text-sm text-[#0f172a] outline-none transition placeholder:text-[#94a3b8] focus:border-[#a5b4fc] focus:ring-2 focus:ring-[#c7d2fe]/60 disabled:opacity-60";
+
+const labelClass = "mb-1.5 block text-xs font-medium text-[#475569]";
+
+const cardClass = "rounded-2xl border border-[#e8ecf4] bg-white p-5 shadow-sm sm:p-6";
+
+function greeting(first?: string | null, last?: string | null): string {
+  return first?.trim() || last?.trim() || "there";
+}
+
 export default function RecruiterOutreach() {
-  const [activeTab, setActiveTab] = useState("linkedin-dm");
+  const [activeTab, setActiveTab] = useState<(typeof messageTypes)[number]["id"]>("linkedin-dm");
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedMessage, setGeneratedMessage] = useState("");
 
-  // Form fields state
   const [recruiterName, setRecruiterName] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [jobTitle, setJobTitle] = useState("");
@@ -54,23 +80,24 @@ export default function RecruiterOutreach() {
   const [industry, setIndustry] = useState("");
   const [experience, setExperience] = useState("");
   const [tone, setTone] = useState("professional");
-  const { user } = useAuth()
 
-  /**
-   * NEW: generateMessage function
-   * This function now sends all form data to the AI backend endpoint
-   * to generate a message dynamically for any selected type.
-   */
+  const { user } = useAuth();
+  const { toast } = useToast();
+
+  const name = greeting(user?.firstName, user?.lastName);
+  const activeType = messageTypes.find((type) => type.id === activeTab)!;
+  const MessageTypeIcon = activeType.icon;
+  const hasError = generatedMessage.startsWith("Error:");
+  const hasMessage = !!generatedMessage && !hasError;
+
   const generateMessage = async () => {
     setIsGenerating(true);
-    setGeneratedMessage(""); // Clear previous message
+    setGeneratedMessage("");
 
     try {
       const response = await fetch("/api/generate-outreach-message", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messageType: activeTab,
           recruiterName,
@@ -81,7 +108,7 @@ export default function RecruiterOutreach() {
           industry,
           experience,
           tone,
-          id: user?.id
+          id: user?.id,
         }),
       });
 
@@ -93,9 +120,14 @@ export default function RecruiterOutreach() {
       const data = await response.json();
       setGeneratedMessage(data.generatedMessage);
 
+      toast({
+        title: "Message generated!",
+        description: `Your ${activeType.shortName} is ready to review.`,
+      });
     } catch (error) {
-      console.error("Error generating message:", error);
-      setGeneratedMessage(`Error: ${error instanceof Error ? error.message : "Unknown error"}. Please check the console and try again.`);
+      const message = error instanceof Error ? error.message : "Unknown error";
+      setGeneratedMessage(`Error: ${message}. Please try again.`);
+      toast({ title: "Generation failed", description: message, variant: "destructive" });
     } finally {
       setIsGenerating(false);
     }
@@ -103,340 +135,336 @@ export default function RecruiterOutreach() {
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(generatedMessage);
-    // You could add a toast notification here to confirm copying
+    toast({ title: "Copied!", description: "Message copied to clipboard." });
   };
 
-  const MessageTypeIcon = messageTypes.find(type => type.id === activeTab)?.icon || MessageSquare;
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
-      <GlobalHeader />
+    <LayoffProofLayout activeNavId="resume-analyzer">
+      <LayoffProofDashboardHeader greeting={name} />
 
-      {/* Tool Description */}
-      <section className="py-8 px-4 sm:px-6 lg:px-8 border-b bg-white/50">
-        <div className="max-w-6xl mx-auto">
-          <div className="max-w-4xl mx-auto text-center">
-            <h2 className="text-3xl font-bold text-gray-900 mb-4">
+      <main className="flex-1 px-4 pb-10 sm:px-6 lg:px-8">
+        {/* Page hero */}
+        <div className="flex items-start justify-between gap-6 py-6">
+          <div className="min-w-0">
+            <h1 className="text-[26px] font-bold tracking-tight text-[#0f172a]">
               Generate Personalized Outreach Scripts
-            </h2>
-            <p className="text-lg text-gray-600 mb-6">
-              Create compelling LinkedIn DMs, cold emails, and referral requests that get noticed by recruiters.
+            </h1>
+            <p className="mt-1 max-w-2xl text-sm leading-relaxed text-[#64748b]">
+              Create compelling LinkedIn DMs, cold emails, and referral requests that get noticed
+              by recruiters.
             </p>
-            <div className="flex flex-wrap justify-center gap-4">
-              <Badge variant="secondary" className="bg-indigo-100 text-indigo-800">
-                <Target className="w-3 h-3 mr-1" />
-                Personalized
-              </Badge>
-              <Badge variant="secondary" className="bg-purple-100 text-purple-800">
-                <Sparkles className="w-3 h-3 mr-1" />
-                AI Powered
-              </Badge>
-              <Badge variant="secondary" className="bg-pink-100 text-pink-800">
-                <MessageSquare className="w-3 h-3 mr-1" />
-                Multi-platform
-              </Badge>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {featurePills.map((pill) => {
+                const Icon = pill.icon;
+                return (
+                  <span
+                    key={pill.label}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold",
+                      pill.bg,
+                      pill.text
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5" strokeWidth={2} />
+                    {pill.label}
+                  </span>
+                );
+              })}
             </div>
           </div>
-          <div className="grid gap-8 lg:grid-cols-2 lg:items-center lg:gap-10 mt-8">
-            <div className="space-y-3 lg:pr-4 text-left">
-              <p className="text-sm font-semibold text-purple-600 dark:text-purple-400">
-                Walkthrough
-              </p>
-              <h3 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-                See recruiter outreach in action
-              </h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed max-w-md">
-                A quick tour of how to generate scripts and tailor them before you reach out.
-              </p>
-            </div>
-            <div className="relative mx-auto w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-black shadow-sm aspect-video dark:border-gray-700 sm:max-w-lg lg:mx-0 lg:max-w-none">
-  <iframe
-    width="560"
-    height="315"
-    src="https://www.youtube-nocookie.com/embed/HdGQ1lClP3E?si=3YVDf6AiestQJl0Z&controls=0&autoplay=1&mute=0"
-    title="YouTube video player"
-    frameBorder={0}
-    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-    referrerPolicy="strict-origin-when-cross-origin"
-    allowFullScreen
-    className="absolute inset-0 h-full w-full border-0"
-  />
-</div>
-          </div>
+          <OutreachHeroIllustration />
         </div>
-      </section>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Input Section */}
-          <div className="space-y-6">
-            {/* Message Type Selection */}
-            <Card>
-              <CardHeader>
-                <CardTitle>1. Select Message Type</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Tabs value={activeTab} onValueChange={setActiveTab}>
-                  <TabsList className="grid w-full grid-cols-3">
-                    {messageTypes.map((type) => {
-                      const IconComponent = type.icon;
-                      return (
-                        <TabsTrigger key={type.id} value={type.id} className="flex items-center space-x-2">
-                          <IconComponent className="w-4 h-4" />
-                          <span className="hidden sm:inline">{type.name}</span>
-                        </TabsTrigger>
-                      );
-                    })}
-                  </TabsList>
-                </Tabs>
-              </CardContent>
-            </Card>
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          {/* Left column — input */}
+          <div className="space-y-5">
+            {/* Step 1 */}
+            <div className={cardClass}>
+              <h2 className="mb-4 text-sm font-bold text-[#0f172a]">1. Select Message Type</h2>
+              <div className="grid grid-cols-3 gap-2">
+                {messageTypes.map((type) => {
+                  const Icon = type.icon;
+                  const isActive = activeTab === type.id;
+                  return (
+                    <button
+                      key={type.id}
+                      type="button"
+                      onClick={() => setActiveTab(type.id)}
+                      className={cn(
+                        "flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-center transition",
+                        isActive
+                          ? "border-[#8b5cf6] bg-[#faf5ff] text-[#7c3aed] shadow-sm"
+                          : "border-[#e8ecf4] bg-[#fafafa] text-[#64748b] hover:border-[#c4b5fd] hover:bg-white"
+                      )}
+                    >
+                      <Icon className="h-5 w-5" strokeWidth={isActive ? 2.25 : 1.75} />
+                      <span className="text-[11px] font-semibold leading-tight sm:text-xs">
+                        {type.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
-            {/* Form Fields */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <MessageTypeIcon className="w-5 h-5 mr-2" />
-                  2. Provide Details
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+            {/* Step 2 */}
+            <div className={cardClass}>
+              <h2 className="mb-4 text-sm font-bold text-[#0f172a]">2. Provide Details</h2>
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="text-sm font-medium">Your Name</label>
-                    <Input
-                      placeholder="John Doe"
+                    <label htmlFor="your-name" className={labelClass}>
+                      Your Name
+                    </label>
+                    <input
+                      id="your-name"
+                      type="text"
+                      placeholder="e.g., John Doe"
                       value={yourName}
                       onChange={(e) => setYourName(e.target.value)}
+                      className={inputClass}
                     />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Your Current Role</label>
-                    <Input
-                      placeholder="Software Engineer"
+                    <label htmlFor="your-role" className={labelClass}>
+                      Your Current Role
+                    </label>
+                    <input
+                      id="your-role"
+                      type="text"
+                      placeholder="e.g., Software Engineer"
                       value={yourRole}
                       onChange={(e) => setYourRole(e.target.value)}
+                      className={inputClass}
                     />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="text-sm font-medium">Recipient's Name</label>
-                    <Input
-                      placeholder="Jane Smith"
+                    <label htmlFor="recipient-name" className={labelClass}>
+                      Recipient&apos;s Name
+                    </label>
+                    <input
+                      id="recipient-name"
+                      type="text"
+                      placeholder="e.g., Jane Smith"
                       value={recruiterName}
                       onChange={(e) => setRecruiterName(e.target.value)}
+                      className={inputClass}
                     />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Company Name</label>
-                    <Input
-                      placeholder="Google, Microsoft, etc."
+                    <label htmlFor="company-name" className={labelClass}>
+                      Company Name
+                    </label>
+                    <input
+                      id="company-name"
+                      type="text"
+                      placeholder="e.g., Google, Microsoft"
                       value={companyName}
                       onChange={(e) => setCompanyName(e.target.value)}
+                      className={inputClass}
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium">Target Job Title</label>
-                  <Input
-                    placeholder="Software Engineer"
+                  <label htmlFor="target-job" className={labelClass}>
+                    Target Job Title
+                  </label>
+                  <input
+                    id="target-job"
+                    type="text"
+                    placeholder="e.g., Software Engineer"
                     value={jobTitle}
                     onChange={(e) => setJobTitle(e.target.value)}
+                    className={inputClass}
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="text-sm font-medium">Industry</label>
-                    <Select value={industry} onValueChange={setIndustry}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select industry" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {industries.map((ind) => (
-                          <SelectItem key={ind} value={ind.toLowerCase()}>
-                            {ind}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <label htmlFor="industry" className={labelClass}>
+                      Industry
+                    </label>
+                    <LayoffProofSelect
+                      id="industry"
+                      value={industry}
+                      onChange={(e) => setIndustry(e.target.value)}
+                    >
+                      <option value="">Select industry</option>
+                      {industries.map((ind) => (
+                        <option key={ind} value={ind.toLowerCase()}>
+                          {ind}
+                        </option>
+                      ))}
+                    </LayoffProofSelect>
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Experience Level</label>
-                    <Select value={experience} onValueChange={setExperience}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select experience" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {experienceLevels.map((level) => (
-                          <SelectItem key={level} value={level}>
-                            {level}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <label htmlFor="experience" className={labelClass}>
+                      Experience Level
+                    </label>
+                    <LayoffProofSelect
+                      id="experience"
+                      value={experience}
+                      onChange={(e) => setExperience(e.target.value)}
+                    >
+                      <option value="">Select experience</option>
+                      {experienceLevels.map((level) => (
+                        <option key={level} value={level}>
+                          {level}
+                        </option>
+                      ))}
+                    </LayoffProofSelect>
                   </div>
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium">Tone</label>
-                  <Select value={tone} onValueChange={setTone}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="professional">Professional</SelectItem>
-                      <SelectItem value="friendly">Friendly</SelectItem>
-                      <SelectItem value="enthusiastic">Enthusiastic</SelectItem>
-                      <SelectItem value="direct">Direct</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <label htmlFor="tone" className={labelClass}>
+                    Tone
+                  </label>
+                  <LayoffProofSelect
+                    id="tone"
+                    value={tone}
+                    onChange={(e) => setTone(e.target.value)}
+                  >
+                    <option value="professional">Professional</option>
+                    <option value="friendly">Friendly</option>
+                    <option value="enthusiastic">Enthusiastic</option>
+                    <option value="direct">Direct</option>
+                  </LayoffProofSelect>
                 </div>
 
-                <Button
+                <button
+                  type="button"
                   onClick={generateMessage}
                   disabled={isGenerating || !yourName}
-                  className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-lg py-6"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#8b5cf6] px-4 py-3 text-sm font-semibold text-white shadow-sm shadow-violet-200/50 transition hover:bg-[#7c3aed] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isGenerating ? (
                     <>
-                      <RefreshCw className="w-5 h-5 mr-2 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" />
                       Generating Message...
                     </>
                   ) : (
                     <>
-                      <Sparkles className="w-5 h-5 mr-2" />
-                      Generate {messageTypes.find(type => type.id === activeTab)?.name}
+                      <Sparkles className="h-4 w-4" />
+                      Generate {activeType.shortName}
                     </>
                   )}
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
+                </button>
 
-          {/* Output Section */}
-          <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <div className="flex justify-between items-center">
-                  <CardTitle>Generated Message</CardTitle>
-                  {generatedMessage && !generatedMessage.startsWith("Error:") && (
-                    <div className="flex space-x-2">
-                      <Button size="sm" variant="outline" onClick={copyToClipboard}>
-                        <Copy className="w-4 h-4 mr-2" />
-                        Copy
-                      </Button>
-                      <Button size="sm" className="bg-gradient-to-r from-green-500 to-emerald-500">
-                        <Send className="w-4 h-4 mr-2" />
-                        Use
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
-                {isGenerating ? (
-                  <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-lg p-8 text-center min-h-[400px] flex items-center justify-center">
-                    <div>
-                      <RefreshCw className="w-16 h-16 text-gray-400 mx-auto mb-4 animate-spin" />
-                      <p className="text-gray-600 mb-2">AI is crafting your message...</p>
-                      <p className="text-sm text-gray-500">This may take a few seconds</p>
-                    </div>
-                  </div>
-                ) : generatedMessage ? (
-                  <div className={`bg-white border rounded-lg p-6 min-h-[400px] font-mono text-sm whitespace-pre-wrap ${generatedMessage.startsWith("Error:") ? 'text-red-600' : ''}`}>
-                    {generatedMessage}
-                  </div>
-                ) : (
-                  <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-lg p-8 text-center min-h-[400px] flex items-center justify-center">
-                    <div>
-                      <MessageTypeIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                      <p className="text-gray-600 mb-2">Your personalized message will appear here</p>
-                      <p className="text-sm text-gray-500">Fill in the details and click generate</p>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {generatedMessage && !generatedMessage.startsWith("Error:") && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Optimization Suggestions</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex items-start space-x-3">
-                    <CheckCircle className="w-5 h-5 text-green-500 mt-0.5" />
-                    <div>
-                      <p className="text-sm font-medium">Personalization: High</p>
-                      <p className="text-xs text-gray-600">Includes placeholders for you to add specific skills or reasons for interest.</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start space-x-3">
-                    <Target className="w-5 h-5 text-yellow-500 mt-0.5" />
-                    <div>
-                      <p className="text-sm font-medium">Next Step: Finalize</p>
-                      <p className="text-xs text-gray-600">Fill in the bracketed `[...]` information for maximum impact.</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Quick Actions</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Button variant="outline" className="w-full justify-start" onClick={generateMessage} disabled={isGenerating || !yourName}>
-                  <RefreshCw className="w-4 h-4 mr-2" />
-                  Generate Alternative Version
-                </Button>
-                <Button variant="outline" className="w-full justify-start" disabled>
-                  <Sparkles className="w-4 h-4 mr-2" />
-                  Make it More Personal (Coming Soon)
-                </Button>
-                <Button variant="outline" className="w-full justify-start" disabled>
-                  <Clock className="w-4 h-4 mr-2" />
-                  Create Follow-up Message (Coming Soon)
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-
-        {/* Tips Section */}
-        <Card className="mt-8">
-          <CardHeader>
-            <CardTitle>Outreach Best Practices</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div>
-                <h3 className="font-semibold mb-2 text-indigo-600">Research First</h3>
-                <p className="text-sm text-gray-600">
-                  Always research the recipient and company before reaching out. Mention specific details to show genuine interest.
-                </p>
-              </div>
-              <div>
-                <h3 className="font-semibold mb-2 text-purple-600">Be Concise</h3>
-                <p className="text-sm text-gray-600">
-                  Keep messages short and focused. Recruiters are busy - make your value proposition clear quickly.
-                </p>
-              </div>
-              <div>
-                <h3 className="font-semibold mb-2 text-pink-600">Follow Up</h3>
-                <p className="text-sm text-gray-600">
-                  If you don't hear back in a week, send a polite follow-up. Persistence shows genuine interest.
+                <p className="flex items-center justify-center gap-1.5 text-[11px] text-[#94a3b8]">
+                  <Lock className="h-3 w-3" />
+                  Your information is secure and will not be shared.
                 </p>
               </div>
             </div>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
+          </div>
+
+          {/* Right column — output */}
+          <div className="space-y-5">
+            <div className={cardClass}>
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-sm font-bold text-[#0f172a]">Generated Message</h2>
+                {hasMessage && (
+                  <button
+                    type="button"
+                    onClick={copyToClipboard}
+                    className="flex items-center gap-1.5 rounded-lg border border-[#e2e8f0] bg-white px-3 py-1.5 text-xs font-semibold text-[#334155] transition hover:bg-[#f8fafc]"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    Copy
+                  </button>
+                )}
+              </div>
+
+              {isGenerating ? (
+                <div className="flex min-h-[380px] flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#ddd6fe] bg-[#faf5ff]/60 px-6 py-12 text-center">
+                  <Loader2 className="mb-4 h-10 w-10 animate-spin text-[#8b5cf6]" />
+                  <p className="text-sm font-semibold text-[#0f172a]">AI is crafting your message...</p>
+                  <p className="mt-1 text-xs text-[#64748b]">This may take a few seconds</p>
+                </div>
+              ) : hasMessage || hasError ? (
+                <textarea
+                  readOnly={hasError}
+                  value={generatedMessage}
+                  onChange={(e) => !hasError && setGeneratedMessage(e.target.value)}
+                  className={cn(
+                    inputClass,
+                    "min-h-[380px] resize-y font-mono text-[13px] leading-relaxed",
+                    hasError && "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]"
+                  )}
+                />
+              ) : (
+                <OutreachMessageEmpty icon={MessageTypeIcon} label={activeType.shortName.toLowerCase()} />
+              )}
+            </div>
+
+            {/* Quick Actions */}
+            <div className={cardClass}>
+              <div className="mb-3 flex items-center gap-2">
+                <Clock className="h-4 w-4 text-[#8b5cf6]" strokeWidth={2} />
+                <h2 className="text-sm font-bold text-[#0f172a]">Quick Actions</h2>
+              </div>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={generateMessage}
+                  disabled={isGenerating || !yourName}
+                  className="flex w-full items-center gap-3 rounded-xl border border-[#e8ecf4] bg-[#fafafa] px-4 py-3 text-left transition hover:border-[#c4b5fd] hover:bg-[#faf5ff] disabled:opacity-50"
+                >
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#ede9fe]">
+                    <RefreshCw className="h-4 w-4 text-[#8b5cf6]" strokeWidth={2} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-[#0f172a]">Generate Alternative Version</p>
+                    <p className="text-xs text-[#64748b]">Get a different version of your message</p>
+                  </div>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-[#94a3b8]" />
+                </button>
+
+                <div className="flex w-full items-center gap-3 rounded-xl border border-[#e8ecf4] bg-[#fafafa] px-4 py-3 opacity-70">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#fce7f3]">
+                    <Sparkles className="h-4 w-4 text-[#ec4899]" strokeWidth={2} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-[#0f172a]">Make It More Personal</p>
+                      <span className="rounded-full bg-[#ede9fe] px-2 py-0.5 text-[10px] font-bold text-[#7c3aed]">
+                        Coming Soon
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#64748b]">Add more personalization based on context</p>
+                  </div>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-[#94a3b8]" />
+                </div>
+
+                <div className="flex w-full items-center gap-3 rounded-xl border border-[#e8ecf4] bg-[#fafafa] px-4 py-3 opacity-70">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#dbeafe]">
+                    <Clock className="h-4 w-4 text-[#3b82f6]" strokeWidth={2} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-[#0f172a]">Create Follow-up Message</p>
+                      <span className="rounded-full bg-[#ede9fe] px-2 py-0.5 text-[10px] font-bold text-[#7c3aed]">
+                        Coming Soon
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#64748b]">
+                      Generate a follow-up message for no response
+                    </p>
+                  </div>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-[#94a3b8]" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <OutreachBestPractices />
+      </main>
+    </LayoffProofLayout>
   );
 }

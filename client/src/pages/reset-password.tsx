@@ -1,21 +1,18 @@
 import { useState } from "react";
-import { Link, useSearchParams } from "wouter";
+import { useSearchParams } from "wouter";
 import { useMutation } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { AuthLayout } from "@/components/auth/AuthLayout";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+  AuthErrorAlert,
+  AuthField,
+  AuthInfoAlert,
+  AuthPasswordInput,
+  AuthPrimaryButton,
+  AuthTextLink,
+} from "@/components/auth/auth-ui";
+import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { ResetPasswordRequest } from "@shared/schema";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
 
 export default function ResetPassword() {
   const { toast } = useToast();
@@ -24,7 +21,6 @@ export default function ResetPassword() {
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
 
   const mutation = useMutation({
@@ -64,99 +60,56 @@ export default function ResetPassword() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-4 lp-page-mesh">
-      <Card className="w-full max-w-md border-border/80 shadow-lg shadow-teal-900/5">
-        <CardHeader className="text-center">
-          <div className="mb-4 flex items-center justify-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg lp-gradient-fill">
-              <span className="text-sm font-bold text-primary-foreground">LP</span>
-            </div>
-            <h1 className="lp-gradient-text text-xl font-bold">Layoff Proof</h1>
-          </div>
-          <CardTitle className="text-2xl">Set a new password</CardTitle>
-          <CardDescription>Choose a new password for your account.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {errors.length > 0 && (
-            <Alert variant="destructive">
-              <AlertDescription>
-                {errors.map((err, i) => (
-                  <div key={i}>{err}</div>
-                ))}
-              </AlertDescription>
-            </Alert>
-          )}
+    <AuthLayout
+      title="Set a new password"
+      description="Choose a strong password for your Layoff Proof account."
+      footer={
+        <p className="text-center text-[14px] text-[#64748b]">
+          <AuthTextLink href="/login">Back to sign in</AuthTextLink>
+        </p>
+      }
+    >
+      <AuthErrorAlert errors={errors} />
 
-          {!tokenFromUrl.trim() && (
-            <Alert>
-              <AlertDescription>
-                This page needs a valid reset link. Request a new reset from the forgot
-                password page.
-              </AlertDescription>
-            </Alert>
-          )}
+      {!tokenFromUrl.trim() && (
+        <AuthInfoAlert>
+          This page needs a valid reset link. Request a new one from the{" "}
+          <AuthTextLink href="/forgot-password" className="text-[13px]">
+            forgot password
+          </AuthTextLink>{" "}
+          page.
+        </AuthInfoAlert>
+      )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="password">New password</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  autoComplete="new-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="pr-10"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                >
-                  {showPassword ? (
-                    <EyeOff className="h-4 w-4" aria-hidden />
-                  ) : (
-                    <Eye className="h-4 w-4" aria-hidden />
-                  )}
-                </button>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="confirm">Confirm password</Label>
-              <Input
-                id="confirm"
-                type={showPassword ? "text" : "password"}
-                autoComplete="new-password"
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-                required
-              />
-            </div>
-            <Button
-              type="submit"
-              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
-              disabled={mutation.isPending || !tokenFromUrl.trim()}
-            >
-              {mutation.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                  Updating…
-                </>
-              ) : (
-                "Update password"
-              )}
-            </Button>
-          </form>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <AuthField id="password" label="New password">
+          <AuthPasswordInput
+            id="password"
+            value={password}
+            onChange={setPassword}
+            autoComplete="new-password"
+            required
+          />
+        </AuthField>
 
-          <div className="text-center text-sm">
-            <Link href="/login" className="font-medium text-primary hover:underline">
-              Back to sign in
-            </Link>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+        <AuthField id="confirm" label="Confirm password">
+          <AuthPasswordInput
+            id="confirm"
+            value={confirm}
+            onChange={setConfirm}
+            autoComplete="new-password"
+            required
+          />
+        </AuthField>
+
+        <AuthPrimaryButton
+          loading={mutation.isPending}
+          loadingText="Updating…"
+          disabled={!tokenFromUrl.trim()}
+        >
+          Update password
+        </AuthPrimaryButton>
+      </form>
+    </AuthLayout>
   );
 }

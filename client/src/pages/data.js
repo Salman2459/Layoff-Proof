@@ -22,7 +22,7 @@ export const elevateLandingToolCards = [
     popular: true,
     premium: true,
     access: "tool",
-    toolPath: "/tools/resume-builder",
+    toolPath: "/resume-builder",
   },
   {
     id: "cover-letter",
@@ -42,7 +42,7 @@ export const elevateLandingToolCards = [
     },
     premium: true,
     access: "tool",
-    toolPath: "/tools/cover-letter",
+    toolPath: "/cover-letter",
   },
   {
     id: "interview-preparation",
@@ -62,7 +62,7 @@ export const elevateLandingToolCards = [
     },
     premium: true,
     access: "tool",
-    toolPath: "/tools/interview-preparation",
+    toolPath: "/interview-preparation",
   },
   {
     id: "linkedin-optimizer",
@@ -82,7 +82,7 @@ export const elevateLandingToolCards = [
     },
     premium: true,
     access: "tool",
-    toolPath: "/tools/linkedin-optimizer",
+    toolPath: "/linkedin-optimizer",
   },
   {
     id: "recruiter-outreach",
@@ -103,7 +103,7 @@ export const elevateLandingToolCards = [
     popular: true,
     premium: true,
     access: "tool",
-    toolPath: "/tools/recruiter-outreach",
+    toolPath: "/recruiter-outreach",
   },
   {
     id: "layoff-tracker",
@@ -123,7 +123,7 @@ export const elevateLandingToolCards = [
     },
     premium: true,
     access: "tool",
-    toolPath: "/dashboard",
+    toolPath: "/lay-offs",
   },
   {
     id: "ai-auto-apply",
@@ -162,7 +162,7 @@ export const elevateLandingToolCards = [
     },
     premium: true,
     access: "tool",
-    toolPath: "/tools/salary-negotiator",
+    toolPath: "/salary-negotiator",
   },
   {
     id: "networking-assistant",
@@ -182,7 +182,7 @@ export const elevateLandingToolCards = [
     },
     premium: true,
     access: "tool",
-    toolPath: "/tools/networking-assistant",
+    toolPath: "/networking-assistant",
   },
   {
     id: "skills-assessment",

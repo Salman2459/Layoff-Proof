@@ -1,14 +1,20 @@
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Upload, FileText, Edit, Download, Copy, User, Sparkles } from "lucide-react";
+import { useRef, useState } from "react";
+import {
+  Copy,
+  Download,
+  FileEdit,
+  Loader2,
+  Sparkles,
+  Upload,
+  User,
+} from "lucide-react";
+import { LayoffProofLayout } from "@/components/layoffproof/LayoffProofLayout";
+import { LayoffProofDashboardHeader } from "@/components/layoffproof/LayoffProofDashboardHeader";
+import { CoverLetterHeroIllustration } from "@/components/layoffproof/cover-letter/CoverLetterHeroIllustration";
+import { CoverLetterPreviewEmpty } from "@/components/layoffproof/cover-letter/CoverLetterPreviewEmpty";
 import { useToast } from "@/hooks/use-toast";
-import GlobalHeader from "@/components/GlobalHeader";
 import { useAuth } from "@/hooks/useAuth";
+import { cn } from "@/lib/utils";
 
 interface PersonalData {
   name: string;
@@ -34,66 +40,98 @@ interface JobDetails {
   reason: string;
 }
 
+function greeting(first?: string | null, last?: string | null): string {
+  return first?.trim() || last?.trim() || "there";
+}
+
+const inputClass =
+  "w-full rounded-xl border border-[#e2e8f0] bg-white px-3 py-2.5 text-sm text-[#0f172a] outline-none transition placeholder:text-[#94a3b8] focus:border-[#a5b4fc] focus:ring-2 focus:ring-[#c7d2fe]/60 disabled:opacity-60";
+
+const labelClass = "mb-1.5 block text-xs font-medium text-[#475569]";
+
 export default function CoverLetter() {
-  const [activeTab, setActiveTab] = useState("upload");
+  const [activeTab, setActiveTab] = useState<"upload" | "manual">("upload");
   const [uploadedResume, setUploadedResume] = useState<File | null>(null);
-  const [parsedResumeData, setParsedResumeData] = useState<any>(null);
-  const [fetchingDataFromFile, setFetchingDataFromFile] = useState<any>(false);
+  const [parsedResumeData, setParsedResumeData] = useState<Record<string, string> | null>(null);
+  const [fetchingDataFromFile, setFetchingDataFromFile] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [jobDetails, setJobDetails] = useState<JobDetails>({ position: "", company: "", reason: "" });
-  const user = useAuth();
+  const { user } = useAuth();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [personalData, setPersonalData] = useState<PersonalData>({
-    name: "", email: "", phone: "", degree: "", university: "", profession: "",
-    yearsExperience: "", currentCompany: "", currentLocation: "", workArrangement: "",
-    mainResponsibility: "", topDuty: "", skills: "", certifications: "", tools: ""
+    name: "",
+    email: "",
+    phone: "",
+    degree: "",
+    university: "",
+    profession: "",
+    yearsExperience: "",
+    currentCompany: "",
+    currentLocation: "",
+    workArrangement: "",
+    mainResponsibility: "",
+    topDuty: "",
+    skills: "",
+    certifications: "",
+    tools: "",
   });
   const [generatedLetter, setGeneratedLetter] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const { toast } = useToast();
 
-  // NEW: State for the "Improve with AI" feature
   const [isImproving, setIsImproving] = useState(false);
   const [improvementInstructions, setImprovementInstructions] = useState("");
   const [isImprovingLoading, setIsImprovingLoading] = useState(false);
 
+  const name = greeting(user?.firstName, user?.lastName);
+
+  const processFile = async (file: File) => {
+    setUploadedResume(file);
+    setParsedResumeData(null);
+    setGeneratedLetter("");
+
+    try {
+      const formData = new FormData();
+      formData.append("resume", file);
+      if (user?.id) formData.append("id", user.id);
+      setFetchingDataFromFile(true);
+
+      const response = await fetch("/api/upload-resume", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) throw new Error("Failed to upload resume");
+
+      const data = await response.json();
+      setParsedResumeData(data.parsedData);
+
+      toast({
+        title: "Resume Uploaded!",
+        description: "Your resume has been processed and key information extracted.",
+      });
+    } catch {
+      toast({
+        title: "Upload Error",
+        description: "Failed to process your resume. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setFetchingDataFromFile(false);
+    }
+  };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) {
-      setUploadedResume(file);
-      setParsedResumeData(null);
-      setGeneratedLetter("");
+    if (file) await processFile(file);
+  };
 
-      try {
-        const formData = new FormData();
-        formData.append('resume', file);
-        formData.append('id', user?.user?.id);
-        setFetchingDataFromFile(true)
-        const response = await fetch('/api/upload-resume', {
-          method: 'POST',
-          body: formData
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to upload resume');
-        }
-
-        const data = await response.json();
-        setParsedResumeData(data.parsedData);
-        setFetchingDataFromFile(false)
-
-        toast({
-          title: "Resume Uploaded!",
-          description: "Your resume has been processed and key information extracted.",
-        });
-      } catch (error) {
-        toast({
-          title: "Upload Error",
-          description: "Failed to process your resume. Please try again.",
-          variant: "destructive",
-        });
-      }
-    }
+  const handleDrop = async (event: React.DragEvent) => {
+    event.preventDefault();
+    setIsDragging(false);
+    const file = event.dataTransfer.files?.[0];
+    if (file) await processFile(file);
   };
 
   const generateCoverLetterFromResume = async () => {
@@ -108,7 +146,6 @@ export default function CoverLetter() {
 
     setIsGenerating(true);
     try {
-      console.log("Generating cover letter from resume...", parsedResumeData);
       const formattedParsedData = {
         name: parsedResumeData.name || "",
         email: parsedResumeData.email || "",
@@ -124,8 +161,9 @@ export default function CoverLetter() {
         topDuty: parsedResumeData.topDuty || "",
         skills: parsedResumeData.skills || "",
         certifications: parsedResumeData.certifications || "",
-        tools: parsedResumeData.tools || ""
+        tools: parsedResumeData.tools || "",
       };
+
       const response = await fetch("/api/generate-cover-letter", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -144,24 +182,16 @@ export default function CoverLetter() {
       const data = await response.json();
       setGeneratedLetter(data.coverLetter);
 
-      if (data.generatedBy === 'ai') {
-        toast({
-          title: "Success!",
-          description: "Your cover letter is ready.",
-        });
-      } else {
-        toast({
-          title: "Generated!",
-          description: "Cover letter created from a simple template (full generation was unavailable).",
-        });
-      }
-    } catch (error: any) {
-      console.error("Cover letter generation error:", error);
       toast({
-        title: "Error",
-        description: error.message || "Failed to generate cover letter. Please try again.",
-        variant: "destructive",
+        title: data.generatedBy === "ai" ? "Success!" : "Generated!",
+        description:
+          data.generatedBy === "ai"
+            ? "Your cover letter is ready."
+            : "Cover letter created from a simple template (full generation was unavailable).",
       });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to generate cover letter.";
+      toast({ title: "Error", description: message, variant: "destructive" });
     } finally {
       setIsGenerating(false);
     }
@@ -186,7 +216,7 @@ export default function CoverLetter() {
           personalData,
           jobDetails,
           method: "manual",
-          id: user?.user?.id
+          id: user?.id,
         }),
       });
 
@@ -198,30 +228,21 @@ export default function CoverLetter() {
       const data = await response.json();
       setGeneratedLetter(data.coverLetter);
 
-      if (data.generatedBy === 'ai') {
-        toast({
-          title: "Success!",
-          description: "Your cover letter is ready.",
-        });
-      } else {
-        toast({
-          title: "Generated!",
-          description: "Cover letter created from a simple template (full generation was unavailable).",
-        });
-      }
-    } catch (error: any) {
-      console.error("Cover letter generation error:", error);
       toast({
-        title: "Error",
-        description: error.message || "Failed to generate cover letter. Please try again.",
-        variant: "destructive",
+        title: data.generatedBy === "ai" ? "Success!" : "Generated!",
+        description:
+          data.generatedBy === "ai"
+            ? "Your cover letter is ready."
+            : "Cover letter created from a simple template (full generation was unavailable).",
       });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to generate cover letter.";
+      toast({ title: "Error", description: message, variant: "destructive" });
     } finally {
       setIsGenerating(false);
     }
   };
 
-  // NEW: Function to handle the improvement request
   const handleImproveLetter = async () => {
     if (!improvementInstructions.trim()) {
       toast({
@@ -240,7 +261,7 @@ export default function CoverLetter() {
         body: JSON.stringify({
           originalLetter: generatedLetter,
           instructions: improvementInstructions,
-          id: user?.user?.id,
+          id: user?.id,
         }),
       });
 
@@ -251,18 +272,12 @@ export default function CoverLetter() {
 
       const data = await response.json();
       setGeneratedLetter(data.improvedLetter);
-      toast({
-        title: "Success!",
-        description: "Your cover letter has been improved.",
-      });
+      toast({ title: "Success!", description: "Your cover letter has been improved." });
       setIsImproving(false);
       setImprovementInstructions("");
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Could not improve the letter. Please try again.",
-        variant: "destructive",
-      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Could not improve the letter.";
+      toast({ title: "Error", description: message, variant: "destructive" });
     } finally {
       setIsImprovingLoading(false);
     }
@@ -284,210 +299,371 @@ export default function CoverLetter() {
     toast({ title: "Downloaded!", description: "Cover letter downloaded successfully." });
   };
 
+  const jobFields = (
+    <div className="space-y-4">
+      <div>
+        <label htmlFor="position" className={labelClass}>
+          Job Position <span className="text-[#ef4444]">*</span>
+        </label>
+        <input
+          id="position"
+          type="text"
+          placeholder="e.g., Software Engineer"
+          value={jobDetails.position}
+          onChange={(e) => setJobDetails({ ...jobDetails, position: e.target.value })}
+          className={inputClass}
+        />
+      </div>
+      <div>
+        <label htmlFor="company" className={labelClass}>
+          Company Name <span className="text-[#ef4444]">*</span>
+        </label>
+        <input
+          id="company"
+          type="text"
+          placeholder="e.g., Google"
+          value={jobDetails.company}
+          onChange={(e) => setJobDetails({ ...jobDetails, company: e.target.value })}
+          className={inputClass}
+        />
+      </div>
+      <div>
+        <label htmlFor="reason" className={labelClass}>
+          Why this position?
+        </label>
+        <input
+          id="reason"
+          type="text"
+          placeholder="e.g., career growth, new challenges"
+          value={jobDetails.reason}
+          onChange={(e) => setJobDetails({ ...jobDetails, reason: e.target.value })}
+          className={inputClass}
+        />
+      </div>
+    </div>
+  );
+
   return (
-    // ... (rest of the JSX from <div className="min-h-screen..."> to <main...>)
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
-      <GlobalHeader />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-        <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">
-            Cover Letter Generator
-          </h1>
-          <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-            Create professional, personalized cover letters that stand out to employers and get you noticed.
-          </p>
+    <LayoffProofLayout activeNavId="cover-letter">
+      <LayoffProofDashboardHeader greeting={name} />
+
+      <main className="flex-1 px-4 pb-10 sm:px-6 lg:px-8">
+        {/* Page hero */}
+        <div className="flex items-start justify-between gap-6 py-6">
+          <div className="flex items-start gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#8b5cf6] shadow-sm shadow-violet-200/60">
+              <FileEdit className="h-6 w-6 text-white" strokeWidth={2} />
+            </div>
+            <div>
+              <h1 className="text-[26px] font-bold tracking-tight text-[#0f172a]">
+                Cover Letter Generator
+              </h1>
+              <p className="mt-1 max-w-xl text-sm leading-relaxed text-[#64748b]">
+                Create professional, personalized cover letters that stand out to employers and get
+                you noticed.
+              </p>
+            </div>
+          </div>
+          <CoverLetterHeroIllustration />
         </div>
 
-        <div className="grid lg:grid-cols-2 gap-12">
-          {/* Input Section */}
-          <div>
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="upload" className="flex items-center space-x-2">
-                  <Upload className="w-4 h-4" />
-                  <span>Upload Resume</span>
-                </TabsTrigger>
-                <TabsTrigger value="manual" className="flex items-center space-x-2">
-                  <User className="w-4 h-4" />
-                  <span>Fill Manually</span>
-                </TabsTrigger>
-              </TabsList>
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          {/* Input panel */}
+          <div className="rounded-2xl border border-[#e8ecf4] bg-white p-5 shadow-sm sm:p-6">
+            <div className="mb-6 flex rounded-xl bg-[#f1f5f9] p-1">
+              <button
+                type="button"
+                onClick={() => setActiveTab("upload")}
+                className={cn(
+                  "flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold transition",
+                  activeTab === "upload"
+                    ? "bg-white text-[#7c3aed] shadow-sm"
+                    : "text-[#64748b] hover:text-[#334155]"
+                )}
+              >
+                <Upload className="h-4 w-4" strokeWidth={2} />
+                Upload Resume
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("manual")}
+                className={cn(
+                  "flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold transition",
+                  activeTab === "manual"
+                    ? "bg-white text-[#7c3aed] shadow-sm"
+                    : "text-[#64748b] hover:text-[#334155]"
+                )}
+              >
+                <User className="h-4 w-4" strokeWidth={2} />
+                Fill Manually
+              </button>
+            </div>
 
-              <TabsContent value="upload" className="space-y-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center space-x-2">
-                      <FileText className="w-5 h-5" />
-                      <span>Upload Your Resume</span>
-                    </CardTitle>
-                    <CardDescription>
-                      Upload your resume file to extract your information automatically.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
-                      <input
-                        type="file"
-                        id="resume-upload"
-                        accept=".txt,.pdf,.doc,.docx"
-                        onChange={handleFileUpload}
-                        className="hidden"
-                      />
-                      <label htmlFor="resume-upload" className="cursor-pointer flex flex-col items-center space-y-2">
-                        <Upload className="w-12 h-12 text-gray-400" />
-                        <span className="text-lg font-medium text-gray-900">Click to upload resume</span>
-                        <span className="text-sm text-gray-500">Supports .txt, .pdf, .doc, .docx files</span>
-                      </label>
-                    </div>
+            {activeTab === "upload" ? (
+              <div className="space-y-5">
+                <div>
+                  <h2 className="text-base font-bold text-[#0f172a]">Upload Your Resume</h2>
+                  <p className="mt-1 text-sm text-[#64748b]">
+                    Upload your resume file to extract your information automatically.
+                  </p>
+                </div>
 
-                    {uploadedResume && (
-                      <div className="p-4 bg-green-50 border border-green-200 rounded-lg space-y-2">
-                        <p className="text-green-800 font-medium">✓ Resume uploaded: {uploadedResume.name}</p>
-                        {parsedResumeData && (
-                          <div className="text-sm text-green-700">
-                            <p><span className="font-medium">Name:</span> {parsedResumeData.name || "Not detected"}</p>
-                            <p><span className="font-medium">Email:</span> {parsedResumeData.email || "Not detected"}</p>
-                            <p><span className="font-medium">Profession:</span> {parsedResumeData.profession || "Not detected"}</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {fetchingDataFromFile && (
-                      <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-2">
-                        <p className="text-blue-800 font-medium">Fetching data from file...</p>
-                      </div>
-                    )}
-
-                    <div className="space-y-4">
-                      <div>
-                        <Label htmlFor="position">Job Position *</Label>
-                        <Input id="position" placeholder="e.g., Software Engineer" value={jobDetails.position} onChange={(e) => setJobDetails({ ...jobDetails, position: e.target.value })} />
-                      </div>
-                      <div>
-                        <Label htmlFor="company">Company Name *</Label>
-                        <Input id="company" placeholder="e.g., Google" value={jobDetails.company} onChange={(e) => setJobDetails({ ...jobDetails, company: e.target.value })} />
-                      </div>
-                      <div>
-                        <Label htmlFor="reason">Why this position?</Label>
-                        <Input id="reason" placeholder="e.g., career growth, new challenges" value={jobDetails.reason} onChange={(e) => setJobDetails({ ...jobDetails, reason: e.target.value })} />
-                      </div>
-                    </div>
-
-                    <Button onClick={generateCoverLetterFromResume} disabled={isGenerating || !parsedResumeData} className="w-full bg-blue-600 hover:bg-blue-700">
-                      {isGenerating ? (<><Sparkles className="w-4 h-4 mr-2 animate-spin" />Generating with AI...</>) : (<><Sparkles className="w-4 h-4 mr-2" />Generate Cover Letter</>)}
-                    </Button>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-
-              <TabsContent value="manual" className="space-y-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center space-x-2"><User className="w-5 h-5" /><span>Personal Information</span></CardTitle>
-                    <CardDescription>Fill in your details to generate a professional cover letter.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div><Label htmlFor="name">Full Name *</Label><Input id="name" placeholder="John Doe" value={personalData.name} onChange={(e) => setPersonalData({ ...personalData, name: e.target.value })} /></div>
-                      <div><Label htmlFor="email">Email *</Label><Input id="email" type="email" placeholder="john@example.com" value={personalData.email} onChange={(e) => setPersonalData({ ...personalData, email: e.target.value })} /></div>
-                      <div><Label htmlFor="phone">Phone Number *</Label><Input id="phone" placeholder="+1 (555) 123-4567" value={personalData.phone} onChange={(e) => setPersonalData({ ...personalData, phone: e.target.value })} /></div>
-                      <div><Label htmlFor="degree">Degree *</Label><Input id="degree" placeholder="Bachelor's in Computer Science" value={personalData.degree} onChange={(e) => setPersonalData({ ...personalData, degree: e.target.value })} /></div>
-                      <div><Label htmlFor="university">University *</Label><Input id="university" placeholder="Stanford University" value={personalData.university} onChange={(e) => setPersonalData({ ...personalData, university: e.target.value })} /></div>
-                      <div><Label htmlFor="profession">Profession *</Label><Input id="profession" placeholder="Software Development" value={personalData.profession} onChange={(e) => setPersonalData({ ...personalData, profession: e.target.value })} /></div>
-                      <div><Label htmlFor="yearsExperience">Years of Experience *</Label><Input id="yearsExperience" placeholder="5" value={personalData.yearsExperience} onChange={(e) => setPersonalData({ ...personalData, yearsExperience: e.target.value })} /></div>
-                      <div><Label htmlFor="currentCompany">Current Company</Label><Input id="currentCompany" placeholder="Tech Corp Inc." value={personalData.currentCompany} onChange={(e) => setPersonalData({ ...personalData, currentCompany: e.target.value })} /></div>
-                      <div><Label htmlFor="currentLocation">Current Location</Label><Input id="currentLocation" placeholder="San Francisco, CA" value={personalData.currentLocation} onChange={(e) => setPersonalData({ ...personalData, currentLocation: e.target.value })} /></div>
-                      <div><Label htmlFor="workArrangement">Work Arrangement</Label><Input id="workArrangement" placeholder="Remote/Hybrid/Onsite" value={personalData.workArrangement} onChange={(e) => setPersonalData({ ...personalData, workArrangement: e.target.value })} /></div>
-                    </div>
-                    <div><Label htmlFor="mainResponsibility">Main Responsibility</Label><Textarea id="mainResponsibility" placeholder="Describe your main job responsibility..." value={personalData.mainResponsibility} onChange={(e) => setPersonalData({ ...personalData, mainResponsibility: e.target.value })} /></div>
-                    <div><Label htmlFor="topDuty">Top Duty/Achievement</Label><Textarea id="topDuty" placeholder="Describe your top duty or achievement..." value={personalData.topDuty} onChange={(e) => setPersonalData({ ...personalData, topDuty: e.target.value })} /></div>
-                    <div><Label htmlFor="skills">Skills & Hard Skills</Label><Textarea id="skills" placeholder="List your relevant skills..." value={personalData.skills} onChange={(e) => setPersonalData({ ...personalData, skills: e.target.value })} /></div>
-                    <div><Label htmlFor="certifications">Certifications</Label><Textarea id="certifications" placeholder="List your certifications..." value={personalData.certifications} onChange={(e) => setPersonalData({ ...personalData, certifications: e.target.value })} /></div>
-                    <div><Label htmlFor="tools">Tools & Methods</Label><Textarea id="tools" placeholder="Tools and methods you use to stay organized..." value={personalData.tools} onChange={(e) => setPersonalData({ ...personalData, tools: e.target.value })} /></div>
-                    <div className="border-t pt-4"><h3 className="font-semibold mb-4">Job Details</h3>
-                      <div className="space-y-4">
-                        <div><Label htmlFor="manual-position">Position Applied For *</Label><Input id="manual-position" placeholder="e.g., Software Engineer" value={jobDetails.position} onChange={(e) => setJobDetails({ ...jobDetails, position: e.target.value })} /></div>
-                        <div><Label htmlFor="manual-company">Company Name *</Label><Input id="manual-company" placeholder="e.g., Google" value={jobDetails.company} onChange={(e) => setJobDetails({ ...jobDetails, company: e.target.value })} /></div>
-                        <div><Label htmlFor="manual-reason">Reason for Interest *</Label><Input id="manual-reason" placeholder="e.g., career advancement, skill development" value={jobDetails.reason} onChange={(e) => setJobDetails({ ...jobDetails, reason: e.target.value })} /></div>
-                      </div>
-                    </div>
-                    <Button onClick={generateCoverLetterManual} disabled={isGenerating} className="w-full bg-purple-600 hover:bg-purple-700">
-                      {isGenerating ? (<><Sparkles className="w-4 h-4 mr-2 animate-spin" />Generating with AI...</>) : (<><Sparkles className="w-4 h-4 mr-2" />Generate Cover Letter</>)}
-                    </Button>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-            </Tabs>
-          </div>
-
-          {/* Output Section */}
-          <div>
-            <Card className="h-fit">
-              <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                  <span>Generated Cover Letter</span>
-                  {generatedLetter && (
-                    <div className="flex space-x-2">
-                      {/* NEW: Improve with AI button */}
-                      {!isImproving && (
-                        <Button variant="outline" size="sm" onClick={() => setIsImproving(true)}>
-                          <Sparkles className="w-4 h-4 mr-1" />
-                          Improve
-                        </Button>
-                      )}
-                      <Button variant="outline" size="sm" onClick={copyToClipboard}><Copy className="w-4 h-4 mr-1" />Copy</Button>
-                      <Button variant="outline" size="sm" onClick={downloadLetter}><Download className="w-4 h-4 mr-1" />Download</Button>
-                    </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".txt,.pdf,.doc,.docx"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => fileInputRef.current?.click()}
+                  onKeyDown={(e) => e.key === "Enter" && fileInputRef.current?.click()}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={handleDrop}
+                  className={cn(
+                    "flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-10 text-center transition",
+                    isDragging
+                      ? "border-[#8b5cf6] bg-[#f5f3ff]"
+                      : "border-[#e2e8f0] bg-[#fafafa] hover:border-[#c4b5fd] hover:bg-[#faf5ff]"
                   )}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {generatedLetter ? (
-                  <div className="space-y-4">
-                    <Textarea
-                      value={generatedLetter}
-                      onChange={(e) => setGeneratedLetter(e.target.value)}
-                      className="min-h-[500px] font-mono text-sm"
-                      placeholder="Your generated cover letter will appear here..."
-                    />
-                    {/* NEW: Improvement UI */}
-                    {isImproving && (
-                      <div className="p-4 border rounded-lg bg-slate-50 space-y-3">
-                        <Label htmlFor="improve-instructions" className="font-semibold text-gray-800">
-                          How should we improve this letter?
-                        </Label>
-                        <Textarea
-                          id="improve-instructions"
-                          placeholder="e.g., Make it more formal, shorten the second paragraph, add a sentence about my passion for AI..."
-                          value={improvementInstructions}
-                          onChange={(e) => setImprovementInstructions(e.target.value)}
-                        />
-                        <div className="flex justify-end space-x-2">
-                          <Button variant="ghost" onClick={() => setIsImproving(false)}>Cancel</Button>
-                          <Button onClick={handleImproveLetter} disabled={isImprovingLoading}>
-                            {isImprovingLoading ? (
-                              <><Sparkles className="w-4 h-4 mr-2 animate-spin" />Improving...</>
-                            ) : (
-                              <><Sparkles className="w-4 h-4 mr-2" />Submit Improvement</>
-                            )}
-                          </Button>
-                        </div>
+                >
+                  <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#ede9fe]">
+                    <Upload className="h-6 w-6 text-[#8b5cf6]" strokeWidth={2} />
+                  </div>
+                  <p className="text-sm font-semibold text-[#0f172a]">
+                    Click to upload or drag and drop
+                  </p>
+                  <p className="mt-1 text-xs text-[#94a3b8]">
+                    Supports .txt, .pdf, .doc, .docx files
+                  </p>
+                </div>
+
+                {uploadedResume && (
+                  <div className="rounded-xl border border-[#bbf7d0] bg-[#f0fdf4] px-4 py-3">
+                    <p className="text-sm font-medium text-[#166534]">
+                      Resume uploaded: {uploadedResume.name}
+                    </p>
+                    {parsedResumeData && (
+                      <div className="mt-2 space-y-0.5 text-xs text-[#15803d]">
+                        <p>
+                          <span className="font-medium">Name:</span>{" "}
+                          {parsedResumeData.name || "Not detected"}
+                        </p>
+                        <p>
+                          <span className="font-medium">Profession:</span>{" "}
+                          {parsedResumeData.profession || "Not detected"}
+                        </p>
                       </div>
                     )}
-                  </div>
-                ) : (
-                  <div className="text-center py-12 text-gray-500">
-                    <FileText className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-                    <p className="text-lg font-medium">No cover letter generated yet</p>
-                    <p className="text-sm">Upload your resume or fill the form to get started</p>
                   </div>
                 )}
-              </CardContent>
-            </Card>
+
+                {fetchingDataFromFile && (
+                  <div className="flex items-center gap-2 rounded-xl border border-[#bfdbfe] bg-[#eff6ff] px-4 py-3 text-sm text-[#1d4ed8]">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Fetching data from file...
+                  </div>
+                )}
+
+                {jobFields}
+
+                <button
+                  type="button"
+                  onClick={generateCoverLetterFromResume}
+                  disabled={isGenerating || !parsedResumeData}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#8b5cf6] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#7c3aed] disabled:opacity-50"
+                >
+                  {isGenerating ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-4 w-4" />
+                  )}
+                  {isGenerating ? "Generating with AI..." : "Generate Cover Letter"}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                <div>
+                  <h2 className="text-base font-bold text-[#0f172a]">Personal Information</h2>
+                  <p className="mt-1 text-sm text-[#64748b]">
+                    Fill in your details to generate a professional cover letter.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {(
+                    [
+                      ["name", "Full Name", "John Doe", true],
+                      ["email", "Email", "john@example.com", true],
+                      ["phone", "Phone Number", "+1 (555) 123-4567", true],
+                      ["degree", "Degree", "Bachelor's in Computer Science", true],
+                      ["university", "University", "Stanford University", true],
+                      ["profession", "Profession", "Software Development", true],
+                      ["yearsExperience", "Years of Experience", "5", true],
+                      ["currentCompany", "Current Company", "Tech Corp Inc.", false],
+                      ["currentLocation", "Current Location", "San Francisco, CA", false],
+                      ["workArrangement", "Work Arrangement", "Remote/Hybrid/Onsite", false],
+                    ] as const
+                  ).map(([key, label, placeholder, required]) => (
+                    <div key={key} className={key === "name" || key === "email" ? "" : ""}>
+                      <label htmlFor={key} className={labelClass}>
+                        {label}
+                        {required && <span className="text-[#ef4444]"> *</span>}
+                      </label>
+                      <input
+                        id={key}
+                        type={key === "email" ? "email" : "text"}
+                        placeholder={placeholder}
+                        value={personalData[key]}
+                        onChange={(e) =>
+                          setPersonalData({ ...personalData, [key]: e.target.value })
+                        }
+                        className={inputClass}
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                {(
+                  [
+                    ["mainResponsibility", "Main Responsibility", "Describe your main job responsibility..."],
+                    ["topDuty", "Top Duty/Achievement", "Describe your top duty or achievement..."],
+                    ["skills", "Skills & Hard Skills", "List your relevant skills..."],
+                    ["certifications", "Certifications", "List your certifications..."],
+                    ["tools", "Tools & Methods", "Tools and methods you use to stay organized..."],
+                  ] as const
+                ).map(([key, label, placeholder]) => (
+                  <div key={key}>
+                    <label htmlFor={key} className={labelClass}>
+                      {label}
+                    </label>
+                    <textarea
+                      id={key}
+                      rows={3}
+                      placeholder={placeholder}
+                      value={personalData[key]}
+                      onChange={(e) => setPersonalData({ ...personalData, [key]: e.target.value })}
+                      className={cn(inputClass, "resize-y")}
+                    />
+                  </div>
+                ))}
+
+                <div className="border-t border-[#e8ecf4] pt-5">
+                  <h3 className="mb-4 text-sm font-bold text-[#0f172a]">Job Details</h3>
+                  {jobFields}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={generateCoverLetterManual}
+                  disabled={isGenerating}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#8b5cf6] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#7c3aed] disabled:opacity-50"
+                >
+                  {isGenerating ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-4 w-4" />
+                  )}
+                  {isGenerating ? "Generating with AI..." : "Generate Cover Letter"}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Preview panel */}
+          <div className="rounded-2xl border border-[#e8ecf4] bg-white shadow-sm">
+            <div className="flex items-center justify-between border-b border-[#e8ecf4] px-5 py-4 sm:px-6">
+              <h2 className="text-base font-bold text-[#0f172a]">Generated Cover Letter</h2>
+              {generatedLetter && (
+                <div className="flex flex-wrap gap-2">
+                  {!isImproving && (
+                    <button
+                      type="button"
+                      onClick={() => setIsImproving(true)}
+                      className="flex items-center gap-1.5 rounded-lg border border-[#e2e8f0] bg-white px-3 py-1.5 text-xs font-semibold text-[#334155] transition hover:bg-[#f8fafc]"
+                    >
+                      <Sparkles className="h-3.5 w-3.5 text-[#8b5cf6]" />
+                      Improve
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={copyToClipboard}
+                    className="flex items-center gap-1.5 rounded-lg border border-[#e2e8f0] bg-white px-3 py-1.5 text-xs font-semibold text-[#334155] transition hover:bg-[#f8fafc]"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    Copy
+                  </button>
+                  <button
+                    type="button"
+                    onClick={downloadLetter}
+                    className="flex items-center gap-1.5 rounded-lg border border-[#e2e8f0] bg-white px-3 py-1.5 text-xs font-semibold text-[#334155] transition hover:bg-[#f8fafc]"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {generatedLetter ? (
+              <div className="space-y-4 p-5 sm:p-6">
+                <textarea
+                  value={generatedLetter}
+                  onChange={(e) => setGeneratedLetter(e.target.value)}
+                  className={cn(inputClass, "min-h-[420px] resize-y font-mono text-[13px] leading-relaxed")}
+                  placeholder="Your generated cover letter will appear here..."
+                />
+                {isImproving && (
+                  <div className="space-y-3 rounded-xl border border-[#e8ecf4] bg-[#f8fafc] p-4">
+                    <label htmlFor="improve-instructions" className="text-sm font-semibold text-[#0f172a]">
+                      How should we improve this letter?
+                    </label>
+                    <textarea
+                      id="improve-instructions"
+                      rows={3}
+                      placeholder="e.g., Make it more formal, shorten the second paragraph..."
+                      value={improvementInstructions}
+                      onChange={(e) => setImprovementInstructions(e.target.value)}
+                      className={cn(inputClass, "resize-y")}
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsImproving(false)}
+                        className="rounded-lg px-4 py-2 text-sm font-medium text-[#64748b] hover:bg-white"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleImproveLetter}
+                        disabled={isImprovingLoading}
+                        className="flex items-center gap-2 rounded-lg bg-[#8b5cf6] px-4 py-2 text-sm font-semibold text-white hover:bg-[#7c3aed] disabled:opacity-50"
+                      >
+                        {isImprovingLoading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-4 w-4" />
+                        )}
+                        Submit Improvement
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <CoverLetterPreviewEmpty />
+            )}
           </div>
         </div>
       </main>
-    </div>
+    </LayoffProofLayout>
   );
 }

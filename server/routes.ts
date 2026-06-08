@@ -34,12 +34,23 @@ import { anthropicMessagesCreateWithRetry } from "./anthropicRetry";
 import { db } from "./db";
 import Parser from "rss-parser";
 import { eq, and, gte, lte, desc, sql } from "drizzle-orm";
+import {
+  getRecentUserActivities,
+  getUserDashboardMetrics,
+  backfillLegacyUserActivities,
+  recordUserActivity,
+  recordUserActivityFromRequest,
+  logLayoffProofTool,
+  recordLayoffProofTool,
+  resolveActivityUserId,
+} from "./userActivities";
 import { layoffs } from "@shared/schema";
 import {
   linkedInPdfLinkHtml,
   resumeLocationSvg,
   resumeSocialSvg,
 } from "@shared/resumeSocialIcons";
+import { getResumeProfileImageSrc } from "@shared/resumeTemplates";
 import {
   stripe,
   getOrCreateStripeCustomer,
@@ -313,6 +324,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/user/recent-activities", isAuthenticatedAny, async (req: any, res) => {
+    try {
+      const userId = req.user.claims?.sub || req.user.id;
+      const limitRaw = req.query?.limit;
+      const limit = Math.min(
+        100,
+        Math.max(1, parseInt(typeof limitRaw === "string" ? limitRaw : "15", 10) || 15),
+      );
+      const activities = await getRecentUserActivities(userId, limit);
+      res.json({ activities });
+    } catch (error) {
+      console.error("Error fetching recent activities:", error);
+      res.status(500).json({ message: "Failed to fetch recent activities" });
+    }
+  });
+
+  app.get("/api/user/dashboard-metrics", isAuthenticatedAny, async (req: any, res) => {
+    try {
+      const userId = req.user.claims?.sub || req.user.id;
+      const metrics = await getUserDashboardMetrics(userId);
+      res.json(metrics);
+    } catch (error) {
+      console.error("Error fetching dashboard metrics:", error);
+      res.status(500).json({ message: "Failed to fetch dashboard metrics" });
+    }
+  });
+
+  app.post(
+    "/api/user/recent-activities/backfill",
+    isAuthenticatedAny,
+    async (req: any, res) => {
+      try {
+        const userId = req.user.claims?.sub || req.user.id;
+        const inserted = await backfillLegacyUserActivities(userId);
+        const activities = await getRecentUserActivities(userId, 30);
+        res.json({ inserted, activities });
+      } catch (error) {
+        console.error("Error backfilling activities:", error);
+        res.status(500).json({ message: "Failed to backfill activities" });
+      }
+    },
+  );
+
   // User profile management
   app.put("/api/user/profile", isAuthenticatedAny, async (req: any, res) => {
     try {
@@ -322,6 +376,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const validated = updateUserProfileSchema.parse(req.body);
       const user = await storage.updateUserProfile(userId, validated);
+
+      await recordUserActivity(userId, {
+        type: "profile_updated",
+        title: "Updated account profile",
+        sourceId: `account-profile:${userId}:${Date.now()}`,
+      });
 
       console.log("Updated user:", user); // Add logging
       res.json(user);
@@ -2748,6 +2808,13 @@ You MUST respond with ONLY a single valid JSON object. Do not include any text, 
       // Deduct one credit from the user after a successful generation
       await DetuctCredits(user);
 
+      await logLayoffProofTool(req, "interview", {
+        bodyUserId: user.id,
+        title: "Generated interview practice questions",
+        detail: jobTitle ? String(jobTitle) : null,
+        metadata: { jobTitle, interviewType },
+      });
+
       // Send the complete analysis back to the client
       res.json(jobAnalysis);
     } catch (error) {
@@ -2825,6 +2892,11 @@ Now, provide the complete, improved cover letter below.
       const improvedLetter = aiResult.message.content[0].text;
 
       // 5. Deduct one credit from the user after a successful generation
+
+      await logLayoffProofTool(req, "cover-letter", {
+        bodyUserId: id,
+        title: "Improved cover letter with AI",
+      });
 
       // 6. Send the improved letter back to the client
       res.json({ improvedLetter });
@@ -2917,6 +2989,12 @@ Now, provide the complete, improved cover letter below.
         feedback: resultsMap[q.id]?.feedback,
         isAnswered: true, // Mark this question as scored
       }));
+
+      await logLayoffProofTool(req, "interview", {
+        title: "Scored interview practice answers",
+        detail: jobTitle ? String(jobTitle) : null,
+        metadata: { jobTitle },
+      });
 
       // 8. Send the final, enriched data back to the frontend
       res.status(200).json({ questions: updatedQuestions });
@@ -3065,11 +3143,24 @@ Now, provide the complete, improved cover letter below.
         certifications: [],
         achievements: [],
         projects: [],
+        profileImageDataUrl:
+          profileData.profile_photo ||
+          profileData.profile_picture ||
+          profileData.profile_image ||
+          profileData.avatar ||
+          profileData.img ||
+          "",
       };
 
       console.log("Successfully mapped LinkedIn data from ScrapingDog.");
 
       await DetuctCredits(user);
+
+      await logLayoffProofTool(req, "resume-builder", {
+        bodyUserId: user.id,
+        type: "resume_uploaded",
+        title: "Imported LinkedIn profile to resume",
+      });
 
       // 4. Send the successfully mapped data to the frontend
       return res.json({
@@ -3248,6 +3339,12 @@ ${rawText}
       };
 
       await DetuctCredits(user);
+
+      await logLayoffProofTool(req, "resume-builder", {
+        bodyUserId: user.id,
+        type: "resume_uploaded",
+        title: "Imported LinkedIn PDF to resume",
+      });
 
       return res.json({
         success: true,
@@ -3586,6 +3683,10 @@ ${rawText}
 
         await browser.close();
 
+        await logLayoffProofTool(req, "linkedin", {
+          title: "Imported LinkedIn profile data",
+        });
+
         res.json({
           success: true,
           profileData,
@@ -3632,6 +3733,11 @@ I completely understand if you're limited in what you can share or if time doesn
 
 Warm regards,
 ${yourName}`;
+
+      await logLayoffProofTool(req, "recruiter-outreach", {
+        title: "Generated LinkedIn outreach message",
+        detail: companyName,
+      });
 
       res.json({ linkedinDM });
     } catch (error) {
@@ -3741,9 +3847,22 @@ ${applicantInfo.name}
           await DetuctCredits(user);
         }
 
+        await logLayoffProofTool(req, "cover-letter", {
+          bodyUserId: typeof id === "string" ? id : undefined,
+          title: "Generated cover letter",
+          detail: position && company ? `${position} at ${company}` : null,
+          metadata: { jobTitle: position, company },
+        });
+
         res.json({ coverLetter, generatedBy: "template-client-v1" });
       } else {
         // --- Fallback to the Original AI Generation Logic ---
+
+        const today = new Date().toLocaleDateString("en-US", {
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        });
 
         const prompt = `
 You are helping a real person apply for a job. Write a cover letter that reads as if they wrote it themselves: clear, conversational, and specific—not generic, not "AI polished," and not full of corporate filler.
@@ -3776,7 +3895,7 @@ You are helping a real person apply for a job. Write a cover letter that reads a
 - Why they're interested (use naturally, don't quote verbatim if awkward): ${reason || "They want to contribute their skills and grow with the team."}
 
 **Shape (keep it loose—avoid a rigid template feel):**
-- Top: applicant name, email, phone; today's date; address to "Dear Hiring Manager," (company name can appear in the first paragraph instead of a full formal block if that reads more natural).
+- Top: applicant name, email, phone; then this exact date on its own line: ${today} (do not use any other date); address to "Dear Hiring Manager," (company name can appear in the first paragraph instead of a full formal block if that reads more natural).
 - Open by tying them to the ${position} role at ${company} in a specific, plain-spoken way.
 - One paragraph on what they actually do (${applicantInfo.profession}, ~${applicantInfo.yearsExperience} years, main responsibility/duty) and how it relates to the role.
 - One paragraph weaving skills, tools, and certifications into sentences—not a keyword dump.
@@ -3828,6 +3947,13 @@ Thanks for your time,
 ${applicantInfo.name}
                 `;
         }
+
+        await logLayoffProofTool(req, "cover-letter", {
+          bodyUserId: typeof id === "string" ? id : undefined,
+          title: "Generated cover letter",
+          detail: position && company ? `${position} at ${company}` : null,
+          metadata: { jobTitle: position, company },
+        });
 
         res.json({ coverLetter, generatedBy });
       }
@@ -4148,6 +4274,17 @@ ${applicantInfo.name}
         );
       }
 
+      await logLayoffProofTool(req, "linkedin", {
+        type: "linkedin_optimized",
+        title: "Optimized LinkedIn profile",
+        detail: targetJobTitle ? `Target role: ${targetJobTitle}` : null,
+        metadata: {
+          targetJobTitle,
+          score: optimizationResult.analysisReport?.score,
+        },
+        sourceId: `linkedin-optimized:${Date.now()}`,
+      });
+
       res.status(200).json(optimizationResult);
     } catch (error) {
       console.error("Error optimizing profile:", error);
@@ -4325,10 +4462,34 @@ Return ONLY the JSON object, no additional text or formatting.`;
         "Sending response with parsedData:",
         JSON.stringify(parsedData, null, 2),
       );
+      await logLayoffProofTool(req, "resume-builder", {
+        type: "resume_analyzed",
+        title: "Generated resume with AI",
+        sourceId: `generate-resume-ai:${Date.now()}`,
+      });
       res.json({ parsedData });
     } catch (error) {
       console.error("Error generating AI resume:", error);
       res.status(500).json({ error: "Failed to generate AI resume" });
+    }
+  });
+
+  app.post("/api/generate-resume-preview", async (req, res) => {
+    try {
+      const { templateId, resumeData } = req.body;
+
+      if (!templateId || typeof templateId !== "string") {
+        return res.status(400).json({ error: "templateId is required" });
+      }
+      if (!resumeData || Object.keys(resumeData).length === 0) {
+        return res.status(400).json({ error: "No resume data received" });
+      }
+
+      const html = generateResumeHTML(templateId, resumeData);
+      res.json({ html });
+    } catch (error) {
+      console.error("Error generating resume preview:", error);
+      res.status(500).json({ error: "Failed to generate resume preview" });
     }
   });
 
@@ -4357,6 +4518,13 @@ Return ONLY the JSON object, no additional text or formatting.`;
               : "Chromium/Puppeteer is unavailable on this server.",
         });
       }
+
+      await logLayoffProofTool(req, "resume-builder", {
+        type: "resume_analyzed",
+        title: "Downloaded resume PDF",
+        metadata: { templateId },
+        sourceId: `generate-resume-pdf:${Date.now()}`,
+      });
 
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", 'attachment; filename="resume.pdf"');
@@ -4502,6 +4670,7 @@ Return ONLY the JSON object, no additional text or formatting.`;
           userId,
           req.body,
         );
+        await logLayoffProofTool(req, "job-search", { bodyUserId: userId });
         res.json(profile);
       } catch (error) {
         console.error("Error saving job search profile:", error);
@@ -4535,6 +4704,19 @@ Return ONLY the JSON object, no additional text or formatting.`;
           userId,
           req.body,
         );
+        const jobTitle = application.jobTitle ?? req.body?.jobTitle ?? "a role";
+        const company = application.company ?? req.body?.company ?? "a company";
+        await logLayoffProofTool(req, "job-tracker", {
+          bodyUserId: userId,
+          type: "job_applied",
+          title: `Applied to ${jobTitle}`,
+          detail: company,
+          metadata: { jobTitle, company, status: application.status },
+          occurredAt: application.appliedDate
+            ? new Date(application.appliedDate)
+            : new Date(),
+          sourceId: `application:${application.id}`,
+        });
         res.json(application);
       } catch (error) {
         console.error("Error creating job application:", error);
@@ -4555,6 +4737,16 @@ Return ONLY the JSON object, no additional text or formatting.`;
           id,
           req.body,
         );
+        const jobTitle = application.jobTitle ?? req.body?.jobTitle;
+        await logLayoffProofTool(req, "job-tracker", {
+          bodyUserId: userId,
+          title: "Updated job application",
+          detail:
+            jobTitle && application.company
+              ? `${jobTitle} at ${application.company}`
+              : jobTitle ?? application.company ?? null,
+          sourceId: `application-update:${id}:${Date.now()}`,
+        });
         res.json(application);
       } catch (error) {
         console.error("Error updating job application:", error);
@@ -4582,7 +4774,7 @@ Return ONLY the JSON object, no additional text or formatting.`;
   // Job Board API Routes
   app.get("/api/job-board", isAuthenticatedAny, async (req: any, res) => {
     try {
-      const userId = req.user.id;
+      const userId = req.user.claims?.sub || req.user.id;
       const limitRaw = req.query?.limit;
       const pageRaw = req.query?.page;
       const limit = Math.min(
@@ -4592,13 +4784,66 @@ Return ONLY the JSON object, no additional text or formatting.`;
       const page = Math.max(1, parseInt(typeof pageRaw === "string" ? pageRaw : "1", 10) || 1);
       const searchRaw = req.query?.search;
       const search = typeof searchRaw === "string" ? searchRaw : "";
+      const tabRaw = req.query?.tab;
+      const tab =
+        tabRaw === "applied" || tabRaw === "saved" ? tabRaw : "all";
 
-      const [items, total] = await Promise.all([
-        storage.getJobBoardPosts(userId, limit, page, search),
-        storage.getJobBoardPostsCount(userId, search),
+      const normalize = (v: string | null | undefined) =>
+        String(v ?? "").trim().toLowerCase();
+
+      const [allPosts, applications, metrics] = await Promise.all([
+        storage.getAllJobBoardPosts(userId, search),
+        storage.getJobApplications(userId),
+        getUserDashboardMetrics(userId),
       ]);
 
-      res.json({ items, page, limit, total, search });
+      const withStatus = allPosts.map((post) => {
+        const applied = applications.some(
+          (app) =>
+            normalize(app.jobTitle) === normalize(post.jobTitle) &&
+            normalize(app.company) === normalize(post.companyName),
+        );
+        return {
+          ...post,
+          status: applied ? ("applied" as const) : ("saved" as const),
+        };
+      });
+
+      const filtered =
+        tab === "all"
+          ? withStatus
+          : withStatus.filter((post) => post.status === tab);
+
+      const total = filtered.length;
+      const items = filtered.slice((page - 1) * limit, page * limit);
+
+      const allForSummary = await storage.getAllJobBoardPosts(userId, "");
+      let appliedCount = 0;
+      let savedCount = 0;
+      for (const post of allForSummary) {
+        const isApplied = applications.some(
+          (app) =>
+            normalize(app.jobTitle) === normalize(post.jobTitle) &&
+            normalize(app.company) === normalize(post.companyName),
+        );
+        if (isApplied) appliedCount += 1;
+        else savedCount += 1;
+      }
+
+      res.json({
+        items,
+        page,
+        limit,
+        total,
+        search,
+        tab,
+        summary: {
+          total: allForSummary.length,
+          applied: appliedCount,
+          saved: savedCount,
+          interviews: metrics.interviews.value,
+        },
+      });
     } catch (error) {
       console.error("Error fetching job board posts:", error);
       res.status(500).json({ error: "Failed to fetch job board posts" });
@@ -4607,7 +4852,7 @@ Return ONLY the JSON object, no additional text or formatting.`;
 
   app.post("/api/job-board", isAuthenticatedAny, async (req: any, res) => {
     try {
-      const userId = req.user.id;
+      const userId = req.user.claims?.sub || req.user.id;
       const parsed = insertJobBoardSchema.parse(req.body || {});
       const created = await storage.createJobBoardPost(userId, parsed);
       res.json(created);
@@ -4623,9 +4868,16 @@ Return ONLY the JSON object, no additional text or formatting.`;
 
 app.post("/api/notify-me", isAuthenticatedAny, async (req: any, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.claims?.sub || req.user.id;
     const parsed = insertNotifyMeSchema.parse(req.body || {});
     const created = await storage.createNotifyMe(userId, parsed);
+    await recordUserActivity(userId, {
+      type: "job_alert_set",
+      title: `Set alert for ${created.role}`,
+      detail: created.company,
+      metadata: { company: created.company, role: created.role },
+      sourceId: `notify:${created.id}`,
+    });
     res.json(created);
   } catch (error: any) {
     if (error?.name === "ZodError") {
@@ -4816,6 +5068,11 @@ app.post("/api/notify-me", isAuthenticatedAny, async (req: any, res) => {
           userId,
           researchData,
         );
+        await logLayoffProofTool(req, "salary", {
+          bodyUserId: userId,
+          detail: jobTitle,
+          metadata: { jobTitle, location },
+        });
         res.json(research);
       } catch (error) {
         console.error("Error creating salary research:", error);
@@ -4941,6 +5198,10 @@ app.post("/api/notify-me", isAuthenticatedAny, async (req: any, res) => {
       };
 
       const analysis = await storage.createCareerPath(userId, analysisData);
+      await logLayoffProofTool(req, "career", {
+        bodyUserId: userId,
+        detail: req.body.currentRole,
+      });
       res.json(analysis);
     } catch (error) {
       console.error("Error creating career path analysis:", error);
@@ -5030,6 +5291,7 @@ app.post("/api/notify-me", isAuthenticatedAny, async (req: any, res) => {
           userId,
           assessmentData,
         );
+        await logLayoffProofTool(req, "skills", { bodyUserId: userId });
         res.json(assessment);
       } catch (error) {
         console.error("Error creating skills assessment:", error);
@@ -5058,6 +5320,7 @@ app.post("/api/notify-me", isAuthenticatedAny, async (req: any, res) => {
     try {
       const userId = req.user.claims?.sub || req.user.id;
       const portfolio = await storage.createPortfolio(userId, req.body);
+      await logLayoffProofTool(req, "portfolio", { bodyUserId: userId });
       res.json(portfolio);
     } catch (error) {
       console.error("Error creating portfolio:", error);
@@ -5103,6 +5366,18 @@ app.post("/api/notify-me", isAuthenticatedAny, async (req: any, res) => {
           userId,
           req.body,
         );
+        const contactName =
+          connection.contactName ?? req.body?.contactName ?? "contact";
+        await recordUserActivity(userId, {
+          type: "connection_added",
+          title: `Added ${contactName}`,
+          detail: connection.company ?? connection.role ?? null,
+          metadata: {
+            contactName,
+            company: connection.company,
+          },
+          sourceId: `connection:${connection.id}`,
+        });
         res.json(connection);
       } catch (error) {
         console.error("Error creating network connection:", error);
@@ -5199,6 +5474,10 @@ Requirements:
             first && typeof first === "object" && "text" in first
               ? String(first.text || "")
               : "";
+          await logLayoffProofTool(req, "networking", {
+            bodyUserId: req.user.claims?.sub || req.user.id,
+            detail: name ? `To ${name}` : null,
+          });
           return res.json({ message: text.trim() });
         }
 
@@ -5213,6 +5492,10 @@ Requirements:
           return `Hi ${name || "there"},\n\nI came across your profile${company ? ` at ${company}` : ""} and wanted to reach out. I’m currently focusing on ${role ? role : "my next role"} and would love to connect and learn from your experience. If you’re open to it, I’d appreciate a quick 10-minute chat to hear how you approached your career moves.\n\nWould you be open to connecting?\n`;
         })();
 
+        await logLayoffProofTool(req, "networking", {
+          bodyUserId: req.user.claims?.sub || req.user.id,
+          detail: name ? `To ${name}` : null,
+        });
         return res.json({ message: fallback.trim() });
       } catch (error) {
         console.error("Error generating networking message:", error);
@@ -5364,6 +5647,15 @@ Requirements:
       }
 
       console.log("✅ Successfully parsed resume with Claude.");
+      const uploadUserId = typeof id === "string" ? id : null;
+      if (uploadUserId) {
+        await recordLayoffProofTool(uploadUserId, "resume-builder", {
+          type: "resume_uploaded",
+          title: "Resume parsed from upload",
+          detail: resumeFile.originalFilename ?? undefined,
+          sourceId: `upload-resume:${Date.now()}`,
+        });
+      }
       res
         .status(200)
         .json({ message: "Resume parsed successfully", parsedData });
@@ -5515,6 +5807,16 @@ Requirements:
       const analysisReport = JSON.parse(jsonString);
 
       console.log("✅ Successfully generated AI analysis report.");
+      await logLayoffProofTool(req, "linkedin", {
+        type: "resume_analyzed",
+        title: "Analyzed LinkedIn profile with AI",
+        detail: targetJobTitle ? `Target role: ${targetJobTitle}` : null,
+        metadata: {
+          targetJobTitle,
+          score: analysisReport.score,
+        },
+        sourceId: `linkedin-analyzed:${Date.now()}`,
+      });
       res.status(200).json(analysisReport);
     } catch (error) {
       console.error("Error in /api/analyze-profile-with-ai:", error);
@@ -5616,6 +5918,12 @@ Example format: {"message": "Subject: Inquiry about opportunities\\n\\nDear John
 
       console.log(`✅ Successfully generated ${messageTypeName} with Claude.`);
       await DetuctCredits(user);
+      await logLayoffProofTool(req, "recruiter-outreach", {
+        bodyUserId: user.id,
+        title: "Generated recruiter outreach message",
+        detail: companyName || jobTitle || null,
+        metadata: { messageType, company: companyName, jobTitle },
+      });
       res.status(200).json({ generatedMessage: parsedResponse.message });
     } catch (error) {
       console.error("Error in /api/generate-outreach-message:", error);
@@ -5718,6 +6026,12 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
       });
 
       const suggestion = msg.content[0].text;
+
+      await logLayoffProofTool(req, "resume-builder", {
+        title: "Improved resume section with AI",
+        detail: fieldName ? String(fieldName) : null,
+        metadata: { fieldName },
+      });
 
       res.status(200).json({ suggestion: suggestion.trim() });
     } catch (error) {
@@ -6343,15 +6657,37 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
               .limit(1);
 
             // 2. Insert record into userDocuments table
-            await db.insert(userDocuments).values({
-              userId: id,
-              profileId: userProfile?.id, // Link to the profile if it exists
-              documentType: docType,
-              fileName: req.file.originalname,
-              fileUrl: result.secure_url,
-              fileSize: req.file.size,
-              mimeType: req.file.mimetype,
-            });
+            const [insertedDoc] = await db
+              .insert(userDocuments)
+              .values({
+                userId: id,
+                profileId: userProfile?.id,
+                documentType: docType,
+                fileName: req.file.originalname,
+                fileUrl: result.secure_url,
+                fileSize: req.file.size,
+                mimeType: req.file.mimetype,
+              })
+              .returning();
+
+            if (insertedDoc) {
+              const uploadTitle =
+                docType === "resume"
+                  ? "Resume uploaded"
+                  : docType === "certificate"
+                    ? "Certificate uploaded"
+                    : "Document uploaded";
+              await recordLayoffProofTool(id, "auto-apply", {
+                type: "resume_uploaded",
+                title: uploadTitle,
+                detail: insertedDoc.fileName,
+                metadata: {
+                  documentType: docType,
+                  fileName: insertedDoc.fileName,
+                },
+                sourceId: `document:${insertedDoc.id}`,
+              });
+            }
 
             // 3. Update the main userJobProfiles table with the latest URL for this type
             if (docType === "resume") {
@@ -6431,6 +6767,23 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
             break;
           default:
             break;
+        }
+
+        if (section && section !== "documentupdate") {
+          const sectionLabels: Record<string, string> = {
+            personal: "personal details",
+            residency: "residency",
+            experience: "experience",
+            education: "education",
+            skillAndLanguages: "skills & languages",
+            achievements: "achievements",
+            general: "job preferences",
+          };
+          await recordLayoffProofTool(id, "auto-apply", {
+            type: "profile_updated",
+            title: `Updated ${sectionLabels[section] ?? section}`,
+            sourceId: `profile-section:${section}:${Date.now()}`,
+          });
         }
 
         // Persist multi-step form current step so user returns to same step on reload
@@ -6526,10 +6879,19 @@ async function resumeHtmlToPdfBuffer(html: string): Promise<Buffer> {
 // Resume HTML template generation function
 function generateResumeHTML(templateId: string, resumeData: any): string {
   console.log("Generating resume with template:", templateId);
-  console.log("Resume data:", JSON.stringify(resumeData, null, 2));
 
   // Helper to check if a value is present (not null, undefined, or empty string)
   const isPresent = (val: any) => val && String(val).trim() !== "";
+
+  const escapeAttr = (s: string) =>
+    String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  const profileImageSrc = getResumeProfileImageSrc(resumeData);
+  const profileImageHtml = isPresent(profileImageSrc)
+    ? `<img src="${escapeAttr(profileImageSrc)}" alt="Profile" />`
+    : "";
 
   // --- MODIFICATION: Added .slice(0, 15) to limit skills ---
   const processSkills = (skills: any): string[] => {
@@ -6637,7 +6999,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
             .experience-item .company { color: #666; font-size: 0.95rem; margin-bottom: 8px; }
             .experience-item .duration { color: #666; font-size: 0.9rem; float: right; margin-top: -30px; }
             .experience-item .description { margin-top: 8px; font-size: 0.95rem; }
-            .skills-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; } .skill-item { padding: 5px 0; font-weight: 500; }
+            .skills-grid { display: flex; flex-wrap: wrap; gap: 6px 16px; } .skill-item { padding: 0; font-weight: 500; }
             .education-item { margin-bottom: 15px; } .education-item h3 { font-weight: bold; margin-bottom: 5px; } .education-item .school { color: #666; margin-bottom: 5px; } .education-item .details { color: #666; font-size: 0.9rem; }
         </style></head><body><div class="container">
             <div class="header">
@@ -6752,7 +7114,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
           <div class="page">
             <div class="layout">
               <aside class="sidebar">
-                <div class="avatar">${isPresent(resumeData.profileImageDataUrl) ? `<img src="${resumeData.profileImageDataUrl}" alt="Profile" />` : ""}</div>
+                <div class="avatar">${profileImageHtml}</div>
                 ${isPresent(resumeData.name) ? `<div class="name">${String(resumeData.name)}</div>` : ""}
                 ${isPresent(resumeData.profession) ? `<div class="role">${String(resumeData.profession)}</div>` : ""}
                 ${contactBits.length ? `<div class="contacts">${contactBits.map((c) => `<span class="chip">${c}</span>`).join("")}</div>` : ""}
@@ -6868,7 +7230,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
         </style></head><body>
           <div class="page">
             <div class="top">
-              <div class="photo">${isPresent(resumeData.profileImageDataUrl) ? `<img src="${resumeData.profileImageDataUrl}" alt="Profile" />` : ""}</div>
+              <div class="photo">${profileImageHtml}</div>
               <div>
                 ${isPresent(resumeData.name) ? `<div class="name">${esc(resumeData.name)}</div>` : ""}
                 ${isPresent(resumeData.profession) ? `<div class="role">${esc(resumeData.profession)}</div>` : ""}
@@ -7028,7 +7390,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
           <div class="page">
             <div class="hero">
               <div class="hero-inner">
-                <div class="photo">${isPresent(resumeData.profileImageDataUrl) ? `<img src="${resumeData.profileImageDataUrl}" alt="Profile" />` : ""}</div>
+                <div class="photo">${profileImageHtml}</div>
                 <div>
                   ${isPresent(resumeData.name) ? `<div class="name">${esc(resumeData.name)}</div>` : ""}
                   ${isPresent(resumeData.profession) ? `<div class="role">${esc(resumeData.profession)}</div>` : ""}
@@ -7132,7 +7494,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
             .experience-item h3, .education-item h3 { font-weight: bold; font-size: 1rem; }
             .experience-item .duration, .education-item .duration { font-style: italic; } .experience-item .company, .education-item .school { font-style: italic; margin-bottom: 8px; }
             .experience-item .description { margin-top: 5px; }
-            .skills-section ul, .achievements-section ul { columns: 3; column-gap: 20px; margin-left: 20px; } .skills-section li, .achievements-section li { margin-bottom: 5px; break-inside: avoid; }
+            .skills-section ul, .achievements-section ul { margin-left: 20px; } .skills-section li, .achievements-section li { display: inline-block; margin: 0 16px 4px 0; }
         </style></head><body><div class="container">
             <div class="header">
               ${isPresent(resumeData.name) ? `<h1>${resumeData.name}</h1>` : ""}
@@ -7180,6 +7542,50 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
         </div></body></html>`;
     }
 
+    case "techie": {
+      const techSkills = processSkills(resumeData.skills);
+      return `
+        <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: ui-monospace, "Cascadia Code", "Consolas", monospace; line-height: 1.5; color: #86efac; background: #0a0a0a; }
+          .wrap { max-width: 800px; margin: 0 auto; padding: 36px 40px; }
+          h1 { font-size: 1.75rem; color: #22c55e; margin-bottom: 4px; }
+          h1 span { color: #4ade80; }
+          .role { color: #86efac; font-size: 0.95rem; margin-bottom: 24px; }
+          .contact { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.85rem; color: #a3e635; margin-bottom: 28px; }
+          .contact a { color: #4ade80; text-decoration: none; }
+          h2 { font-size: 0.85rem; color: #22c55e; margin: 22px 0 10px; letter-spacing: 0.05em; }
+          h2::before { content: "// "; color: #166534; }
+          p, .description { color: #bbf7d0; font-size: 0.9rem; }
+          .experience-item { margin-bottom: 18px; border-left: 2px solid #166534; padding-left: 12px; }
+          .experience-item h3 { color: #4ade80; font-size: 1rem; }
+          .experience-item .meta { color: #65a30d; font-size: 0.8rem; margin: 4px 0 8px; }
+          .skills { display: flex; flex-wrap: wrap; gap: 8px; }
+          .skill { border: 1px solid #22c55e; color: #86efac; padding: 4px 10px; border-radius: 4px; font-size: 0.8rem; }
+          .education-item { margin-bottom: 12px; }
+          .education-item h3 { color: #4ade80; font-size: 0.95rem; }
+          .education-item .school { color: #65a30d; font-size: 0.85rem; }
+        </style></head><body><div class="wrap">
+          ${isPresent(resumeData.name) ? `<h1>&gt; ${resumeData.name}<span>_</span></h1>` : ""}
+          ${isPresent(resumeData.profession) ? `<div class="role">// ${resumeData.profession}</div>` : ""}
+          <div class="contact">
+            ${isPresent(resumeData.email) ? `<span>📧 <a href="mailto:${resumeData.email}">${resumeData.email}</a></span>` : ""}
+            ${isPresent(resumeData.phone) ? `<span>📞 ${resumeData.phone}</span>` : ""}
+            ${isPresent(resumeData.location) ? `<span>${resumeData.location}</span>` : ""}
+            ${isPresent(resumeData.github) ? `<span><a href="${resumeData.github}">GitHub</a></span>` : ""}
+          </div>
+          ${isPresent(resumeData.summary) ? `<h2>ABOUT ME</h2><p>${resumeData.summary.replace(/\n/g, "<br>")}</p>` : ""}
+          ${resumeData.experience?.length ? `<h2>EXPERIENCE</h2>${resumeData.experience.map((exp: any) => `
+            <div class="experience-item">
+              ${isPresent(exp.title) ? `<h3>${exp.title}</h3>` : ""}
+              <div class="meta">${[exp.company, exp.duration].filter(isPresent).join(" · ")}</div>
+              ${isPresent(exp.description) ? `<div class="description">${String(exp.description).replace(/\n/g, "<br>")}</div>` : ""}
+            </div>`).join("")}` : ""}
+          ${techSkills.length ? `<h2>SKILLS</h2><div class="skills">${techSkills.map((s) => `<span class="skill">${s}</span>`).join("")}</div>` : ""}
+          ${resumeData.education?.length ? `<h2>EDUCATION</h2>${generateEducationHTML(resumeData.education)}` : ""}
+        </div></body></html>`;
+    }
+
     case "creative":
       const creativeContactExists =
         isPresent(resumeData.phone) ||
@@ -7203,8 +7609,8 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
             .experience-item .company { color: #3498db; font-weight: 500; margin-bottom: 8px; }
             .experience-item .description { margin-top: 5px; font-size: 0.95rem; }
             /* --- MODIFICATION: Added styles for skills in main content --- */
-            .main-content .skills-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; } 
-            .main-content .skill-item { padding: 5px 0; font-size: 0.95rem; }
+            .main-content .skills-grid { display: flex; flex-wrap: wrap; gap: 6px 16px; } 
+            .main-content .skill-item { padding: 0; font-size: 0.95rem; }
             /* --- END MODIFICATION --- */
         </style></head><body><div class="resume-container">
             <div class="sidebar">

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Redirect } from "wouter";
-import { Loader2 } from "lucide-react";
+import { AuthLoadingScreen } from "@/components/auth/AuthLayout";
 import { getSafeRedirectPath } from "@/components/ProtectedRoute";
 import { persistAuthLogin } from "@/lib/logoutStorage";
 
@@ -56,10 +56,6 @@ export default function GoogleOAuthCallback() {
     return null;
   }
 
-  return (
-    <div className="flex min-h-screen items-center justify-center lp-page-mesh">
-      <Loader2 className="h-9 w-9 animate-spin text-primary" aria-hidden />
-    </div>
-  );
+  return <AuthLoadingScreen />;
 }
 

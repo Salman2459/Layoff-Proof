@@ -1,31 +1,33 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  Award,
+  BarChart3,
+  BookOpen,
+  Brain,
+  CheckCircle,
+  ChevronRight,
+  ClipboardList,
+  Loader2,
+  Lock,
+  Plus,
+  Rocket,
+  Target,
+  Trash2,
+  TrendingUp,
+  User,
+} from "lucide-react";
+import { LayoffProofDashboardHeader } from "@/components/layoffproof/LayoffProofDashboardHeader";
+import { LayoffProofLayout } from "@/components/layoffproof/LayoffProofLayout";
+import { LayoffProofSelect } from "@/components/layoffproof/LayoffProofSelect";
+import { SkillsAssessmentFeatureCards } from "@/components/layoffproof/skills/SkillsAssessmentFeatureCards";
+import { SkillsAssessmentHeroBanner } from "@/components/layoffproof/skills/SkillsAssessmentHeroBanner";
+import { SkillsAssessmentStepper } from "@/components/layoffproof/skills/SkillsAssessmentStepper";
+import { Progress } from "@/components/ui/progress";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import GlobalHeader from "@/components/GlobalHeader";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Progress } from "@/components/ui/progress";
-import { 
-  Award, 
-  Target, 
-  TrendingUp, 
-  BookOpen, 
-  CheckCircle,
-  Plus,
-  Trash2,
-  ChevronRight,
-  Star,
-  Brain,
-  Users,
-  Code,
-  BarChart3
-} from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface AssessmentData {
   assessmentType: string;
@@ -40,46 +42,111 @@ interface SkillRating {
   assessment: string;
 }
 
+const inputClass =
+  "w-full rounded-xl border border-[#e2e8f0] bg-white px-3 py-2.5 text-sm text-[#0f172a] outline-none transition placeholder:text-[#94a3b8] focus:border-[#a5b4fc] focus:ring-2 focus:ring-[#c7d2fe]/60 disabled:opacity-60";
+
+const labelClass = "mb-1.5 block text-xs font-medium text-[#475569]";
+
+const cardClass = "rounded-2xl border border-[#e8ecf4] bg-white p-5 shadow-sm sm:p-6";
+
+const primaryBtnClass =
+  "inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#6366f1] to-[#a855f7] px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-violet-200/50 transition hover:from-[#4f46e5] hover:to-[#9333ea] disabled:cursor-not-allowed disabled:opacity-50";
+
+const outlineBtnClass =
+  "inline-flex items-center justify-center gap-2 rounded-xl border border-[#e2e8f0] bg-white px-5 py-2.5 text-sm font-semibold text-[#334155] transition hover:bg-[#f8fafc] disabled:opacity-50";
+
+function getSkillLevelText(level: number) {
+  switch (level) {
+    case 1:
+      return "Beginner";
+    case 2:
+      return "Basic";
+    case 3:
+      return "Intermediate";
+    case 4:
+      return "Advanced";
+    case 5:
+      return "Expert";
+    default:
+      return "Unknown";
+  }
+}
+
+function getSkillLevelColor(level: number) {
+  switch (level) {
+    case 1:
+      return "bg-[#fee2e2] text-[#991b1b]";
+    case 2:
+      return "bg-[#ffedd5] text-[#9a3412]";
+    case 3:
+      return "bg-[#fef9c3] text-[#854d0e]";
+    case 4:
+      return "bg-[#dbeafe] text-[#1e40af]";
+    case 5:
+      return "bg-[#dcfce7] text-[#166534]";
+    default:
+      return "bg-[#f1f5f9] text-[#475569]";
+  }
+}
+
+function greeting(first?: string | null, last?: string | null): string {
+  return first?.trim() || last?.trim() || "there";
+}
+
+function PageShell({
+  children,
+  greetingName,
+}: {
+  children: React.ReactNode;
+  greetingName: string;
+}) {
+  return (
+    <LayoffProofLayout activeNavId="skills">
+      <LayoffProofDashboardHeader greeting={greetingName} />
+      {children}
+    </LayoffProofLayout>
+  );
+}
+
 export default function SkillsAssessment() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading } = useAuth();
   const { toast } = useToast();
+  const name = greeting(user?.firstName, user?.lastName);
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState<AssessmentData>({
     assessmentType: "",
     currentRole: "",
     targetRole: "",
-    skillsToAssess: [""]
+    skillsToAssess: [""],
   });
   const [skillRatings, setSkillRatings] = useState<SkillRating[]>([]);
-  const [assessment, setAssessment] = useState<any>(null);
+  const [assessment, setAssessment] = useState<Record<string, unknown> | null>(null);
 
-  // Fetch existing assessments
   const { data: existingAssessments } = useQuery({
     queryKey: ["/api/skills-assessments"],
     enabled: isAuthenticated,
   });
 
-  // Generate skills assessment mutation
   const generateAssessmentMutation = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: Record<string, unknown>) => {
       return await apiRequest("POST", "/api/skills-assessments", data);
     },
     onSuccess: (response) => {
-      setAssessment(response);
+      setAssessment(response as Record<string, unknown>);
       setStep(4);
       queryClient.invalidateQueries({ queryKey: ["/api/skills-assessments"] });
       toast({
         title: "Assessment Complete",
-        description: "Your skills assessment and learning plan are ready!"
+        description: "Your skills assessment and learning plan are ready!",
       });
     },
-    onError: (error) => {
+    onError: () => {
       toast({
         title: "Error",
         description: "Failed to complete assessment. Please try again.",
-        variant: "destructive"
+        variant: "destructive",
       });
-    }
+    },
   });
 
   const handleNext = () => {
@@ -88,85 +155,80 @@ export default function SkillsAssessment() {
         toast({
           title: "Missing Information",
           description: "Please select assessment type and current role.",
-          variant: "destructive"
+          variant: "destructive",
         });
         return;
       }
       setStep(2);
     } else if (step === 2) {
-      const validSkills = formData.skillsToAssess.filter(s => s.trim());
+      const validSkills = formData.skillsToAssess.filter((s) => s.trim());
       if (validSkills.length === 0) {
         toast({
           title: "Missing Skills",
           description: "Please add at least one skill to assess.",
-          variant: "destructive"
+          variant: "destructive",
         });
         return;
       }
-      // Initialize skill ratings
-      setSkillRatings(validSkills.map(skill => ({
-        skill,
-        level: 1,
-        assessment: ""
-      })));
+      setSkillRatings(
+        validSkills.map((skill) => ({
+          skill,
+          level: 1,
+          assessment: "",
+        }))
+      );
       setStep(3);
     } else if (step === 3) {
-      // Validate skill ratings
-      const incompleteRatings = skillRatings.filter(rating => !rating.assessment.trim());
+      const incompleteRatings = skillRatings.filter((rating) => !rating.assessment.trim());
       if (incompleteRatings.length > 0) {
         toast({
           title: "Incomplete Assessment",
           description: "Please provide assessment details for all skills.",
-          variant: "destructive"
+          variant: "destructive",
         });
         return;
       }
-      
-      // Submit assessment
-      const payload = {
+
+      generateAssessmentMutation.mutate({
         assessmentType: formData.assessmentType,
         currentRole: formData.currentRole,
         targetRole: formData.targetRole,
-        skillsToAssess: formData.skillsToAssess.filter(s => s.trim()),
-        assessment: skillRatings.map(rating => ({
+        skillsToAssess: formData.skillsToAssess.filter((s) => s.trim()),
+        assessment: skillRatings.map((rating) => ({
           ...rating,
-          recommendations: [] // Will be generated by AI
-        }))
-      };
-      
-      generateAssessmentMutation.mutate(payload);
+          recommendations: [],
+        })),
+      });
     }
   };
 
-  const handleBack = () => {
-    setStep(Math.max(1, step - 1));
-  };
+  const handleBack = () => setStep(Math.max(1, step - 1));
 
   const addSkill = () => {
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
-      skillsToAssess: [...prev.skillsToAssess, ""]
+      skillsToAssess: [...prev.skillsToAssess, ""],
     }));
   };
 
   const removeSkill = (index: number) => {
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
-      skillsToAssess: prev.skillsToAssess.filter((_, i) => i !== index)
+      skillsToAssess: prev.skillsToAssess.filter((_, i) => i !== index),
     }));
   };
 
   const updateSkill = (index: number, value: string) => {
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
-      skillsToAssess: prev.skillsToAssess.map((skill, i) => i === index ? value : skill)
+      skillsToAssess: prev.skillsToAssess.map((skill, i) => (i === index ? value : skill)),
     }));
   };
 
-  const updateSkillRating = (index: number, field: keyof SkillRating, value: any) => {
-    setSkillRatings(prev => prev.map((rating, i) => 
-      i === index ? { ...rating, [field]: value } : rating
-    ));
+  const updateSkillRating = (index: number, field: keyof SkillRating, value: string | number) => {
+    setSkillRatings((prev) =>
+      prev.map((rating, i) => (i === index ? { ...rating, [field]: value } : rating))
+    );
   };
 
   const startNewAssessment = () => {
@@ -174,519 +236,507 @@ export default function SkillsAssessment() {
       assessmentType: "",
       currentRole: "",
       targetRole: "",
-      skillsToAssess: [""]
+      skillsToAssess: [""],
     });
     setSkillRatings([]);
     setAssessment(null);
     setStep(1);
   };
 
-  const getSkillLevelText = (level: number) => {
-    switch (level) {
-      case 1: return "Beginner";
-      case 2: return "Basic";
-      case 3: return "Intermediate";
-      case 4: return "Advanced";
-      case 5: return "Expert";
-      default: return "Unknown";
-    }
-  };
-
-  const getSkillLevelColor = (level: number) => {
-    switch (level) {
-      case 1: return "bg-red-100 text-red-800";
-      case 2: return "bg-orange-100 text-orange-800";
-      case 3: return "bg-yellow-100 text-yellow-800";
-      case 4: return "bg-blue-100 text-blue-800";
-      case 5: return "bg-green-100 text-green-800";
-      default: return "bg-gray-100 text-gray-800";
-    }
-  };
-
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-yellow-50">
-        <GlobalHeader />
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-          <div className="flex items-center justify-center h-64">
-            <div className="animate-spin w-8 h-8 border-4 border-orange-600 border-t-transparent rounded-full"></div>
-          </div>
+      <PageShell greetingName={name}>
+        <div className="flex flex-1 items-center justify-center py-32">
+          <Loader2 className="h-8 w-8 animate-spin text-[#8b5cf6]" />
         </div>
-      </div>
+      </PageShell>
     );
   }
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-yellow-50">
-        <GlobalHeader />
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">Access Required</h1>
-          <p className="text-xl text-gray-600 mb-8">Please log in to access the Skills Assessment.</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-yellow-50">
-      <GlobalHeader />
-
-      {/* Header */}
-      <div className="bg-gradient-to-r from-orange-600 to-yellow-600 text-white py-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center">
-            <div className="flex items-center justify-center mb-4">
-              <div className="p-3 bg-white bg-opacity-20 rounded-lg mr-4">
-                <Award className="w-8 h-8" />
-              </div>
-              <h1 className="text-4xl font-bold">Skills Assessment</h1>
+      <PageShell greetingName={name}>
+        <div className="flex flex-1 items-center justify-center px-4 py-24">
+          <div className={cn(cardClass, "max-w-md text-center")}>
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[#ede9fe]">
+              <Award className="h-6 w-6 text-[#8b5cf6]" />
             </div>
-            <p className="text-xl text-orange-100 max-w-3xl mx-auto">
-              Evaluate and improve your professional skills with comprehensive assessments and personalized learning paths.
+            <h1 className="text-xl font-bold text-[#0f172a]">Access Required</h1>
+            <p className="mt-2 text-sm text-[#64748b]">
+              Please log in to access the Skills Assessment.
             </p>
           </div>
         </div>
-      </div>
+      </PageShell>
+    );
+  }
 
-      {/* Main Content */}
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Progress Indicator */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between">
-            <div className={`flex items-center ${step >= 1 ? 'text-orange-600' : 'text-gray-400'}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step >= 1 ? 'bg-orange-600 text-white' : 'bg-gray-200'}`}>
-                1
-              </div>
-              <span className="ml-2 font-medium">Setup</span>
-            </div>
-            <ChevronRight className="w-5 h-5 text-gray-400" />
-            <div className={`flex items-center ${step >= 2 ? 'text-orange-600' : 'text-gray-400'}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step >= 2 ? 'bg-orange-600 text-white' : 'bg-gray-200'}`}>
-                2
-              </div>
-              <span className="ml-2 font-medium">Skills Selection</span>
-            </div>
-            <ChevronRight className="w-5 h-5 text-gray-400" />
-            <div className={`flex items-center ${step >= 3 ? 'text-orange-600' : 'text-gray-400'}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step >= 3 ? 'bg-orange-600 text-white' : 'bg-gray-200'}`}>
-                3
-              </div>
-              <span className="ml-2 font-medium">Assessment</span>
-            </div>
-            <ChevronRight className="w-5 h-5 text-gray-400" />
-            <div className={`flex items-center ${step >= 4 ? 'text-orange-600' : 'text-gray-400'}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step >= 4 ? 'bg-orange-600 text-white' : 'bg-gray-200'}`}>
-                4
-              </div>
-              <span className="ml-2 font-medium">Results</span>
-            </div>
+  const assessments = Array.isArray(existingAssessments) ? existingAssessments : [];
+
+  return (
+    <PageShell greetingName={name}>
+      <main className="flex-1 px-4 pb-10 pt-6 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-5xl">
+          <SkillsAssessmentHeroBanner />
+
+          <div className="mt-6">
+            <SkillsAssessmentStepper currentStep={step} />
           </div>
-        </div>
 
         {/* Step 1: Assessment Setup */}
         {step === 1 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Target className="w-5 h-5" />
-                Assessment Setup
-              </CardTitle>
-              <CardDescription>
-                Choose the type of assessment and provide role information
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div>
-                <Label htmlFor="assessmentType">Assessment Type *</Label>
-                <Select value={formData.assessmentType} onValueChange={(value) => setFormData(prev => ({ ...prev, assessmentType: value }))}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select assessment type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="technical">
-                      <div className="flex items-center gap-2">
-                        <Code className="w-4 h-4" />
-                        Technical Skills
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="soft-skills">
-                      <div className="flex items-center gap-2">
-                        <Users className="w-4 h-4" />
-                        Soft Skills
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="leadership">
-                      <div className="flex items-center gap-2">
-                        <Star className="w-4 h-4" />
-                        Leadership Skills
-                      </div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
+          <>
+            <div className={cardClass}>
+              <div className="mb-6 flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#ede9fe]">
+                  <Target className="h-5 w-5 text-[#8b5cf6]" strokeWidth={2} />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-[#0f172a]">Assessment Setup</h2>
+                  <p className="mt-0.5 text-sm text-[#64748b]">
+                    Choose the type of assessment and provide role information
+                  </p>
+                </div>
               </div>
 
-              <div>
-                <Label htmlFor="currentRole">Current Role *</Label>
-                <Input
-                  id="currentRole"
-                  value={formData.currentRole}
-                  onChange={(e) => setFormData(prev => ({ ...prev, currentRole: e.target.value }))}
-                  placeholder="e.g. Software Engineer, Marketing Manager"
-                />
-              </div>
+              <div className="space-y-5">
+                <div>
+                  <label htmlFor="assessment-type" className={labelClass}>
+                    Assessment Type <span className="text-[#ef4444]">*</span>
+                  </label>
+                  <LayoffProofSelect
+                    id="assessment-type"
+                    value={formData.assessmentType}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, assessmentType: e.target.value }))
+                    }
+                    leftIcon={<ClipboardList className="h-4 w-4" strokeWidth={2} />}
+                  >
+                    <option value="">Select assessment type</option>
+                    <option value="technical">Technical Skills</option>
+                    <option value="soft-skills">Soft Skills</option>
+                    <option value="leadership">Leadership Skills</option>
+                  </LayoffProofSelect>
+                </div>
 
-              <div>
-                <Label htmlFor="targetRole">Target Role (Optional)</Label>
-                <Input
-                  id="targetRole"
-                  value={formData.targetRole}
-                  onChange={(e) => setFormData(prev => ({ ...prev, targetRole: e.target.value }))}
-                  placeholder="e.g. Senior Software Engineer, Product Manager"
-                />
-              </div>
-
-              <div className="flex justify-end">
-                <Button onClick={handleNext} className="bg-gradient-to-r from-orange-600 to-yellow-600 hover:from-orange-700 hover:to-yellow-700">
-                  Next Step
-                  <ChevronRight className="w-4 h-4 ml-2" />
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Step 2: Skills Selection */}
-        {step === 2 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Brain className="w-5 h-5" />
-                Skills to Assess
-              </CardTitle>
-              <CardDescription>
-                Add the skills you want to evaluate in this assessment
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div>
-                <Label className="text-sm font-medium mb-2 block">Skills *</Label>
-                <p className="text-sm text-gray-600 mb-3">
-                  {formData.assessmentType === 'technical' && "Technical skills like programming languages, frameworks, tools"}
-                  {formData.assessmentType === 'soft-skills' && "Soft skills like communication, teamwork, problem-solving"}
-                  {formData.assessmentType === 'leadership' && "Leadership skills like team management, strategic thinking, decision making"}
-                </p>
-                {formData.skillsToAssess.map((skill, index) => (
-                  <div key={index} className="flex gap-2 mb-2">
-                    <Input
-                      value={skill}
-                      onChange={(e) => updateSkill(index, e.target.value)}
-                      placeholder={
-                        formData.assessmentType === 'technical' ? "e.g. React, Python, AWS" :
-                        formData.assessmentType === 'soft-skills' ? "e.g. Communication, Time Management" :
-                        "e.g. Team Leadership, Strategic Planning"
+                <div>
+                  <label htmlFor="current-role" className={labelClass}>
+                    Current Role <span className="text-[#ef4444]">*</span>
+                  </label>
+                  <div className="relative">
+                    <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#94a3b8]" />
+                    <input
+                      id="current-role"
+                      type="text"
+                      value={formData.currentRole}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, currentRole: e.target.value }))
                       }
-                      className="flex-1"
+                      placeholder="e.g. Software Engineer, Marketing Manager"
+                      className={cn(inputClass, "pl-9")}
                     />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => removeSkill(index)}
+                  </div>
+                </div>
+
+                <div>
+                  <label htmlFor="target-role" className={labelClass}>
+                    Target Role (Optional)
+                  </label>
+                  <div className="relative">
+                    <Rocket className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#94a3b8]" />
+                    <input
+                      id="target-role"
+                      type="text"
+                      value={formData.targetRole}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, targetRole: e.target.value }))
+                      }
+                      placeholder="e.g. Senior Software Engineer, Product Manager"
+                      className={cn(inputClass, "pl-9")}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <button type="button" onClick={handleNext} className={primaryBtnClass}>
+                    Next Step
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <p className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-[#94a3b8]">
+              <Lock className="h-3 w-3" />
+              Your information is secure and will not be shared.
+            </p>
+
+            <div className="mt-8">
+              <SkillsAssessmentFeatureCards />
+            </div>
+
+            {assessments.length > 0 && (
+              <div className={cn(cardClass, "mt-8")}>
+                <div className="mb-4 flex items-center gap-2">
+                  <Award className="h-5 w-5 text-[#8b5cf6]" />
+                  <h2 className="text-base font-bold text-[#0f172a]">Previous Assessments</h2>
+                </div>
+                <div className="space-y-3">
+                  {assessments.map((assess: Record<string, unknown>) => (
+                    <div
+                      key={String(assess.id)}
+                      className="rounded-xl border border-[#e8ecf4] bg-[#fafafa] p-4"
                     >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                ))}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={addSkill}
-                  className="mt-2"
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Skill
-                </Button>
-              </div>
-
-              <div className="flex justify-between">
-                <Button variant="outline" onClick={handleBack}>
-                  Back
-                </Button>
-                <Button onClick={handleNext} className="bg-gradient-to-r from-orange-600 to-yellow-600 hover:from-orange-700 hover:to-yellow-700">
-                  Start Assessment
-                  <ChevronRight className="w-4 h-4 ml-2" />
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Step 3: Skill Rating */}
-        {step === 3 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BarChart3 className="w-5 h-5" />
-                Rate Your Skills
-              </CardTitle>
-              <CardDescription>
-                For each skill, select your proficiency level and provide context
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {skillRatings.map((rating, index) => (
-                <div key={index} className="border border-gray-200 rounded-lg p-4">
-                  <div className="mb-4">
-                    <h4 className="font-medium text-gray-900 mb-2">{rating.skill}</h4>
-                    <div className="space-y-3">
-                      <div>
-                        <Label className="text-sm font-medium mb-2 block">Proficiency Level</Label>
-                        <div className="grid grid-cols-5 gap-2">
-                          {[1, 2, 3, 4, 5].map((level) => (
-                            <Button
-                              key={level}
-                              variant={rating.level === level ? "default" : "outline"}
-                              size="sm"
-                              onClick={() => updateSkillRating(index, 'level', level)}
-                              className={rating.level === level ? "bg-orange-600 hover:bg-orange-700" : ""}
-                            >
-                              {level}
-                            </Button>
-                          ))}
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h4 className="text-sm font-semibold text-[#0f172a]">
+                            {String(assess.assessmentType)} Skills
+                          </h4>
+                          <p className="text-xs text-[#64748b]">{String(assess.currentRole)}</p>
+                          <div className="mt-2 flex flex-wrap items-center gap-3">
+                            <span className="rounded-full bg-[#ede9fe] px-2.5 py-0.5 text-[10px] font-bold text-[#7c3aed]">
+                              Score: {String(assess.overallScore ?? "N/A")}
+                            </span>
+                            <span className="text-xs text-[#94a3b8]">
+                              {Array.isArray(assess.assessment) ? assess.assessment.length : 0}{" "}
+                              skills assessed
+                            </span>
+                          </div>
                         </div>
-                        <div className="mt-2">
-                          <Badge className={getSkillLevelColor(rating.level)}>
-                            {getSkillLevelText(rating.level)}
-                          </Badge>
-                        </div>
-                        <Progress value={rating.level * 20} className="mt-2" />
-                      </div>
-                      
-                      <div>
-                        <Label className="text-sm font-medium mb-2 block">
-                          Describe your experience with {rating.skill}
-                        </Label>
-                        <Input
-                          value={rating.assessment}
-                          onChange={(e) => updateSkillRating(index, 'assessment', e.target.value)}
-                          placeholder={`Describe your experience with ${rating.skill}, including projects, years of use, and specific achievements...`}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-
-              <div className="flex justify-between">
-                <Button variant="outline" onClick={handleBack}>
-                  Back
-                </Button>
-                <Button 
-                  onClick={handleNext} 
-                  disabled={generateAssessmentMutation.isPending}
-                  className="bg-gradient-to-r from-orange-600 to-yellow-600 hover:from-orange-700 hover:to-yellow-700"
-                >
-                  {generateAssessmentMutation.isPending ? "Generating Assessment..." : "Complete Assessment"}
-                  <TrendingUp className="w-4 h-4 ml-2" />
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Step 4: Assessment Results */}
-        {step === 4 && assessment && (
-          <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Award className="w-5 h-5" />
-                  Your Skills Assessment Results
-                </CardTitle>
-                <CardDescription>
-                  Comprehensive evaluation with personalized recommendations
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="bg-gradient-to-r from-orange-50 to-yellow-50 p-6 rounded-lg">
-                  <div className="text-center mb-6">
-                    <div className="w-20 h-20 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <span className="text-3xl font-bold text-orange-600">
-                        {assessment.overallScore || Math.round(skillRatings.reduce((sum, rating) => sum + rating.level, 0) / skillRatings.length * 20)}
-                      </span>
-                    </div>
-                    <h3 className="text-xl font-semibold text-gray-900 mb-2">Overall Score</h3>
-                    <p className="text-gray-600">Out of 100 points</p>
-                  </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <h4 className="font-medium text-gray-900 mb-3">Strength Areas</h4>
-                      <ul className="space-y-2">
-                        {assessment.strengthAreas?.map((area: string, index: number) => (
-                          <li key={index} className="flex items-center gap-2">
-                            <CheckCircle className="w-4 h-4 text-green-600" />
-                            <span className="text-sm text-gray-700">{area}</span>
-                          </li>
-                        )) || skillRatings.filter(r => r.level >= 4).map((rating, index) => (
-                          <li key={index} className="flex items-center gap-2">
-                            <CheckCircle className="w-4 h-4 text-green-600" />
-                            <span className="text-sm text-gray-700">{rating.skill}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                    
-                    <div>
-                      <h4 className="font-medium text-gray-900 mb-3">Improvement Areas</h4>
-                      <ul className="space-y-2">
-                        {assessment.improvementAreas?.map((area: string, index: number) => (
-                          <li key={index} className="flex items-center gap-2">
-                            <Target className="w-4 h-4 text-orange-600" />
-                            <span className="text-sm text-gray-700">{area}</span>
-                          </li>
-                        )) || skillRatings.filter(r => r.level <= 2).map((rating, index) => (
-                          <li key={index} className="flex items-center gap-2">
-                            <Target className="w-4 h-4 text-orange-600" />
-                            <span className="text-sm text-gray-700">{rating.skill}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Individual Skill Breakdown */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <BarChart3 className="w-5 h-5" />
-                  Skill Breakdown
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {skillRatings.map((rating, index) => (
-                    <div key={index} className="border border-gray-200 rounded-lg p-4">
-                      <div className="flex justify-between items-start mb-3">
-                        <h4 className="font-medium text-gray-900">{rating.skill}</h4>
-                        <Badge className={getSkillLevelColor(rating.level)}>
-                          {getSkillLevelText(rating.level)}
-                        </Badge>
-                      </div>
-                      <Progress value={rating.level * 20} className="mb-3" />
-                      <p className="text-sm text-gray-600">{rating.assessment}</p>
-                      
-                      {/* AI Recommendations would go here */}
-                      <div className="mt-3 p-3 bg-gray-50 rounded">
-                        <h5 className="text-sm font-medium text-gray-900 mb-2">Recommendations:</h5>
-                        <ul className="text-sm text-gray-600 space-y-1">
-                          <li>• Practice {rating.skill} through hands-on projects</li>
-                          <li>• Seek mentorship from experts in {rating.skill}</li>
-                          <li>• Consider online courses or certifications</li>
-                        </ul>
+                        <span className="shrink-0 rounded-full border border-[#e2e8f0] bg-white px-2.5 py-0.5 text-[10px] font-medium text-[#64748b]">
+                          {assess.completedAt
+                            ? new Date(String(assess.completedAt)).toLocaleDateString()
+                            : "—"}
+                        </span>
                       </div>
                     </div>
                   ))}
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            )}
+          </>
+        )}
 
-            {/* Learning Plan */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <BookOpen className="w-5 h-5" />
-                  Personalized Learning Plan
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="text-center p-4 bg-orange-50 rounded-lg">
-                      <h4 className="font-medium text-gray-900 mb-2">Short Term (1-3 months)</h4>
-                      <ul className="text-sm text-gray-600 space-y-1 text-left">
-                        <li>• Focus on immediate skill gaps</li>
-                        <li>• Complete online tutorials</li>
-                        <li>• Practice basic exercises</li>
-                      </ul>
-                    </div>
-                    <div className="text-center p-4 bg-yellow-50 rounded-lg">
-                      <h4 className="font-medium text-gray-900 mb-2">Medium Term (3-6 months)</h4>
-                      <ul className="text-sm text-gray-600 space-y-1 text-left">
-                        <li>• Build practical projects</li>
-                        <li>• Seek advanced training</li>
-                        <li>• Get hands-on experience</li>
-                      </ul>
-                    </div>
-                    <div className="text-center p-4 bg-green-50 rounded-lg">
-                      <h4 className="font-medium text-gray-900 mb-2">Long Term (6+ months)</h4>
-                      <ul className="text-sm text-gray-600 space-y-1 text-left">
-                        <li>• Master advanced concepts</li>
-                        <li>• Lead projects and teams</li>
-                        <li>• Mentor others</li>
-                      </ul>
-                    </div>
-                  </div>
+        {/* Step 2: Skills Selection */}
+        {step === 2 && (
+          <div className={cardClass}>
+            <div className="mb-6 flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#ede9fe]">
+                <Brain className="h-5 w-5 text-[#8b5cf6]" strokeWidth={2} />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-[#0f172a]">Skills to Assess</h2>
+                <p className="mt-0.5 text-sm text-[#64748b]">
+                  Add the skills you want to evaluate in this assessment
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <p className="text-xs text-[#64748b]">
+                {formData.assessmentType === "technical" &&
+                  "Technical skills like programming languages, frameworks, tools"}
+                {formData.assessmentType === "soft-skills" &&
+                  "Soft skills like communication, teamwork, problem-solving"}
+                {formData.assessmentType === "leadership" &&
+                  "Leadership skills like team management, strategic thinking, decision making"}
+              </p>
+
+              {formData.skillsToAssess.map((skill, index) => (
+                <div key={index} className="flex gap-2">
+                  <input
+                    value={skill}
+                    onChange={(e) => updateSkill(index, e.target.value)}
+                    placeholder={
+                      formData.assessmentType === "technical"
+                        ? "e.g. React, Python, AWS"
+                        : formData.assessmentType === "soft-skills"
+                          ? "e.g. Communication, Time Management"
+                          : "e.g. Team Leadership, Strategic Planning"
+                    }
+                    className={cn(inputClass, "flex-1")}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeSkill(index)}
+                    className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl border border-[#e2e8f0] text-[#64748b] transition hover:border-[#fecaca] hover:bg-[#fef2f2] hover:text-[#ef4444]"
+                    aria-label="Remove skill"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
                 </div>
-              </CardContent>
-            </Card>
+              ))}
 
-            <div className="flex justify-center">
-              <Button 
-                onClick={startNewAssessment}
-                variant="outline"
+              <button
+                type="button"
+                onClick={addSkill}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-[#c4b5fd] bg-[#faf5ff] px-4 py-2 text-xs font-semibold text-[#7c3aed] transition hover:bg-[#f3e8ff]"
               >
-                Take New Assessment
-              </Button>
+                <Plus className="h-3.5 w-3.5" />
+                Add Skill
+              </button>
+            </div>
+
+            <div className="mt-6 flex justify-between">
+              <button type="button" onClick={handleBack} className={outlineBtnClass}>
+                Back
+              </button>
+              <button type="button" onClick={handleNext} className={primaryBtnClass}>
+                Start Assessment
+                <ChevronRight className="h-4 w-4" />
+              </button>
             </div>
           </div>
         )}
 
-        {/* Previous Assessments */}
-        {existingAssessments && existingAssessments.length > 0 && step === 1 && (
-          <Card className="mt-8">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Award className="w-5 h-5" />
-                Previous Assessments
-              </CardTitle>
-              <CardDescription>
-                Your past skills evaluations and progress
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {existingAssessments.map((assess: any) => (
-                  <div key={assess.id} className="border border-gray-200 rounded-lg p-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h4 className="font-medium text-gray-900">{assess.assessmentType} Skills</h4>
-                        <p className="text-sm text-gray-600">{assess.currentRole}</p>
-                        <div className="flex items-center gap-4 mt-2">
-                          <Badge className="bg-orange-100 text-orange-800">
-                            Score: {assess.overallScore || 'N/A'}
-                          </Badge>
-                          <span className="text-sm text-gray-500">
-                            {assess.assessment?.length || 0} skills assessed
-                          </span>
-                        </div>
+        {/* Step 3: Skill Rating */}
+        {step === 3 && (
+          <div className={cardClass}>
+            <div className="mb-6 flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#ede9fe]">
+                <BarChart3 className="h-5 w-5 text-[#8b5cf6]" strokeWidth={2} />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-[#0f172a]">Rate Your Skills</h2>
+                <p className="mt-0.5 text-sm text-[#64748b]">
+                  For each skill, select your proficiency level and provide context
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {skillRatings.map((rating, index) => (
+                <div key={index} className="rounded-xl border border-[#e8ecf4] bg-[#fafafa] p-4">
+                  <h4 className="mb-3 text-sm font-semibold text-[#0f172a]">{rating.skill}</h4>
+                  <div className="space-y-4">
+                    <div>
+                      <p className={labelClass}>Proficiency Level</p>
+                      <div className="grid grid-cols-5 gap-2">
+                        {[1, 2, 3, 4, 5].map((level) => (
+                          <button
+                            key={level}
+                            type="button"
+                            onClick={() => updateSkillRating(index, "level", level)}
+                            className={cn(
+                              "rounded-lg border py-2 text-sm font-semibold transition",
+                              rating.level === level
+                                ? "border-[#8b5cf6] bg-[#8b5cf6] text-white"
+                                : "border-[#e2e8f0] bg-white text-[#64748b] hover:border-[#c4b5fd]"
+                            )}
+                          >
+                            {level}
+                          </button>
+                        ))}
                       </div>
-                      <Badge variant="outline" className="text-xs">
-                        {new Date(assess.completedAt).toLocaleDateString()}
-                      </Badge>
+                      <div className="mt-2 flex items-center gap-3">
+                        <span
+                          className={cn(
+                            "rounded-full px-2.5 py-0.5 text-[10px] font-bold",
+                            getSkillLevelColor(rating.level)
+                          )}
+                        >
+                          {getSkillLevelText(rating.level)}
+                        </span>
+                        <Progress value={rating.level * 20} className="h-1.5 flex-1" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label htmlFor={`assessment-${index}`} className={labelClass}>
+                        Describe your experience with {rating.skill}
+                      </label>
+                      <input
+                        id={`assessment-${index}`}
+                        value={rating.assessment}
+                        onChange={(e) => updateSkillRating(index, "assessment", e.target.value)}
+                        placeholder={`Describe your experience with ${rating.skill}, including projects, years of use, and achievements...`}
+                        className={inputClass}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-6 flex justify-between">
+              <button type="button" onClick={handleBack} className={outlineBtnClass}>
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={handleNext}
+                disabled={generateAssessmentMutation.isPending}
+                className={primaryBtnClass}
+              >
+                {generateAssessmentMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Generating Assessment...
+                  </>
+                ) : (
+                  <>
+                    Complete Assessment
+                    <TrendingUp className="h-4 w-4" />
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 4: Results */}
+        {step === 4 && assessment && (
+          <div className="space-y-6">
+            <div className={cardClass}>
+              <div className="mb-5 flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#fef9c3]">
+                  <Award className="h-5 w-5 text-[#eab308]" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-[#0f172a]">Your Skills Assessment Results</h2>
+                  <p className="text-xs text-[#64748b]">
+                    Comprehensive evaluation with personalized recommendations
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-gradient-to-br from-[#faf5ff] to-[#fdf4ff] p-6">
+                <div className="mb-6 text-center">
+                  <div className="mx-auto mb-3 flex h-20 w-20 items-center justify-center rounded-full bg-[#ede9fe]">
+                    <span className="text-3xl font-bold text-[#7c3aed]">
+                      {String(
+                        assessment.overallScore ??
+                          Math.round(
+                            (skillRatings.reduce((sum, r) => sum + r.level, 0) /
+                              skillRatings.length) *
+                              20
+                          )
+                      )}
+                    </span>
+                  </div>
+                  <h3 className="text-lg font-semibold text-[#0f172a]">Overall Score</h3>
+                  <p className="text-sm text-[#64748b]">Out of 100 points</p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                  <div>
+                    <h4 className="mb-3 text-sm font-semibold text-[#0f172a]">Strength Areas</h4>
+                    <ul className="space-y-2">
+                      {(
+                        (assessment.strengthAreas as string[] | undefined) ??
+                        skillRatings.filter((r) => r.level >= 4).map((r) => r.skill)
+                      ).map((area, index) => (
+                        <li key={index} className="flex items-center gap-2 text-sm text-[#334155]">
+                          <CheckCircle className="h-4 w-4 shrink-0 text-[#22c55e]" />
+                          {area}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <h4 className="mb-3 text-sm font-semibold text-[#0f172a]">Improvement Areas</h4>
+                    <ul className="space-y-2">
+                      {(
+                        (assessment.improvementAreas as string[] | undefined) ??
+                        skillRatings.filter((r) => r.level <= 2).map((r) => r.skill)
+                      ).map((area, index) => (
+                        <li key={index} className="flex items-center gap-2 text-sm text-[#334155]">
+                          <Target className="h-4 w-4 shrink-0 text-[#8b5cf6]" />
+                          {area}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className={cardClass}>
+              <div className="mb-4 flex items-center gap-2">
+                <BarChart3 className="h-5 w-5 text-[#8b5cf6]" />
+                <h2 className="text-base font-bold text-[#0f172a]">Skill Breakdown</h2>
+              </div>
+              <div className="space-y-4">
+                {skillRatings.map((rating, index) => (
+                  <div key={index} className="rounded-xl border border-[#e8ecf4] bg-[#fafafa] p-4">
+                    <div className="mb-3 flex items-start justify-between gap-2">
+                      <h4 className="text-sm font-semibold text-[#0f172a]">{rating.skill}</h4>
+                      <span
+                        className={cn(
+                          "rounded-full px-2.5 py-0.5 text-[10px] font-bold",
+                          getSkillLevelColor(rating.level)
+                        )}
+                      >
+                        {getSkillLevelText(rating.level)}
+                      </span>
+                    </div>
+                    <Progress value={rating.level * 20} className="mb-3 h-1.5" />
+                    <p className="text-sm text-[#64748b]">{rating.assessment}</p>
+                    <div className="mt-3 rounded-xl border border-[#e8ecf4] bg-white p-3">
+                      <h5 className="mb-1.5 text-xs font-semibold text-[#0f172a]">Recommendations</h5>
+                      <ul className="space-y-1 text-xs text-[#64748b]">
+                        <li>• Practice {rating.skill} through hands-on projects</li>
+                        <li>• Seek mentorship from experts in {rating.skill}</li>
+                        <li>• Consider online courses or certifications</li>
+                      </ul>
                     </div>
                   </div>
                 ))}
               </div>
-            </CardContent>
-          </Card>
+            </div>
+
+            <div className={cardClass}>
+              <div className="mb-4 flex items-center gap-2">
+                <BookOpen className="h-5 w-5 text-[#8b5cf6]" />
+                <h2 className="text-base font-bold text-[#0f172a]">Personalized Learning Plan</h2>
+              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                {[
+                  {
+                    title: "Short Term (1–3 months)",
+                    items: [
+                      "Focus on immediate skill gaps",
+                      "Complete online tutorials",
+                      "Practice basic exercises",
+                    ],
+                    bg: "bg-[#faf5ff]",
+                  },
+                  {
+                    title: "Medium Term (3–6 months)",
+                    items: [
+                      "Build practical projects",
+                      "Seek advanced training",
+                      "Get hands-on experience",
+                    ],
+                    bg: "bg-[#fdf4ff]",
+                  },
+                  {
+                    title: "Long Term (6+ months)",
+                    items: ["Master advanced concepts", "Lead projects and teams", "Mentor others"],
+                    bg: "bg-[#f0fdf4]",
+                  },
+                ].map((phase) => (
+                  <div key={phase.title} className={cn("rounded-xl p-4", phase.bg)}>
+                    <h4 className="mb-2 text-sm font-semibold text-[#0f172a]">{phase.title}</h4>
+                    <ul className="space-y-1 text-xs text-[#64748b]">
+                      {phase.items.map((item) => (
+                        <li key={item}>• {item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-center">
+              <button type="button" onClick={startNewAssessment} className={outlineBtnClass}>
+                Take New Assessment
+              </button>
+            </div>
+          </div>
         )}
-      </div>
-    </div>
+        </div>
+      </main>
+    </PageShell>
   );
 }

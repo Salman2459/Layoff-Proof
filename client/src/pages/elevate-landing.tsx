@@ -237,7 +237,7 @@ export default function ElevateLanding() {
 
     const userId = user?.id;
     if (!userId) {
-      window.location.href = '/tools/auto-job-apply';
+      window.location.href = '/auto-job-apply';
       return;
     }
 
@@ -248,12 +248,12 @@ export default function ElevateLanding() {
       const profile = json.data ?? null;
       const currentStep = profile?.currentStep ?? 0;
       if (currentStep >= PROFILE_COMPLETE_STEP) {
-        window.location.href = '/tools/auto-job-apply-dashboard';
+        window.location.href = '/auto-job-apply-dashboard';
       } else {
-        window.location.href = '/tools/auto-job-apply';
+        window.location.href = '/auto-job-apply';
       }
     } catch {
-      window.location.href = '/tools/auto-job-apply';
+      window.location.href = '/auto-job-apply';
     } finally {
       setAiAutoApplyChecking(false);
     }
@@ -378,7 +378,7 @@ export default function ElevateLanding() {
               Powerful AI Tools for Every{" "}
               <span className="lp-gradient-text">Career Stage</span>
             </h2>
-            <p className="mx-auto max-w-3xl text-xl text-muted-foreground">
+            <p className="mx-auto max-w-4xl text-xl text-muted-foreground">
               From resume building to interview preparation, our comprehensive toolkit has everything you need to succeed in your career journey.
             </p>
           </div>
@@ -449,7 +449,7 @@ export default function ElevateLanding() {
           className="pointer-events-none absolute -right-20 bottom-0 z-[1] h-72 w-72 rounded-full bg-violet-400/18 blur-3xl motion-reduce:opacity-50"
           aria-hidden
         />
-        <div className="relative z-10 mx-auto max-w-3xl px-4 text-center sm:px-6 lg:px-8">
+        <div className="relative z-10 mx-auto max-w-4xl px-4 text-center sm:px-6 lg:px-8">
           <p className="mb-3 text-sm font-semibold uppercase tracking-[0.2em] text-teal-100/90">
             Take the next step
           </p>
@@ -500,7 +500,7 @@ export default function ElevateLanding() {
               <ul className="space-y-2 text-sm text-muted-foreground">
                 <li>
                   <Link
-                    href="/tools/resume-builder"
+                    href="/resume-builder"
                     className="transition-colors hover:text-primary"
                   >
                     Resume Builder
@@ -508,7 +508,7 @@ export default function ElevateLanding() {
                 </li>
                 <li>
                   <Link
-                    href="/tools/cover-letter"
+                    href="/cover-letter"
                     className="transition-colors hover:text-primary"
                   >
                     Cover Letter Generator
@@ -516,7 +516,7 @@ export default function ElevateLanding() {
                 </li>
                 <li>
                   <Link
-                    href="/tools/interview-preparation"
+                    href="/interview-preparation"
                     className="transition-colors hover:text-primary"
                   >
                     Interview Prep
@@ -524,7 +524,7 @@ export default function ElevateLanding() {
                 </li>
                 <li>
                   <Link
-                    href="/tools/linkedin-optimizer"
+                    href="/linkedin-optimizer"
                     className="transition-colors hover:text-primary"
                   >
                     LinkedIn Optimizer

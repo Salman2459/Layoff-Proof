@@ -155,6 +155,11 @@ function GlobalHeader() {
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link href="/dashboard" className="w-full">
+                      Dashboard
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link href="/lay-offs" className="w-full">
                       Layoff Tracker
                     </Link>
                   </DropdownMenuItem>

@@ -172,6 +172,7 @@ export interface IStorage {
     search?: string | null,
   ): Promise<SelectJobBoard[]>;
   getJobBoardPostsCount(userId: string, search?: string | null): Promise<number>;
+  getAllJobBoardPosts(userId: string, search?: string | null): Promise<SelectJobBoard[]>;
   createJobBoardPost(userId: string, post: InsertJobBoard): Promise<SelectJobBoard>;
 
   // Notify Me
@@ -830,6 +831,17 @@ export class DatabaseStorage implements IStorage {
       .from(jobBoardSchema)
       .where(this.jobBoardSearchWhere(userId, search));
     return count ?? 0;
+  }
+
+  async getAllJobBoardPosts(
+    userId: string,
+    search?: string | null,
+  ): Promise<SelectJobBoard[]> {
+    return await db
+      .select()
+      .from(jobBoardSchema)
+      .where(this.jobBoardSearchWhere(userId, search))
+      .orderBy(desc(jobBoardSchema.createdAt));
   }
 
   async createJobBoardPost(userId: string, post: InsertJobBoard): Promise<SelectJobBoard> {

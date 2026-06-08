@@ -1,14 +1,22 @@
 import { JobBoardTable } from "@/components/job-board-table";
-import GlobalHeader from "@/components/GlobalHeader";
+import { LayoffProofLayout } from "@/components/layoffproof/LayoffProofLayout";
+import { LayoffProofDashboardHeader } from "@/components/layoffproof/LayoffProofDashboardHeader";
+import { useAuth } from "@/hooks/useAuth";
 
-export default function JobBoardPage() {
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-orange-50 dark:from-gray-900 dark:to-gray-800">
-      <GlobalHeader />
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <JobBoardTable />
-      </main>
-    </div>
-  );
+function greeting(first?: string | null, last?: string | null): string {
+  return first?.trim() || last?.trim() || "there";
 }
 
+export default function JobBoardPage() {
+  const { user } = useAuth();
+  const name = greeting(user?.firstName, user?.lastName);
+
+  return (
+    <LayoffProofLayout activeNavId="job-matches">
+      <LayoffProofDashboardHeader greeting={name} />
+      <main className="flex-1 px-8 py-6">
+        <JobBoardTable />
+      </main>
+    </LayoffProofLayout>
+  );
+}

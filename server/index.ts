@@ -18,7 +18,8 @@ app.post(
   },
 );
 
-app.use(express.json());
+// Resume PDF/preview payloads may include base64 profile photos
+app.use(express.json({ limit: "12mb" }));
 app.use(express.urlencoded({ extended: false }));
 
 app.use((req, res, next) => {
