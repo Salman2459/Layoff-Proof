@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { extractApiErrorMessage, parseFetchJsonBody } from "@/lib/queryClient";
 
 export type LinkedInExperience = {
   title: string;
@@ -53,8 +54,10 @@ export function LinkedInProfileEditor({ profileData, setProfileData, highlightFi
           resumeContext: profileData,
         }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Failed to get AI suggestion.");
+      const data = await parseFetchJsonBody(response);
+      if (!response.ok) {
+        throw new Error(extractApiErrorMessage(data, "Failed to get AI suggestion."));
+      }
 
       setProfileData((current) => {
         if (!current) return null;

@@ -14,30 +14,56 @@ export function getApiErrorMessage(
   return fallback;
 }
 
-function messageFromErrorBody(data: Record<string, unknown>): string | null {
+/** Extract `message` or `error` from an API JSON body. */
+export function extractApiErrorMessage(
+  data: Record<string, unknown>,
+  fallback = "Something went wrong. Please try again."
+): string {
   const msg = data.message ?? data.error;
   if (typeof msg === "string" && msg.trim()) {
     return msg;
   }
-  return null;
+  return fallback;
+}
+
+/** Parse a fetch response body as JSON (non-JSON bodies become `{ error: text }`). */
+export async function parseFetchJsonBody(
+  res: Response
+): Promise<Record<string, unknown>> {
+  const text = await res.text();
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return { error: text.trim() };
+  }
+}
+
+/** `fetch` + JSON parse; throws with the API error message when the response is not ok. */
+export async function fetchJson<T = Record<string, unknown>>(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  errorFallback?: string
+): Promise<T> {
+  const res = await fetch(input, init);
+  const body = await parseFetchJsonBody(res);
+  if (!res.ok) {
+    throw new Error(
+      extractApiErrorMessage(
+        body,
+        errorFallback ?? `Request failed (${res.status})`
+      )
+    );
+  }
+  return body as T;
 }
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
-    const text = await res.text();
-    let message = text?.trim() || res.statusText;
-    if (text) {
-      try {
-        const json = JSON.parse(text) as Record<string, unknown>;
-        const fromBody = messageFromErrorBody(json);
-        if (fromBody) {
-          message = fromBody;
-        }
-      } catch {
-        // keep raw text
-      }
-    }
-    throw new Error(message);
+    const body = await parseFetchJsonBody(res);
+    throw new Error(
+      extractApiErrorMessage(body, res.statusText || "Request failed")
+    );
   }
 }
 
@@ -63,15 +89,10 @@ export async function apiRequest(
   });
 
   if (!res.ok) {
-    let errorMessage = `Request failed: ${res.status}`;
-    try {
-      const errorData = (await res.json()) as Record<string, unknown>;
-      errorMessage =
-        messageFromErrorBody(errorData) || errorMessage;
-    } catch {
-      // Fallback to status text
-    }
-    throw new Error(errorMessage);
+    const errorData = await parseFetchJsonBody(res);
+    throw new Error(
+      extractApiErrorMessage(errorData, `Request failed (${res.status})`)
+    );
   }
 
   // Handle empty responses

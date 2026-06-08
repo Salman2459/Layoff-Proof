@@ -9,6 +9,7 @@ import {
   Users,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/queryClient";
 import { LayoffProofLayout } from "@/components/layoffproof/LayoffProofLayout";
 import { LayoffProofDashboardHeader } from "@/components/layoffproof/LayoffProofDashboardHeader";
 import { LayoffProofHeroIllustration } from "@/components/layoffproof/LayoffProofHeroIllustration";
@@ -97,14 +98,10 @@ export default function LayoffProofDashboard() {
         limit: "5",
         category: "all",
       });
-      const res = await fetch(`/api/layoffs?${params}`, {
+      return fetchJson(`/api/layoffs?${params}`, {
         credentials: "include",
         cache: "no-store",
       });
-      if (!res.ok) {
-        throw new Error("Failed to fetch layoffs");
-      }
-      return res.json();
     },
     enabled: isAuthenticated,
     staleTime: 60_000,

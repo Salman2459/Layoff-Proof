@@ -18,7 +18,7 @@ import {
     User, Briefcase, FileText, MapPin, GraduationCap,
     Code2, Globe, ChevronRight, Linkedin, Search, CheckCircle2,
     Clock, Award, ArrowLeft, Bell, TrendingUp, Eye, MessageSquare, Mail,
-    X, Calendar, AlertCircle, Building2, Rocket, DownloadCloud, ExternalLink
+    X, Calendar, AlertCircle, Building2, Rocket, DownloadCloud, ExternalLink, Bot
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────

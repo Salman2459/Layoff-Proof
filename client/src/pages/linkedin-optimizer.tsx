@@ -19,6 +19,7 @@ import {
 } from "@/components/layoffproof/linkedin/LinkedInProfileEditor";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import { extractApiErrorMessage, parseFetchJsonBody } from "@/lib/queryClient";
 import {
   buildChecklist,
   computeStats,
@@ -145,8 +146,10 @@ export default function LinkedInOptimizer() {
       form.append("file", profilePdf);
       if (user?.id) form.append("id", String(user.id));
       const res = await fetch("/api/import-linkedin-resume-pdf", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to import PDF.");
+      const data = await parseFetchJsonBody(res);
+      if (!res.ok) {
+        throw new Error(extractApiErrorMessage(data, "Failed to import PDF."));
+      }
       return data.resumeData as LinkedInProfileData;
     }
 
@@ -159,8 +162,10 @@ export default function LinkedInOptimizer() {
           ...(user?.id ? { id: user.id } : {}),
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to import LinkedIn URL.");
+      const data = await parseFetchJsonBody(res);
+      if (!res.ok) {
+        throw new Error(extractApiErrorMessage(data, "Failed to import LinkedIn URL."));
+      }
       return data.resumeData as LinkedInProfileData;
     }
 
@@ -213,7 +218,7 @@ export default function LinkedInOptimizer() {
           targetJobTitle: targetJobTitle.trim(),
         }),
       });
-      const optimizeData = await optimizeRes.json();
+      const optimizeData = await parseFetchJsonBody(optimizeRes);
 
       if (optimizeRes.ok && optimizeData.analysisReport) {
         setAnalysisReport(normalizeAnalysisReport(optimizeData));
@@ -244,10 +249,13 @@ export default function LinkedInOptimizer() {
           targetJobTitle: targetJobTitle.trim(),
         }),
       });
-      const analyzeData = await analyzeRes.json();
+      const analyzeData = await parseFetchJsonBody(analyzeRes);
       if (!analyzeRes.ok) {
         throw new Error(
-          optimizeData.error || analyzeData.error || "AI analysis failed."
+          extractApiErrorMessage(
+            analyzeData,
+            extractApiErrorMessage(optimizeData, "AI analysis failed."),
+          ),
         );
       }
       setAnalysisReport(normalizeAnalysisReport(analyzeData));

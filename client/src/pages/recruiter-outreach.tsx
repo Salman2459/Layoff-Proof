@@ -20,6 +20,7 @@ import { OutreachBestPractices } from "@/components/layoffproof/outreach/Outreac
 import { OutreachHeroIllustration } from "@/components/layoffproof/outreach/OutreachHeroIllustration";
 import { OutreachMessageEmpty } from "@/components/layoffproof/outreach/OutreachMessageEmpty";
 import { useToast } from "@/hooks/use-toast";
+import { extractApiErrorMessage, parseFetchJsonBody } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 
@@ -112,12 +113,12 @@ export default function RecruiterOutreach() {
         }),
       });
 
+      const data = await parseFetchJsonBody(response);
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to generate message from server");
+        throw new Error(
+          extractApiErrorMessage(data, "Failed to generate message from server"),
+        );
       }
-
-      const data = await response.json();
       setGeneratedMessage(data.generatedMessage);
 
       toast({
@@ -126,7 +127,7 @@ export default function RecruiterOutreach() {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
-      setGeneratedMessage(`Error: ${message}. Please try again.`);
+      setGeneratedMessage(`Error: ${message}`);
       toast({ title: "Generation failed", description: message, variant: "destructive" });
     } finally {
       setIsGenerating(false);

@@ -26,7 +26,7 @@ import { LayoffProofLayout } from "@/components/layoffproof/LayoffProofLayout";
 import { LayoffProofDashboardHeader } from "@/components/layoffproof/LayoffProofDashboardHeader";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { apiRequest, getApiErrorMessage } from "@/lib/queryClient";
+import { apiRequest, extractApiErrorMessage, getApiErrorMessage, parseFetchJsonBody } from "@/lib/queryClient";
 
 const CATEGORIES = [
   { id: "all", label: "All Industries", icon: Building2, color: "blue" },
@@ -145,19 +145,18 @@ export default function Dashboard() {
       }
 
       const response = await fetch(`/api/layoffs?${params.toString()}`);
+      const result = await parseFetchJsonBody(response);
 
       if (!response.ok) {
-        throw new Error('Failed to fetch layoffs');
+        throw new Error(extractApiErrorMessage(result, "Failed to fetch layoffs"));
       }
-
-      const result = await response.json();
 
       if (result.success) {
         setLayoffs(result.data.layoffs);
         setStats(result.data.stats);
         setPagination(result.data.pagination);
       } else {
-        throw new Error(result.error || 'Failed to fetch layoffs');
+        throw new Error(extractApiErrorMessage(result, "Failed to fetch layoffs"));
       }
 
     } catch (error: any) {

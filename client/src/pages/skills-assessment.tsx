@@ -25,7 +25,7 @@ import { SkillsAssessmentHeroBanner } from "@/components/layoffproof/skills/Skil
 import { SkillsAssessmentStepper } from "@/components/layoffproof/skills/SkillsAssessmentStepper";
 import { Progress } from "@/components/ui/progress";
 import { useAuth } from "@/hooks/useAuth";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, getApiErrorMessage, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -140,10 +140,13 @@ export default function SkillsAssessment() {
         description: "Your skills assessment and learning plan are ready!",
       });
     },
-    onError: () => {
+    onError: (error: unknown) => {
       toast({
         title: "Error",
-        description: "Failed to complete assessment. Please try again.",
+        description: getApiErrorMessage(
+          error,
+          "Failed to complete assessment. Please try again.",
+        ),
         variant: "destructive",
       });
     },

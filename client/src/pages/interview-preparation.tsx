@@ -21,6 +21,7 @@ import { LayoffProofSelect } from "@/components/layoffproof/LayoffProofSelect";
 import { InterviewPrepFeatureCards } from "@/components/layoffproof/interview/InterviewPrepFeatureCards";
 import { InterviewPrepHeroIllustration } from "@/components/layoffproof/interview/InterviewPrepHeroIllustration";
 import { useToast } from "@/hooks/use-toast";
+import { extractApiErrorMessage, parseFetchJsonBody } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 
@@ -142,12 +143,11 @@ export default function InterviewPreparation() {
         }),
       });
 
+      const analysisBody = await parseFetchJsonBody(response);
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || response.statusText);
+        throw new Error(extractApiErrorMessage(analysisBody, response.statusText));
       }
-
-      const analysis = await response.json();
+      const analysis = analysisBody as unknown as JobAnalysis;
       setJobAnalysis(analysis);
       setStep("questions");
 
@@ -189,11 +189,15 @@ export default function InterviewPreparation() {
         }),
       });
 
-      if (!response.ok) throw new Error("Failed to score answers");
-
-      const scoredQuestions = await response.json();
+      const scoredBody = await parseFetchJsonBody(response);
+      if (!response.ok) {
+        throw new Error(
+          extractApiErrorMessage(scoredBody, "Failed to score answers"),
+        );
+      }
+      const scoredQuestions = scoredBody.questions as Question[];
       setJobAnalysis((prev) =>
-        prev ? { ...prev, questions: scoredQuestions.questions } : null
+        prev ? { ...prev, questions: scoredQuestions } : null
       );
       setStep("results");
 
@@ -201,10 +205,13 @@ export default function InterviewPreparation() {
         title: "Scoring Complete!",
         description: "Your interview answers have been evaluated with personalized feedback.",
       });
-    } catch {
+    } catch (error: unknown) {
       toast({
         title: "Scoring Failed",
-        description: "Unable to score answers. Please try again.",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Unable to score answers. Please try again.",
         variant: "destructive",
       });
     } finally {

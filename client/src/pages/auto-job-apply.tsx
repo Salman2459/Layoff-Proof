@@ -2,7 +2,7 @@ import { toast } from '@/hooks/use-toast';
 import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { useLocation } from 'wouter';
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, extractApiErrorMessage, getApiErrorMessage, parseFetchJsonBody } from "@/lib/queryClient";
 import { useAuth } from '@/hooks/useAuth';
 import {
     Building2,
@@ -840,9 +840,13 @@ const AutoJobApply: React.FC = () => {
             fd.append('resume', file);
             fd.append('id', id);
             const res = await fetch('/api/upload-resume', { method: 'POST', body: fd, credentials: 'include' });
-            const json = await res.json();
+            const json = await parseFetchJsonBody(res);
             if (!res.ok) {
-                toast({ title: 'Parse failed', description: json.error || 'Could not parse resume.', variant: 'destructive' });
+                toast({
+                    title: 'Parse failed',
+                    description: extractApiErrorMessage(json, 'Could not parse resume.'),
+                    variant: 'destructive',
+                });
                 return;
             }
             const parsedData = json.parsedData as ParsedResumeFromApi;
@@ -851,7 +855,11 @@ const AutoJobApply: React.FC = () => {
             }
             toast({ title: 'Resume parsed', description: 'Form fields have been filled from your resume.' });
         } catch (e) {
-            toast({ title: 'Error', description: e instanceof Error ? e.message : 'Failed to parse resume.', variant: 'destructive' });
+            toast({
+                title: 'Error',
+                description: getApiErrorMessage(e, 'Failed to parse resume.'),
+                variant: 'destructive',
+            });
         } finally {
             setResumeParseLoading(false);
         }
@@ -924,7 +932,7 @@ console.log("profileData", profileData);
             toast({ title: "Profile Updated", description: "Successfully updated your profile." });
         },
         onError: (error: unknown) => {
-            const errorMessage = error instanceof Error ? error.message : "Failed to update profile.";
+            const errorMessage = getApiErrorMessage(error, "Failed to update profile.");
             setErrors([errorMessage]);
             toast({ title: "Save failed", description: errorMessage, variant: "destructive" });
         },
@@ -985,7 +993,7 @@ console.log("profileData", profileData);
             console.error("File upload error:", error);
             toast({
                 title: "Upload Failed",
-                description: error instanceof Error ? error.message : "An error occurred while uploading. Please try again.",
+                description: getApiErrorMessage(error, "An error occurred while uploading. Please try again."),
                 variant: "destructive",
             });
         } finally {
@@ -1370,7 +1378,7 @@ console.log("profileData", profileData);
                                 await apiRequest('POST', `/api/profile/documentupdate/${id}?documentType=resume`, fd);
                                 toast({ title: "Success", description: "Resume uploaded successfully." });
                             } catch (err) {
-                                toast({ title: "Upload failed", description: err instanceof Error ? err.message : "Could not upload resume.", variant: "destructive" });
+                                toast({ title: "Upload failed", description: getApiErrorMessage(err, "Could not upload resume."), variant: "destructive" });
                             } finally {
                                 setUploadingDocument(null);
                             }
@@ -2413,7 +2421,7 @@ console.log("profileData", profileData);
                             await apiRequest('POST', `/api/profile/documentupdate/${id}?documentType=certificate`, fd);
                             toast({ title: "Success", description: "Certificate uploaded successfully." });
                         } catch (err) {
-                            toast({ title: "Upload failed", description: err instanceof Error ? err.message : "Could not upload certificate.", variant: "destructive" });
+                            toast({ title: "Upload failed", description: getApiErrorMessage(err, "Could not upload certificate."), variant: "destructive" });
                         } finally {
                             setUploadingDocument(null);
                         }
@@ -2465,7 +2473,7 @@ console.log("profileData", profileData);
                             await apiRequest('POST', `/api/profile/documentupdate/${id}?documentType=recommendation_letter`, fd);
                             toast({ title: "Success", description: "Recommendation letter uploaded successfully." });
                         } catch (err) {
-                            toast({ title: "Upload failed", description: err instanceof Error ? err.message : "Could not upload letter.", variant: "destructive" });
+                            toast({ title: "Upload failed", description: getApiErrorMessage(err, "Could not upload letter."), variant: "destructive" });
                         } finally {
                             setUploadingDocument(null);
                         }

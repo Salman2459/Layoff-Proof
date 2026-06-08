@@ -26,6 +26,10 @@ import {
   templateSupportsProfilePhoto,
   templateSupportsProjects,
 } from "@shared/resumeTemplates";
+import {
+  compressImageFile,
+  compressProfileImageDataUrl,
+} from "@/lib/compressProfileImage";
 import { loadResumeDraft, saveResumeDraft } from "@/lib/resumeDraft";
 import type { User } from "@shared/schema";
 import { Button } from "@/components/ui/button";
@@ -43,6 +47,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
+import {
+  extractApiErrorMessage,
+  getApiErrorMessage,
+  parseFetchJsonBody,
+} from "@/lib/queryClient";
 import {
   Popover,
   PopoverContent,
@@ -161,12 +170,14 @@ const AIImproveButton: React.FC<AIImproveButtonProps> = ({
         }),
       });
 
+      const body = await parseFetchJsonBody(response);
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to get AI suggestion.");
+        throw new Error(
+          extractApiErrorMessage(body, "Failed to get AI suggestion."),
+        );
       }
 
-      const { suggestion } = await response.json();
+      const { suggestion } = body;
       onSuggestion(fieldName, suggestion);
       setPopoverOpen(false);
       toast({
@@ -355,6 +366,18 @@ function buildResumePayload(
     : { ...data, profileImageDataUrl: data.profileImageDataUrl ?? "" };
 }
 
+/** Compress inline photos so preview/PDF API bodies stay under proxy size limits. */
+async function prepareResumePayloadForApi(
+  data: ParsedResumeData,
+  user?: User,
+): Promise<ParsedResumeData> {
+  const base = buildResumePayload(data, user);
+  const src = base.profileImageDataUrl?.trim() ?? "";
+  if (!src.startsWith("data:image/")) return base;
+  const compressed = await compressProfileImageDataUrl(src);
+  return { ...base, profileImageDataUrl: compressed };
+}
+
 const initialResumeData: ParsedResumeData = {
   name: "",
   email: "",
@@ -532,7 +555,7 @@ const ResumeEditorForm = ({
                       )}
                     >
                       {isLayoffProof
-                        ? `Upload a professional photo (JPG, PNG, max 1MB). Shown on ${RESUME_PHOTO_TEMPLATE_NAMES}.`
+                        ? `Upload a professional photo (JPG, PNG, WebP). Shown on ${RESUME_PHOTO_TEMPLATE_NAMES}.`
                         : `Optional. Shown on ${RESUME_PHOTO_TEMPLATE_NAMES}.`}
                     </div>
                     {hasProfilePhoto && supportsPhoto ? (
@@ -557,31 +580,42 @@ const ResumeEditorForm = ({
                     type="file"
                     accept="image/*"
                     className="hidden"
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
-                      if (file.size > 1024 * 1024) {
-                        // 1MB cap to keep PDFs light/stable
+                      if (!file.type.startsWith("image/")) {
                         toast({
-                          title: "Image too large",
-                          description: "Please upload an image under 1MB.",
+                          title: "Invalid file",
+                          description: "Please upload a JPG, PNG, or WebP image.",
                           variant: "destructive",
                         });
                         e.target.value = "";
                         return;
                       }
-                      const reader = new FileReader();
-                      reader.onload = () => {
-                        const result =
-                          typeof reader.result === "string"
-                            ? reader.result
-                            : "";
+                      if (file.size > 8 * 1024 * 1024) {
+                        toast({
+                          title: "Image too large",
+                          description: "Please upload an image under 8MB.",
+                          variant: "destructive",
+                        });
+                        e.target.value = "";
+                        return;
+                      }
+                      try {
+                        const compressed = await compressImageFile(file);
                         setExtractedData({
                           ...extractedData,
-                          profileImageDataUrl: result,
+                          profileImageDataUrl: compressed,
                         });
-                      };
-                      reader.readAsDataURL(file);
+                      } catch {
+                        toast({
+                          title: "Upload failed",
+                          description: "Could not process that image. Try another file.",
+                          variant: "destructive",
+                        });
+                      } finally {
+                        e.target.value = "";
+                      }
                     }}
                   />
                   <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-center md:justify-end">
@@ -613,7 +647,7 @@ const ResumeEditorForm = ({
                     ) : null}
                   </div>
                   <p className="text-center text-xs text-muted-foreground md:text-right">
-                    Max 1MB (JPG/PNG/WebP)
+                    JPG/PNG/WebP — optimized automatically for preview
                   </p>
                 </div>
               </div>
@@ -621,11 +655,6 @@ const ResumeEditorForm = ({
                 <div className="mt-3 text-center text-xs text-muted-foreground sm:text-left">
                   Tip: use a square image for best results.
                 </div>
-              ) : null}
-              {!isLayoffProof ? (
-              <div className="mt-2 text-center text-xs text-muted-foreground sm:text-left">
-                If your image is larger than 1MB, compress it first.
-              </div>
               ) : null}
             </div>
 
@@ -1423,14 +1452,30 @@ export default function ResumeBuilder() {
   useEffect(() => {
     if (!user?.id) return;
     const draft = loadResumeDraft(user.id);
-    if (draft) {
-      setExtractedData({
-        ...initialResumeData,
-        ...(draft.data as Partial<ParsedResumeData>),
-      });
+    if (!draft) return;
+
+    const restored = {
+      ...initialResumeData,
+      ...(draft.data as Partial<ParsedResumeData>),
+    };
+    const photo = restored.profileImageDataUrl?.trim() ?? "";
+
+    const applyDraft = (data: ParsedResumeData) => {
+      setExtractedData(data);
       if (draft.selectedTemplate) setSelectedTemplate(draft.selectedTemplate);
       if (draft.selectedCatalogId) setSelectedCatalogId(draft.selectedCatalogId);
+    };
+
+    if (photo.startsWith("data:image/") && photo.length > 380_000) {
+      void compressProfileImageDataUrl(photo)
+        .then((compressed) =>
+          applyDraft({ ...restored, profileImageDataUrl: compressed }),
+        )
+        .catch(() => applyDraft(restored));
+      return;
     }
+
+    applyDraft(restored);
   }, [user?.id]);
 
   useEffect(() => {
@@ -1482,8 +1527,13 @@ export default function ResumeBuilder() {
         method: "POST",
         body: formData,
       });
-      if (!response.ok) throw new Error(await response.text());
-      return response.json();
+      const body = await parseFetchJsonBody(response);
+      if (!response.ok) {
+        throw new Error(
+          extractApiErrorMessage(body, "Failed to upload resume."),
+        );
+      }
+      return body;
     },
     onSuccess: (data: any) => {
       const parsed = { ...data.parsedData } as Partial<ParsedResumeData>;
@@ -1511,8 +1561,13 @@ export default function ResumeBuilder() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ profileUrl, id: user?.id }),
       });
-      if (!response.ok) throw new Error(await response.text());
-      return response.json();
+      const body = await parseFetchJsonBody(response);
+      if (!response.ok) {
+        throw new Error(
+          extractApiErrorMessage(body, "Failed to import LinkedIn profile."),
+        );
+      }
+      return body;
     },
     onSuccess: (data: any) => {
       if (data.resumeData) {
@@ -1546,23 +1601,23 @@ export default function ResumeBuilder() {
       templateId: string;
       resumeData: ParsedResumeData;
     }) => {
+      const resumeData = await prepareResumePayloadForApi(data.resumeData, user);
       const response = await fetch("/api/generate-resume-preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ templateId: data.templateId, resumeData }),
       });
+      const payload = await parseFetchJsonBody(response);
       if (!response.ok) {
-        const err = (await response.json().catch(() => ({}))) as { error?: string };
-        throw new Error(err.error || response.statusText);
+        throw new Error(extractApiErrorMessage(payload, response.statusText));
       }
-      const payload = (await response.json()) as { html?: string };
       if (!payload.html) throw new Error("Preview HTML missing from response");
       return payload.html;
     },
     onSuccess: (htmlContent: string) => setPreviewHtml(htmlContent),
-    onError: () =>
+    onError: (error: unknown) =>
       setPreviewHtml(
-        "<p class='text-center text-red-500 p-8'>Error generating preview.</p>",
+        `<p class='text-center text-red-500 p-8'>${getApiErrorMessage(error, "Error generating preview.")}</p>`,
       ),
   });
 
@@ -1573,21 +1628,15 @@ export default function ResumeBuilder() {
       id: string;
       isManual: boolean;
     }) => {
+      const resumeData = await prepareResumePayloadForApi(data.resumeData, user);
       const response = await fetch("/api/generate-resume-pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ ...data, resumeData }),
       });
       if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as {
-          message?: string;
-          error?: string;
-        };
-        throw new Error(
-          (typeof errorData.message === "string" && errorData.message) ||
-            (typeof errorData.error === "string" && errorData.error) ||
-            response.statusText,
-        );
+        const errorData = await parseFetchJsonBody(response);
+        throw new Error(extractApiErrorMessage(errorData, response.statusText));
       }
       return response.blob();
     },
@@ -2161,13 +2210,12 @@ export default function ResumeBuilder() {
     }
   };
 
-  const refreshPreview = () => {
-    const payload = buildResumePayload(extractedData, user);
+  const refreshPreview = async () => {
     setDebouncedExtractedData(extractedData);
     if (selectedTemplate) {
       generatePreviewMutation.mutate({
         templateId: selectedTemplate,
-        resumeData: payload,
+        resumeData: buildResumePayload(extractedData, user),
       });
     }
   };

@@ -15,6 +15,7 @@ import { CoverLetterPreviewEmpty } from "@/components/layoffproof/cover-letter/C
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
+import { extractApiErrorMessage, parseFetchJsonBody } from "@/lib/queryClient";
 
 interface PersonalData {
   name: string;
@@ -102,19 +103,31 @@ export default function CoverLetter() {
         body: formData,
       });
 
-      if (!response.ok) throw new Error("Failed to upload resume");
-
-      const data = await response.json();
+      const data = await parseFetchJsonBody(response);
+      if (!response.ok) {
+        toast({
+          title: "Upload Error",
+          description: extractApiErrorMessage(
+            data,
+            "Failed to process your resume. Please try again.",
+          ),
+          variant: "destructive",
+        });
+        return;
+      }
       setParsedResumeData(data.parsedData);
 
       toast({
         title: "Resume Uploaded!",
         description: "Your resume has been processed and key information extracted.",
       });
-    } catch {
+    } catch (error: unknown) {
       toast({
         title: "Upload Error",
-        description: "Failed to process your resume. Please try again.",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to process your resume. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -174,13 +187,12 @@ export default function CoverLetter() {
         }),
       });
 
+      const data = await parseFetchJsonBody(response);
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || response.statusText);
+        throw new Error(extractApiErrorMessage(data, response.statusText));
       }
 
-      const data = await response.json();
-      setGeneratedLetter(data.coverLetter);
+      setGeneratedLetter(String(data.coverLetter ?? ""));
 
       toast({
         title: data.generatedBy === "ai" ? "Success!" : "Generated!",
@@ -220,13 +232,12 @@ export default function CoverLetter() {
         }),
       });
 
+      const data = await parseFetchJsonBody(response);
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || response.statusText);
+        throw new Error(extractApiErrorMessage(data, response.statusText));
       }
 
-      const data = await response.json();
-      setGeneratedLetter(data.coverLetter);
+      setGeneratedLetter(String(data.coverLetter ?? ""));
 
       toast({
         title: data.generatedBy === "ai" ? "Success!" : "Generated!",
@@ -265,13 +276,14 @@ export default function CoverLetter() {
         }),
       });
 
+      const data = await parseFetchJsonBody(response);
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || "Failed to improve the cover letter.");
+        throw new Error(
+          extractApiErrorMessage(data, "Failed to improve the cover letter."),
+        );
       }
 
-      const data = await response.json();
-      setGeneratedLetter(data.improvedLetter);
+      setGeneratedLetter(String(data.improvedLetter ?? ""));
       toast({ title: "Success!", description: "Your cover letter has been improved." });
       setIsImproving(false);
       setImprovementInstructions("");

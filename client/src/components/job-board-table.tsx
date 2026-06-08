@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { fetchJson } from "@/lib/queryClient";
 import { formatDistanceToNow } from "date-fns";
 import {
   Bookmark,
@@ -180,12 +181,10 @@ export function JobBoardTable() {
   const { data, isLoading, error } = useQuery<JobBoardResponse>({
     queryKey: ["/api/job-board", page, limit, debouncedSearch, tab],
     queryFn: async () => {
-      const res = await fetch(
+      return fetchJson<JobBoardResponse>(
         `/api/job-board?page=${page}&limit=${limit}&tab=${tab}${searchParam}`,
-        { credentials: "include", cache: "no-store" }
+        { credentials: "include", cache: "no-store" },
       );
-      if (!res.ok) throw new Error("Failed to fetch jobs");
-      return res.json();
     },
   });
 

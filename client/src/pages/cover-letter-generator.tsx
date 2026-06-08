@@ -18,8 +18,11 @@ import {
   Wand2
 } from "lucide-react";
 import GlobalHeader from "@/components/GlobalHeader";
+import { useToast } from "@/hooks/use-toast";
+import { extractApiErrorMessage, parseFetchJsonBody } from "@/lib/queryClient";
 
 export default function CoverLetterGenerator() {
+  const { toast } = useToast();
   const [isGenerating, setIsGenerating] = useState(false);
   const [isExtractingJob, setIsExtractingJob] = useState(false);
   const [generatedLetter, setGeneratedLetter] = useState("");
@@ -44,17 +47,25 @@ export default function CoverLetterGenerator() {
         body: JSON.stringify({ jobUrl: jobUrl.trim() }),
       });
 
-      if (response.ok) {
-        const jobData = await response.json();
-        setExtractedJobData(jobData);
-        setJobTitle(jobData.title || "");
-        setCompanyName(jobData.company || "");
-        setJobDescription(jobData.description || "");
-      } else {
-        console.error('Failed to extract job data');
+      const jobData = await parseFetchJsonBody(response);
+      if (!response.ok) {
+        toast({
+          title: "Extraction failed",
+          description: extractApiErrorMessage(jobData, "Failed to extract job data."),
+          variant: "destructive",
+        });
+        return;
       }
+      setExtractedJobData(jobData);
+      setJobTitle(String(jobData.title ?? ""));
+      setCompanyName(String(jobData.company ?? ""));
+      setJobDescription(String(jobData.description ?? ""));
     } catch (error) {
-      console.error('Error extracting job data:', error);
+      toast({
+        title: "Extraction failed",
+        description: error instanceof Error ? error.message : "Failed to extract job data.",
+        variant: "destructive",
+      });
     } finally {
       setIsExtractingJob(false);
     }
@@ -79,34 +90,22 @@ export default function CoverLetterGenerator() {
         }),
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        setGeneratedLetter(data.coverLetter);
-      } else {
-        // Fallback to sample generation
-        const sampleLetter = `Dear Hiring Manager,
-
-I am excited to apply for the ${jobTitle || "[Position]"} role at ${companyName || "[Company]"}. With my background in ${experience || "relevant field"}, I am confident that I can contribute meaningfully to your team.
-
-${jobDescription ? `Having reviewed the job description, I am particularly drawn to the opportunity to ${jobDescription.slice(0, 100)}...` : "I am impressed by your company's commitment to innovation and excellence."}
-
-${extractedJobData?.requirements ? `I believe my experience aligns well with your requirements, particularly:
-${extractedJobData.requirements.slice(0, 3).map((req: string) => `• ${req}`).join('\n')}` : `In my previous roles, I have developed strong skills in:
-• Problem-solving and analytical thinking
-• Team collaboration and communication
-• ${experience || "Technical expertise"}`}
-
-I am eager to bring my passion and expertise to ${companyName || "your organization"} and would welcome the opportunity to discuss how my background aligns with your needs.
-
-Thank you for your consideration.
-
-Best regards,
-[Your Name]`;
-
-        setGeneratedLetter(sampleLetter);
+      const data = await parseFetchJsonBody(response);
+      if (!response.ok) {
+        toast({
+          title: "Generation failed",
+          description: extractApiErrorMessage(data, "Failed to generate cover letter."),
+          variant: "destructive",
+        });
+        return;
       }
+      setGeneratedLetter(String(data.coverLetter ?? ""));
     } catch (error) {
-      console.error('Error generating cover letter:', error);
+      toast({
+        title: "Generation failed",
+        description: error instanceof Error ? error.message : "Failed to generate cover letter.",
+        variant: "destructive",
+      });
     } finally {
       setIsGenerating(false);
     }
