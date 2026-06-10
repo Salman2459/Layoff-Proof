@@ -2,6 +2,7 @@ import crypto from "crypto";
 import type { Express, RequestHandler } from "express";
 import "./types"; // Import session and request type extensions
 import { storage } from "./storage";
+import { attachReferralFromCookie } from "./affiliateService";
 import { z } from "zod";
 
 // Magic link configuration
@@ -132,6 +133,11 @@ export function setupMagicAuth(app: Express) {
           isEmailVerified: true,
           lastLoginAt: new Date(),
         });
+        try {
+          await attachReferralFromCookie(req, user.id);
+        } catch (refErr) {
+          console.error("Affiliate referral attach error:", refErr);
+        }
       } else {
         // Update existing user
         await storage.updateUserProfile(user.id, {

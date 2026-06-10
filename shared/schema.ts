@@ -184,6 +184,79 @@ export const userCompanySubscriptions = pgTable("user_company_subscriptions", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+/** Affiliate program — one row per user who can refer others. */
+export const affiliates = pgTable(
+  "affiliates",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id")
+      .notNull()
+      .unique()
+      .references(() => users.id, { onDelete: "cascade" }),
+    referralCode: varchar("referral_code").notNull().unique(),
+    status: varchar("status").notNull().default("approved"), // pending | approved | suspended
+    commissionAmount: integer("commission_amount").notNull().default(49),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => [
+    index("IDX_affiliates_user").on(table.userId),
+    index("IDX_affiliates_referral_code").on(table.referralCode),
+  ],
+);
+
+/** Tracks referred users from click → signup → subscription. */
+export const referrals = pgTable(
+  "referrals",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    affiliateId: varchar("affiliate_id")
+      .notNull()
+      .references(() => affiliates.id, { onDelete: "cascade" }),
+    referredUserId: varchar("referred_user_id")
+      .notNull()
+      .unique()
+      .references(() => users.id, { onDelete: "cascade" }),
+    referralCode: varchar("referral_code").notNull(),
+    status: varchar("status").notNull().default("signed_up"), // clicked | signed_up | subscribed | refunded | inactive
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => [
+    index("IDX_referrals_affiliate").on(table.affiliateId),
+    index("IDX_referrals_referred_user").on(table.referredUserId),
+  ],
+);
+
+/** Commission earned when a referred user subscribes. */
+export const affiliateCommissions = pgTable(
+  "affiliate_commissions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    affiliateId: varchar("affiliate_id")
+      .notNull()
+      .references(() => affiliates.id, { onDelete: "cascade" }),
+    customerId: varchar("customer_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    subscriptionId: varchar("subscription_id"),
+    amount: integer("amount").notNull().default(49),
+    status: varchar("status").notNull().default("pending"), // pending | approved | paid | reversed
+    eligibleAt: timestamp("eligible_at").notNull(),
+    approvedAt: timestamp("approved_at"),
+    paidAt: timestamp("paid_at"),
+    reversedAt: timestamp("reversed_at"),
+    reversalReason: text("reversal_reason"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => [
+    index("IDX_affiliate_commissions_affiliate").on(table.affiliateId),
+    index("IDX_affiliate_commissions_customer").on(table.customerId),
+    index("IDX_affiliate_commissions_status").on(table.status),
+  ],
+);
+
 // Relations
 export const usersRelations = relations(users, ({ one, many }) => ({
   selectedCompany: one(companies, {
@@ -193,11 +266,46 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   notifications: many(notifications),
   companySubscriptions: many(userCompanySubscriptions),
   activities: many(userActivities),
+  affiliate: one(affiliates, {
+    fields: [users.id],
+    references: [affiliates.userId],
+  }),
 }));
 
 export const userActivitiesRelations = relations(userActivities, ({ one }) => ({
   user: one(users, { fields: [userActivities.userId], references: [users.id] }),
 }));
+
+export const affiliatesRelations = relations(affiliates, ({ one, many }) => ({
+  user: one(users, { fields: [affiliates.userId], references: [users.id] }),
+  referrals: many(referrals),
+  commissions: many(affiliateCommissions),
+}));
+
+export const referralsRelations = relations(referrals, ({ one }) => ({
+  affiliate: one(affiliates, {
+    fields: [referrals.affiliateId],
+    references: [affiliates.id],
+  }),
+  referredUser: one(users, {
+    fields: [referrals.referredUserId],
+    references: [users.id],
+  }),
+}));
+
+export const affiliateCommissionsRelations = relations(
+  affiliateCommissions,
+  ({ one }) => ({
+    affiliate: one(affiliates, {
+      fields: [affiliateCommissions.affiliateId],
+      references: [affiliates.id],
+    }),
+    customer: one(users, {
+      fields: [affiliateCommissions.customerId],
+      references: [users.id],
+    }),
+  }),
+);
 
 export const companiesRelations = relations(companies, ({ many }) => ({
   layoffEvents: many(layoffEvents),
@@ -986,3 +1094,10 @@ export type InsertUserDocument = z.infer<typeof insertUserDocumentSchema>;
 // ============================================================================
 // AUTO JOB APPLY TABLES - END
 // ============================================================================
+
+export type Affiliate = typeof affiliates.$inferSelect;
+export type InsertAffiliate = typeof affiliates.$inferInsert;
+export type Referral = typeof referrals.$inferSelect;
+export type InsertReferral = typeof referrals.$inferInsert;
+export type AffiliateCommission = typeof affiliateCommissions.$inferSelect;
+export type InsertAffiliateCommission = typeof affiliateCommissions.$inferInsert;

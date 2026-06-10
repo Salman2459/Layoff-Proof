@@ -19,6 +19,10 @@ import type { Request, Response } from "express";
 import type Stripe from "stripe";
 import { stripe, cancelSubscriptionAtPeriodEnd } from "./stripe";
 import { storage } from "./storage";
+import {
+  processAffiliateRefund,
+  processAffiliateSubscriptionActivation,
+} from "./affiliateService";
 
 function customerIdOnly(
   c: string | Stripe.Customer | Stripe.DeletedCustomer | null | undefined,
@@ -145,6 +149,15 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
       subscriptionStatus: "active",
       ...(paidCents > 0 ? { subscriptionViaCoupon: false } : {}),
     });
+
+    // Affiliate commission when referred user subscribes (paid invoice)
+    if (paidCents > 0) {
+      try {
+        await processAffiliateSubscriptionActivation(userId, subId);
+      } catch (affErr) {
+        console.error("Affiliate subscription activation error:", affErr);
+      }
+    }
   } else {
     const paidCents = typeof invoice.amount_paid === "number" ? invoice.amount_paid : 0;
     await storage.updateUser(userId, {
@@ -224,6 +237,11 @@ export const handleStripeWebhook = async (
                 session.metadata.planId ?? session.metadata.plan ?? "pro",
             });
           }
+          try {
+            await processAffiliateSubscriptionActivation(userId, subId);
+          } catch (affErr) {
+            console.error("Affiliate subscription activation error:", affErr);
+          }
         } else {
           await storage.updateUser(userId, {
             subscriptionStatus: "active",
@@ -302,6 +320,30 @@ export const handleStripeWebhook = async (
           stripeSubscriptionId: null,
           stripeCustomerId: cid ?? undefined,
         });
+
+        try {
+          await processAffiliateRefund(
+            userId,
+            "Subscription canceled or deleted",
+          );
+        } catch (affErr) {
+          console.error("Affiliate refund clawback error:", affErr);
+        }
+        break;
+      }
+
+      case "charge.refunded": {
+        const charge = event.data.object as Stripe.Charge;
+        const cid = customerIdOnly(charge.customer);
+        const userId = await resolveUserId({ stripeCustomerId: cid });
+        if (!userId) break;
+
+        // Refund clawback within 30-day commission hold window
+        try {
+          await processAffiliateRefund(userId, "Payment refunded");
+        } catch (affErr) {
+          console.error("Affiliate refund clawback error:", affErr);
+        }
         break;
       }
 
@@ -337,6 +379,14 @@ export const handleStripeWebhook = async (
           stripeCustomerId: cid ?? undefined,
           subscriptionPlan: pi.metadata?.plan ?? pi.metadata?.planId ?? "pro",
         });
+        try {
+          await processAffiliateSubscriptionActivation(
+            userId,
+            pi.metadata?.subscriptionId ?? null,
+          );
+        } catch (affErr) {
+          console.error("Affiliate subscription activation error:", affErr);
+        }
         break;
       }
 

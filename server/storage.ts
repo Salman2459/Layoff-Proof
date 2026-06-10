@@ -13,7 +13,16 @@ import {
   jobBoardSchema,
   notifyMe,
   networkConnections,
+  affiliates,
+  referrals,
+  affiliateCommissions,
   type User,
+  type Affiliate,
+  type InsertAffiliate,
+  type Referral,
+  type InsertReferral,
+  type AffiliateCommission,
+  type InsertAffiliateCommission,
   type UpsertUser,
   type Company,
   type InsertCompany,
@@ -177,6 +186,33 @@ export interface IStorage {
 
   // Notify Me
   createNotifyMe(userId: string, data: InsertNotifyMe): Promise<SelectNotifyMe>;
+
+  // Affiliate program
+  getAffiliateByUserId(userId: string): Promise<Affiliate | undefined>;
+  getAffiliateById(id: string): Promise<Affiliate | undefined>;
+  getAffiliateByReferralCode(code: string): Promise<Affiliate | undefined>;
+  createAffiliate(data: InsertAffiliate): Promise<Affiliate>;
+  getReferralByReferredUserId(userId: string): Promise<Referral | undefined>;
+  createReferral(data: InsertReferral): Promise<Referral>;
+  updateReferral(id: string, updates: Partial<Referral>): Promise<Referral>;
+  getAffiliateCommissionByCustomer(
+    affiliateId: string,
+    customerId: string,
+  ): Promise<AffiliateCommission | undefined>;
+  createAffiliateCommission(
+    data: InsertAffiliateCommission,
+  ): Promise<AffiliateCommission>;
+  updateAffiliateCommission(
+    id: string,
+    updates: Partial<AffiliateCommission>,
+  ): Promise<AffiliateCommission>;
+  getAffiliateStats(affiliateId: string): Promise<{
+    totalReferrals: number;
+    activeReferrals: number;
+    pendingCommission: number;
+    approvedCommission: number;
+    paidCommission: number;
+  }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1156,6 +1192,138 @@ export class DatabaseStorage implements IStorage {
       const filteredConnections = userConnections.filter(conn => conn.id !== id);
       this.networkConnections.set(userId, filteredConnections);
     }
+  }
+
+  async getAffiliateByUserId(userId: string): Promise<Affiliate | undefined> {
+    const [row] = await db
+      .select()
+      .from(affiliates)
+      .where(eq(affiliates.userId, userId));
+    return row;
+  }
+
+  async getAffiliateById(id: string): Promise<Affiliate | undefined> {
+    const [row] = await db.select().from(affiliates).where(eq(affiliates.id, id));
+    return row;
+  }
+
+  async getAffiliateByReferralCode(code: string): Promise<Affiliate | undefined> {
+    const [row] = await db
+      .select()
+      .from(affiliates)
+      .where(eq(affiliates.referralCode, code.trim()));
+    return row;
+  }
+
+  async createAffiliate(data: InsertAffiliate): Promise<Affiliate> {
+    const [row] = await db
+      .insert(affiliates)
+      .values({ ...data, updatedAt: new Date() })
+      .returning();
+    return row;
+  }
+
+  async getReferralByReferredUserId(userId: string): Promise<Referral | undefined> {
+    const [row] = await db
+      .select()
+      .from(referrals)
+      .where(eq(referrals.referredUserId, userId));
+    return row;
+  }
+
+  async createReferral(data: InsertReferral): Promise<Referral> {
+    const [row] = await db
+      .insert(referrals)
+      .values({ ...data, updatedAt: new Date() })
+      .returning();
+    return row;
+  }
+
+  async updateReferral(id: string, updates: Partial<Referral>): Promise<Referral> {
+    const [row] = await db
+      .update(referrals)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(referrals.id, id))
+      .returning();
+    return row;
+  }
+
+  async getAffiliateCommissionByCustomer(
+    affiliateId: string,
+    customerId: string,
+  ): Promise<AffiliateCommission | undefined> {
+    const [row] = await db
+      .select()
+      .from(affiliateCommissions)
+      .where(
+        and(
+          eq(affiliateCommissions.affiliateId, affiliateId),
+          eq(affiliateCommissions.customerId, customerId),
+        ),
+      )
+      .orderBy(desc(affiliateCommissions.createdAt))
+      .limit(1);
+    return row;
+  }
+
+  async createAffiliateCommission(
+    data: InsertAffiliateCommission,
+  ): Promise<AffiliateCommission> {
+    const [row] = await db
+      .insert(affiliateCommissions)
+      .values({ ...data, updatedAt: new Date() })
+      .returning();
+    return row;
+  }
+
+  async updateAffiliateCommission(
+    id: string,
+    updates: Partial<AffiliateCommission>,
+  ): Promise<AffiliateCommission> {
+    const [row] = await db
+      .update(affiliateCommissions)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(affiliateCommissions.id, id))
+      .returning();
+    return row;
+  }
+
+  async getAffiliateStats(affiliateId: string): Promise<{
+    totalReferrals: number;
+    activeReferrals: number;
+    pendingCommission: number;
+    approvedCommission: number;
+    paidCommission: number;
+  }> {
+    const [referralCounts] = await db
+      .select({
+        total: count(),
+        active: sql<number>`count(*) filter (where ${referrals.status} = 'subscribed')`,
+      })
+      .from(referrals)
+      .where(eq(referrals.affiliateId, affiliateId));
+
+    const commissionRows = await db
+      .select({
+        status: affiliateCommissions.status,
+        total: sql<number>`coalesce(sum(${affiliateCommissions.amount}), 0)`,
+      })
+      .from(affiliateCommissions)
+      .where(eq(affiliateCommissions.affiliateId, affiliateId))
+      .groupBy(affiliateCommissions.status);
+
+    const sumByStatus = (status: string) =>
+      Number(
+        commissionRows.find((r) => r.status === status)?.total ?? 0,
+      );
+
+    return {
+      totalReferrals: Number(referralCounts?.total ?? 0),
+      activeReferrals: Number(referralCounts?.active ?? 0),
+      pendingCommission: sumByStatus("pending"),
+      approvedCommission: sumByStatus("approved"),
+      paidCommission: sumByStatus("paid"),
+    };
   }
 }
 

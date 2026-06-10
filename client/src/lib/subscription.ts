@@ -129,5 +129,5 @@ export function getPostAuthRedirectPath(
       // ignore malformed redirect
     }
   }
-  return "/";
+  return "/dashboard";
 }

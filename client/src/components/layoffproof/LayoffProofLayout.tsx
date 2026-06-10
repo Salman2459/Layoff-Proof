@@ -1,9 +1,14 @@
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { Crown, Menu, Sparkles, X } from "lucide-react";
 import { LayoffProofLogo } from "@/components/LayoffProofLogo";
 import { cn } from "@/lib/utils";
 import { layoffProofNavItems } from "./layoffproof-nav";
+import { preloadLayoffProofPage } from "./layoffproof-page-preload";
+import { useSubscriberAccess } from "@/hooks/useSubscriberAccess";
+
+/** When > 0, an outer shell already renders sidebar chrome — skip duplicate layout. */
+const LayoffProofShellDepthContext = createContext(0);
 
 type LayoffProofLayoutProps = {
   children: React.ReactNode;
@@ -11,10 +16,18 @@ type LayoffProofLayoutProps = {
 };
 
 export function LayoffProofLayout({ children, activeNavId = "dashboard" }: LayoffProofLayoutProps) {
+  const shellDepth = useContext(LayoffProofShellDepthContext);
   const [path] = useLocation();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const { hasAccess: hasPaidAccess } = useSubscriberAccess();
+
+  // Nested page layouts only render content (outer shell owns sidebar).
+  if (shellDepth > 0) {
+    return <>{children}</>;
+  }
 
   return (
+    <LayoffProofShellDepthContext.Provider value={shellDepth + 1}>
     <div className="layoffproof-root flex min-h-screen bg-[#f4f6fb] font-[Inter,system-ui,sans-serif]">
       {mobileNavOpen && (
         <button
@@ -66,6 +79,8 @@ export function LayoffProofLayout({ children, activeNavId = "dashboard" }: Layof
                 key={item.id}
                 href={item.href}
                 onClick={() => setMobileNavOpen(false)}
+                onMouseEnter={() => preloadLayoffProofPage(item.href)}
+                onFocus={() => preloadLayoffProofPage(item.href)}
                 className={cn(
                   "flex items-center gap-3 rounded-lg py-2.5 text-[13px] font-medium no-underline transition-colors",
                   isActive
@@ -83,22 +98,24 @@ export function LayoffProofLayout({ children, activeNavId = "dashboard" }: Layof
           })}
         </nav>
 
-        <div className="mt-4 rounded-2xl bg-gradient-to-br from-[#6366f1] via-[#7c3aed] to-[#5b21b6] p-4 shadow-lg shadow-indigo-200/50">
-          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-white/20">
-            <Crown className="h-5 w-5 text-amber-300" fill="currentColor" />
+        {!hasPaidAccess && (
+          <div className="mt-4 rounded-2xl bg-gradient-to-br from-[#6366f1] via-[#7c3aed] to-[#5b21b6] p-4 shadow-lg shadow-indigo-200/50">
+            <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-white/20">
+              <Crown className="h-5 w-5 text-amber-300" fill="currentColor" />
+            </div>
+            <p className="text-sm font-semibold leading-snug text-white">Upgrade to Premium</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-indigo-100/90">
+              Unlock unlimited AI tools & auto apply
+            </p>
+            <Link
+              href="/subscribe"
+              onClick={() => setMobileNavOpen(false)}
+              className="mt-3 flex w-full items-center justify-center rounded-lg bg-white px-3 py-2 text-xs font-semibold text-[#4f46e5] no-underline shadow-sm transition hover:bg-indigo-50"
+            >
+              Upgrade Now
+            </Link>
           </div>
-          <p className="text-sm font-semibold leading-snug text-white">Upgrade to Premium</p>
-          <p className="mt-1 text-[11px] leading-relaxed text-indigo-100/90">
-            Unlock unlimited AI tools & auto apply
-          </p>
-          <Link
-            href="/subscribe"
-            onClick={() => setMobileNavOpen(false)}
-            className="mt-3 flex w-full items-center justify-center rounded-lg bg-white px-3 py-2 text-xs font-semibold text-[#4f46e5] no-underline shadow-sm transition hover:bg-indigo-50"
-          >
-            Upgrade Now
-          </Link>
-        </div>
+        )}
       </aside>
 
       <div className="flex min-h-screen min-w-0 flex-1 flex-col lg:ml-[248px]">
@@ -121,5 +138,6 @@ export function LayoffProofLayout({ children, activeNavId = "dashboard" }: Layof
         {children}
       </div>
     </div>
+    </LayoffProofShellDepthContext.Provider>
   );
 }

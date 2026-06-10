@@ -1,7 +1,7 @@
 import { Link } from "wouter";
 import { ChevronDown, Settings, CreditCard, Briefcase, LogOut } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { hasActiveSubscription } from "@/lib/subscription";
+import { useSubscriberAccess } from "@/hooks/useSubscriberAccess";
 import { clearClientStorageOnLogout } from "@/lib/logoutStorage";
 import {
   DropdownMenu,
@@ -51,9 +51,9 @@ type LayoffProofProfileMenuProps = {
 
 export function LayoffProofProfileMenu({ className }: LayoffProofProfileMenuProps) {
   const { user } = useAuth();
+  const { hasAccess } = useSubscriberAccess();
   const name = displayName(user?.firstName, user?.lastName);
   const avatarLetter = initials(user?.firstName, user?.lastName);
-  const planLabel = hasActiveSubscription(user) ? "Premium" : "Free Plan";
 
   return (
     <DropdownMenu>
@@ -71,12 +71,12 @@ export function LayoffProofProfileMenu({ className }: LayoffProofProfileMenuProp
           </div>
           <div className="hidden flex-col items-start sm:flex">
             <p className="text-sm font-semibold leading-tight text-[#1e293b]">{name}</p>
-            {hasActiveSubscription(user) ? (
+            {hasAccess ? (
               <span className="mt-0.5 rounded-md bg-[#ede9fe] px-1.5 py-0.5 text-[10px] font-bold text-[#7c3aed]">
                 Premium
               </span>
             ) : (
-              <span className="mt-0.5 text-[11px] text-[#94a3b8]">{planLabel}</span>
+              <span className="mt-0.5 text-[11px] text-[#94a3b8]">Free Plan</span>
             )}
           </div>
           <ChevronDown className="hidden h-4 w-4 text-[#94a3b8] sm:block" />

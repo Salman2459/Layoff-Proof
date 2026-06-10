@@ -7,6 +7,11 @@ import { setupAuth, isAuthenticated } from "./replitAuth";
 import { setupMagicAuth, isMagicAuthenticated } from "./magicAuth";
 import { setupPasswordAuth, isAuthenticatedAny } from "./passwordAuth";
 import { setupGoogleAuth } from "./googleAuth";
+import { setupAffiliateRoutes } from "./affiliateRoutes";
+import {
+  affiliateRefCookieMiddleware,
+  processAffiliateSubscriptionActivation,
+} from "./affiliateService";
 // import { setupLinkedInAuth } from "./linkedinAuth";
 import { analyzeJobSecurityRisk } from "./anthropic";
 import { dataIntegrator } from "./data-integrator";
@@ -65,6 +70,10 @@ import {
   effectiveSubscriptionStatus,
   withEffectiveSubscriptionFields,
 } from "./subscriptionAccess";
+import {
+  getUserWithSubscriberAccess,
+  resolveAuthUserId,
+} from "./subscriberAccess";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import { cloudinary } from "./cloudinary";
 import { AnyAaaaRecord } from "dns";
@@ -116,6 +125,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.set("trust proxy", 1);
   // Required for res.clearCookie(..., { signed: true }) (e.g. session logout)
   app.use(cookieParser(sessionSecret));
+  // Affiliate referral attribution cookie on /signup?ref=CODE
+  app.use(affiliateRefCookieMiddleware);
   app.use(
     session.default({
       secret: sessionSecret,
@@ -140,24 +151,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupMagicAuth(app);
   setupPasswordAuth(app);
   setupGoogleAuth(app);
+  setupAffiliateRoutes(app);
   // setupLinkedInAuth(app);  // Disabled until API keys are configured
 
   async function GetUserScscriptionTrialValidation(id: string) {
-    if (!id) {
-      return false;
-    }
-
-    const user = await storage.getUser(id);
-
-    if (!user) {
-      return false;
-    }
-
-    if (effectiveSubscriptionStatus(user) === "active") {
-      return user;
-    }
-
-    return false;
+    const user = await getUserWithSubscriberAccess(id);
+    return user ?? false;
   }
 
   async function DetuctCredits(user: any) {
@@ -1506,6 +1505,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           updatedAt: new Date(),
         });
 
+        try {
+          await processAffiliateSubscriptionActivation(user.id, subNoRenew.id, {
+            createCommission: false,
+          });
+        } catch (affErr) {
+          console.error("Affiliate activation (promo subscribe):", affErr);
+        }
+
         return res.json({
           success: true,
           paymentRequired: false,
@@ -1556,8 +1563,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         // Retrieve subscription from Stripe to check its actual status
-        const subscription =
-          await stripe.subscriptions.retrieve(subscriptionId);
+        const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
+          expand: ["latest_invoice"],
+        });
 
         if (user.subscriptionStatus === "active") {
           return res.json({
@@ -1572,6 +1580,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log(
             `✅ Subscription active in Stripe for user ${user.id}; DB will sync via webhook.`,
           );
+
+          const latestInvoice = subscription.latest_invoice;
+          const paidCents =
+            latestInvoice &&
+            typeof latestInvoice === "object" &&
+            typeof latestInvoice.amount_paid === "number"
+              ? latestInvoice.amount_paid
+              : 0;
+
+          try {
+            await processAffiliateSubscriptionActivation(
+              user.id,
+              subscriptionId,
+              { createCommission: paidCents > 0 },
+            );
+          } catch (affErr) {
+            console.error("Affiliate activation (confirm-subscription):", affErr);
+          }
 
           return res.json({
             success: true,
@@ -1700,12 +1726,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           subscriptionEndDate: user.subscriptionEndDate,
           subscriptionViaCoupon: Boolean(user.subscriptionViaCoupon),
           hasDefaultPaymentMethod,
-          /** DB + Stripe: promo end date and cancel-at-period-end honored. */
+          /** DB and/or Stripe — allow access when webhooks have not synced DB yet. */
           hasAccess:
-            dbAccessActive &&
-            (subscription.status === "active" ||
-              subscription.status === "trialing" ||
-              (subscription.cancel_at_period_end && stillInPaidPeriod)),
+            dbAccessActive ||
+            subscription.status === "active" ||
+            subscription.status === "trialing" ||
+            (subscription.cancel_at_period_end && stillInPaidPeriod),
         });
       } catch (error) {
         console.error("Error fetching subscription status:", error);
@@ -6054,9 +6080,8 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
         search,
       } = req.query;
 
-      const userId = String(req.user?.id ?? req.user?.claims?.sub ?? req.user?.userId ?? "");
+      const userId = resolveAuthUserId(req);
       const user = await GetUserScscriptionTrialValidation(userId);
-      console.log(user, userId);
 
       if (!user) {
         return res
@@ -7040,19 +7065,41 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
         </div></body></html>`;
 
     case "emerald-sidebar": {
+      const esc = (s: unknown) =>
+        String(s ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+
       const contactBits = [
-        isPresent(resumeData.phone) ? `📞 ${resumeData.phone}` : "",
-        isPresent(resumeData.email) ? `✉️ ${resumeData.email}` : "",
+        isPresent(resumeData.phone) ? `📞 ${esc(resumeData.phone)}` : "",
+        isPresent(resumeData.email) ? `✉️ ${esc(resumeData.email)}` : "",
         isPresent(resumeData.location)
-          ? `${resumeLocationSvg({ size: 12, fill: "#047857" })} ${resumeData.location}`
+          ? `${resumeLocationSvg({ size: 12, fill: "#047857" })} ${esc(resumeData.location)}`
+          : "",
+        isPresent(resumeData.linkedin)
+          ? linkedInPdfLinkHtml(resumeData.linkedin, {
+              esc,
+              iconSize: 12,
+              iconFill: "#047857",
+              linkColor: "#047857",
+            })
           : "",
       ].filter(isPresent);
 
-      const portfolioUrl =
-        (isPresent(resumeData.website) && resumeData.website) ||
-        (isPresent(resumeData.linkedin) && resumeData.linkedin) ||
-        (isPresent(resumeData.github) && resumeData.github) ||
-        "";
+      const portfolioRows = [
+        isPresent(resumeData.website)
+          ? `<div style="font-size:11px;margin-top:6px;word-break:break-word;"><a href="${esc(resumeData.website)}" target="_blank" rel="noopener noreferrer" style="color:#047857;font-weight:700;text-decoration:underline;">${esc(String(resumeData.website).replace(/^https?:\/\//, ""))}</a></div>`
+          : "",
+        isPresent(resumeData.linkedin)
+          ? `<div style="margin-top:6px;">${linkedInPdfLinkHtml(resumeData.linkedin, { esc, iconSize: 12, iconFill: "#047857", linkColor: "#047857" })}</div>`
+          : "",
+        isPresent(resumeData.github)
+          ? `<div style="font-size:11px;margin-top:6px;word-break:break-word;display:flex;align-items:center;gap:6px;">${resumeSocialSvg("github", { size: 12, fill: "#24292f" })}<a href="${esc(resumeData.github)}" target="_blank" rel="noopener noreferrer" style="color:#047857;font-weight:700;text-decoration:underline;">${esc(String(resumeData.github).replace(/^https?:\/\//, ""))}</a></div>`
+          : "",
+      ].filter(isPresent);
 
       const expHtml =
         resumeData.experience && resumeData.experience.length > 0
@@ -7122,7 +7169,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
                 <div class="s-title">My Portfolio</div>
                 <div class="s-box">
                   <div class="muted" style="font-size:10px;">Click here to view</div>
-                  ${isPresent(portfolioUrl) ? `<div style="font-weight:900;color:#047857;word-break:break-word;">${portfolioUrl}</div>` : `<div class="muted" style="font-size:10px;">(add website/linkedin/github)</div>`}
+                  ${portfolioRows.length ? portfolioRows.join("") : `<div class="muted" style="font-size:10px;">(add website/linkedin/github)</div>`}
                 </div>
 
                 <div class="s-title">Area of Expertise</div>

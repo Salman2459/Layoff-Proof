@@ -14,6 +14,7 @@ import {
 } from '@shared/schema';
 import { getJwtSecret, signAppAccessToken, verifyJwt } from "./jwt";
 import { sendEmail } from "./emailService";
+import { attachReferralFromCookie } from "./affiliateService";
 
 const SALT_ROUNDS = 10;
 const PASSWORD_RESET_EXPIRY_MINUTES = 60;
@@ -80,6 +81,13 @@ export function setupPasswordAuth(app: Express) {
         authProvider: 'email',
         isEmailVerified: true // Auto-verify for now, can add email verification later
       });
+
+      // Link referral from affiliate_ref cookie if present
+      try {
+        await attachReferralFromCookie(req, user.id);
+      } catch (refErr) {
+        console.error("Affiliate referral attach error:", refErr);
+      }
 
       // Create session
       req.session.user = {

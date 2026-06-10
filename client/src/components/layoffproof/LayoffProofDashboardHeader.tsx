@@ -1,11 +1,12 @@
 import { LayoffProofProfileMenu } from "@/components/layoffproof/LayoffProofProfileMenu";
+import { useShellManagesChrome } from "./layoffproof-shell-chrome";
 
 type LayoffProofDashboardHeaderProps = {
   greeting: string;
   subtitle?: string;
 };
 
-export function LayoffProofDashboardHeader({
+export function LayoffProofDashboardHeaderView({
   greeting,
   subtitle = "Let's accelerate your dream career with AI.",
 }: LayoffProofDashboardHeaderProps) {
@@ -23,4 +24,12 @@ export function LayoffProofDashboardHeader({
       </div>
     </header>
   );
+}
+
+export function LayoffProofDashboardHeader(props: LayoffProofDashboardHeaderProps) {
+  if (useShellManagesChrome()) {
+    return null;
+  }
+
+  return <LayoffProofDashboardHeaderView {...props} />;
 }

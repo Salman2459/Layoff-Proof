@@ -1,11 +1,12 @@
 import { LayoffProofProfileMenu } from "@/components/layoffproof/LayoffProofProfileMenu";
+import { useShellManagesChrome } from "./layoffproof-shell-chrome";
 
 type LayoffProofPageHeaderProps = {
   title: string;
   subtitle: string;
 };
 
-export function LayoffProofPageHeader({ title, subtitle }: LayoffProofPageHeaderProps) {
+export function LayoffProofPageHeaderView({ title, subtitle }: LayoffProofPageHeaderProps) {
   return (
     <header className="sticky top-0 z-20 flex items-start justify-between gap-4 border-b border-[#e8ecf4] bg-[#f4f6fb]/95 px-8 py-6 backdrop-blur-sm">
       <div>
@@ -18,4 +19,12 @@ export function LayoffProofPageHeader({ title, subtitle }: LayoffProofPageHeader
       </div>
     </header>
   );
+}
+
+export function LayoffProofPageHeader(props: LayoffProofPageHeaderProps) {
+  if (useShellManagesChrome()) {
+    return null;
+  }
+
+  return <LayoffProofPageHeaderView {...props} />;
 }

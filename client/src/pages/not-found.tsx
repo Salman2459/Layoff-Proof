@@ -66,7 +66,7 @@ function NotFoundContent({ isAuthenticated }: { isAuthenticated: boolean }) {
             className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[#e2e8f0] bg-white px-6 text-sm font-semibold text-[#334155] no-underline shadow-sm transition hover:bg-[#f8fafc]"
           >
             <Sparkles className="h-4 w-4 text-[#6366f1]" />
-            {isAuthenticated ? "Open Resume Builder" : "Get Started Free"}
+            {isAuthenticated ? "Open Resume Builder" : "Get Started "}
           </Link>
         </div>
 

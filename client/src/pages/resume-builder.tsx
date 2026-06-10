@@ -413,6 +413,7 @@ const ResumeEditorForm = ({
   onSaveContinue,
   showProTip = false,
   onDismissProTip,
+  onFlushPreview,
 }: {
   extractedData: ParsedResumeData;
   setExtractedData: React.Dispatch<React.SetStateAction<ParsedResumeData>>;
@@ -426,6 +427,8 @@ const ResumeEditorForm = ({
   onSaveContinue?: () => void;
   showProTip?: boolean;
   onDismissProTip?: () => void;
+  /** Immediately refresh the live preview (e.g. after normalizing LinkedIn on blur). */
+  onFlushPreview?: (data: ParsedResumeData) => void;
 }) => {
   const isLayoffProof = variant === "layoffproof";
   const fieldInputClass = isLayoffProof ? layoffproofInputClass : undefined;
@@ -797,9 +800,14 @@ const ResumeEditorForm = ({
                   onBlur={(e) => {
                     const v = e.target.value.trim();
                     setExtractedData((prev) => {
-                      if (!v) return { ...prev, linkedin: "" };
-                      const n = normalizeStoredLinkedInProfileUrl(v);
-                      return { ...prev, linkedin: n };
+                      const next = !v
+                        ? { ...prev, linkedin: "" }
+                        : {
+                            ...prev,
+                            linkedin: normalizeStoredLinkedInProfileUrl(v),
+                          };
+                      onFlushPreview?.(next);
+                      return next;
                     });
                   }}
                   placeholder="linkedin.com/in/johndoe"
@@ -2262,6 +2270,7 @@ export default function ResumeBuilder() {
               onSaveContinue={handleEditorSaveContinue}
               showProTip={showProTip && editorSection === "personal"}
               onDismissProTip={() => setShowProTip(false)}
+              onFlushPreview={setDebouncedExtractedData}
             />
           </div>
           <div className="min-w-0 space-y-4 lg:pl-3 lg:sticky lg:top-6 lg:self-start">

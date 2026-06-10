@@ -1,7 +1,8 @@
 // Filename: src/pages/Subscribe.tsx
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { loadStripe } from "@stripe/stripe-js";
 import {
   Elements,
@@ -303,6 +304,18 @@ const formatDate = (iso: string) => {
   }).format(d);
 };
 
+/** Client-side navigation after payment — avoids full page reload. */
+async function navigateToDashboard(
+  queryClient: QueryClient,
+  setLocation: (path: string) => void,
+) {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] }),
+    queryClient.invalidateQueries({ queryKey: ["/api/stripe/subscription-status"] }),
+  ]);
+  setLocation("/dashboard");
+}
+
 // Stripe Checkout Form
 const CheckoutForm = ({
   planId,
@@ -330,6 +343,12 @@ const CheckoutForm = ({
   const stripe = useStripe();
   const elements = useElements();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
+  const goToDashboard = useCallback(
+    () => navigateToDashboard(queryClient, setLocation),
+    [queryClient, setLocation],
+  );
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentClientSecret, setCurrentClientSecret] = useState(initialClientSecret);
   const [priceBreakdown, setPriceBreakdown] = useState<PriceBreakdown | null>(() =>
@@ -513,7 +532,7 @@ const CheckoutForm = ({
             description:
               data.message ?? "Your promo code was applied. You now have full access.",
           });
-          window.location.href = `${window.location.origin}/`;
+          await goToDashboard();
           setIsProcessing(false);
           return;
         }
@@ -533,7 +552,7 @@ const CheckoutForm = ({
       // If we reach here and final amount is 0, skip payment
       if (priceBreakdown && priceBreakdown.finalAmount === 0) {
         console.log("✅ Final amount is $0, redirecting...");
-        window.location.href = `${window.location.origin}/`;
+        await goToDashboard();
         return;
       }
 
@@ -584,7 +603,7 @@ const CheckoutForm = ({
           });
 
           if (confirmData.success) {
-            window.location.href = `${window.location.origin}/`;
+            await goToDashboard();
           } else {
             toast({
               title: "Activation Error",
@@ -599,7 +618,7 @@ const CheckoutForm = ({
             title: "Payment successful",
             description: "Your Resume Engine add-on payment was received.",
           });
-          window.location.href = `${window.location.origin}/`;
+          await goToDashboard();
         }
       }
     } catch (error) {
@@ -1128,6 +1147,7 @@ export default function Subscribe() {
   const [coupon, setCoupon] = useState("");
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
 
   const [planChangePayment, setPlanChangePayment] = useState<{
     clientSecret: string;
@@ -1209,9 +1229,7 @@ export default function Subscribe() {
   };
 
   const finishPlanChangeSuccess = () => {
-    queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/stripe/subscription-status"] });
-    window.location.href = `${window.location.origin}/`;
+    void navigateToDashboard(queryClient, setLocation);
   };
 
   const startPlanChangeCardPayment = useCallback(async () => {

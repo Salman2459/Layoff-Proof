@@ -23,19 +23,15 @@ export default function AllActivitiesPage() {
 
   return (
     <LayoffProofLayout activeNavId="dashboard">
-      <header className="sticky top-0 z-20 border-b border-[#e8ecf4] bg-[#f4f6fb]/95 px-8 py-5 backdrop-blur-sm">
+      <div className="px-8 pt-5">
         <Link
           href="/dashboard"
-          className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-[#64748b] no-underline transition hover:text-[#6366f1]"
+          className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-[#64748b] no-underline transition hover:text-[#6366f1]"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to dashboard
         </Link>
-        <h1 className="text-xl font-bold tracking-tight text-[#0f172a]">All Activity</h1>
-        <p className="mt-0.5 text-[13px] text-[#64748b]">
-          Your full history across Layoff Proof tools and profile updates.
-        </p>
-      </header>
+      </div>
 
       <main className="flex-1 px-8 py-6">
         <div className="mx-auto max-w-2xl rounded-2xl border border-[#e8ecf4] bg-white p-6 shadow-sm">

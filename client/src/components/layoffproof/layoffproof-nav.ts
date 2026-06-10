@@ -16,6 +16,7 @@ import {
   CreditCard,
   Settings,
   TrendingDown,
+  Handshake,
 } from "lucide-react";
 
 export type LayoffProofNavItem = {
@@ -113,6 +114,13 @@ export const layoffProofNavItems: LayoffProofNavItem[] = [
     label: "Documents",
     href: "/auto-job-apply",
     icon: FolderOpen,
+  },
+  {
+    id: "affiliate",
+    label: "Affiliate",
+    href: "/affiliate",
+    icon: Handshake,
+    match: (p) => p === "/affiliate",
   },
   {
     id: "subscription",

@@ -4,6 +4,7 @@ import type { Express } from "express";
 import { storage } from "./storage";
 import { signAppAccessToken } from "./jwt";
 import { effectiveSubscriptionStatus } from "./subscriptionAccess";
+import { attachReferralFromCookie } from "./affiliateService";
 
 function getSafeRedirectPath(redirect: unknown): string | null {
   if (!redirect || typeof redirect !== "string") return null;
@@ -94,6 +95,12 @@ export function setupGoogleAuth(app: Express) {
               isEmailVerified: true,
             });
 
+            try {
+              await attachReferralFromCookie(req, user.id);
+            } catch (refErr) {
+              console.error("Affiliate referral attach error:", refErr);
+            }
+
             if (profileImageUrl) {
               user = await storage.updateUser(user.id, {
                 profileImageUrl,
@@ -168,7 +175,7 @@ export function setupGoogleAuth(app: Express) {
         if (req.session) req.session.oauthRedirect = null;
 
         const dest = hasActiveSubscription(user)
-          ? requested ?? "/"
+          ? requested ?? "/dashboard"
           : "/subscribe";
 
         const hash = new URLSearchParams({

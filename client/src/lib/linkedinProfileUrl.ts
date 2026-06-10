@@ -1,8 +1,8 @@
 export const LINKEDIN_PROFILE_PREFIX = "https://www.linkedin.com/in/";
 
-const VANITY_SLUG_REGEX = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/;
+const VANITY_SLUG_REGEX = /^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$/;
 const LINKEDIN_PROFILE_URL_REGEX =
-  /^https?:\/\/(www\.)?linkedin\.com\/in\/[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\/?$/i;
+  /^https?:\/\/(www\.)?linkedin\.com\/in\/[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?\/?$/i;
 
 /** Extract the /in/ vanity slug from a full URL, pasted input, or plain handle. */
 export function linkedInVanityFromStored(stored: string): string {
