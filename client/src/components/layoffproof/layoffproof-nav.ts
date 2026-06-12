@@ -17,6 +17,7 @@ import {
   Settings,
   TrendingDown,
   Handshake,
+  DollarSign,
 } from "lucide-react";
 
 export type LayoffProofNavItem = {
@@ -102,6 +103,13 @@ export const layoffProofNavItems: LayoffProofNavItem[] = [
     href: "/career-path-analyzer",
     icon: MessageCircle,
     match: (p) => p === "/career-path-analyzer",
+  },
+  {
+    id: "salary-negotiator",
+    label: "Salary Negotiator",
+    href: "/salary-negotiator",
+    icon: DollarSign,
+    match: (p) => p === "/salary-negotiator",
   },
   // {
   //   id: "saved",
@@ -230,5 +238,13 @@ export const layoffProofToolCards: LayoffProofToolCard[] = [
     href: "/career-path-analyzer",
     icon: MessageCircle,
     iconBg: "bg-gradient-to-br from-indigo-500 to-violet-700",
+  },
+  {
+    id: "salary-negotiator",
+    title: "Salary Negotiator",
+    description: "Strategies and scripts for salary talks",
+    href: "/salary-negotiator",
+    icon: DollarSign,
+    iconBg: "bg-gradient-to-br from-violet-500 to-indigo-600",
   },
 ];
