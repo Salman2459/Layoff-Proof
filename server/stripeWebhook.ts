@@ -390,6 +390,27 @@ export const handleStripeWebhook = async (
         break;
       }
 
+      case "payment_intent.payment_failed": {
+        const pi = event.data.object as Stripe.PaymentIntent;
+        if (pi.metadata?.type === "resume_engine_addon") {
+          break;
+        }
+        const cid = customerIdOnly(pi.customer);
+        const userId = await resolveUserId({
+          stripeCustomerId: cid,
+          metadataUserId: pi.metadata?.userId ?? undefined,
+        });
+        if (!userId) {
+          console.warn("payment_intent.payment_failed: could not resolve user", pi.id);
+          break;
+        }
+
+        await storage.updateUser(userId, {
+          subscriptionStatus: "inactive",
+          stripeCustomerId: cid ?? undefined,
+        });
+        break;
+      }
       default:
         break;
     }
