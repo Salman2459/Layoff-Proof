@@ -775,6 +775,15 @@ const PlanSelection = ({
     return plans.find((p) => p.id === currentCatalogPlanId);
   }, [currentCatalogPlanId, plans]);
 
+  const displayPlans = useMemo(
+    () =>
+      plans
+        .filter((p) => p.name !== "TradePilot AI (Careers & Community)")
+        .slice()
+        .reverse(),
+    [plans],
+  );
+
   const handleSelect = async (plan: StripeCatalogProduct) => {
     setIsLoading(plan.id);
     await onPlanSelect(plan);
@@ -851,7 +860,7 @@ useEffect(() => {
     </>
   ) : (
   <>
-  {plans?.slice()?.reverse()?.map((plan: StripeCatalogProduct, planIdx: number) => {
+  {displayPlans.map((plan: StripeCatalogProduct, planIdx: number) => {
     const isCurrent = showAsCurrentPlanInUi(plan.id);
 
     const showMarkedFeatures =["Auto-Apply","Tailored Resume","Tailored Cover","Recruiter DM","Resume Engine","Layoff Radar"]
@@ -946,14 +955,14 @@ useEffect(() => {
 
       const shouldShowPlus =
         isResumeEngine &&
-        plans.length > planIdx + 1 &&
+        displayPlans.length > planIdx + 1 &&
         (!isCurrentPlan || !isResumeEngineFeature);
 
       const shouldShowButton =
         isResumeEngine &&
         isResumeEngineFeature &&
         isCurrentPlan &&
-        plans.length > planIdx + 1;
+        displayPlans.length > planIdx + 1;
 
       const statusIcon =
         planIdx === 0 &&

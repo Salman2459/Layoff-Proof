@@ -3,7 +3,6 @@ import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import type { Express } from "express";
 import { storage } from "./storage";
 import { signAppAccessToken } from "./jwt";
-import { effectiveSubscriptionStatus } from "./subscriptionAccess";
 
 function getSafeRedirectPath(redirect: unknown): string | null {
   if (!redirect || typeof redirect !== "string") return null;
@@ -17,10 +16,6 @@ function getSafeRedirectPath(redirect: unknown): string | null {
   if (decoded.startsWith("//")) return null;
   if (decoded.includes("://")) return null;
   return decoded;
-}
-
-function hasActiveSubscription(user: any): boolean {
-  return effectiveSubscriptionStatus(user) === "active";
 }
 
 export function setupGoogleAuth(app: Express) {
@@ -167,9 +162,7 @@ export function setupGoogleAuth(app: Express) {
         const requested = getSafeRedirectPath(req.session?.oauthRedirect);
         if (req.session) req.session.oauthRedirect = null;
 
-        const dest = hasActiveSubscription(user)
-          ? requested ?? "/"
-          : "/subscribe";
+        const dest = requested ?? "/dashboard";
 
         const hash = new URLSearchParams({
           token,

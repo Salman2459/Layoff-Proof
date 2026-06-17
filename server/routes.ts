@@ -8,11 +8,12 @@ import { setupMagicAuth, isMagicAuthenticated } from "./magicAuth";
 import { setupPasswordAuth, isAuthenticatedAny } from "./passwordAuth";
 import { setupGoogleAuth } from "./googleAuth";
 // import { setupLinkedInAuth } from "./linkedinAuth";
-import { analyzeJobSecurityRisk } from "./anthropic";
+import { analyzeJobSecurityRisk, DEFAULT_MODEL_STR } from "./anthropic";
 import { dataIntegrator } from "./data-integrator";
 import {
   insertCompanySchema,
   updateUserProfileSchema,
+  profileSettingsSchema,
   ParsedResumeData,
   insertJobBoardSchema,
   userJobProfiles,
@@ -370,12 +371,92 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // User profile management
   app.put("/api/user/profile", isAuthenticatedAny, async (req: any, res) => {
     try {
-      const userId = req.user.id; // Make sure this exists
-      console.log("User ID:", userId); // Add logging
-      console.log("Request body:", req.body); // Add logging
+      const userId = req.user.id;
+      const validated = profileSettingsSchema.parse(req.body);
+      const {
+        linkedin,
+        website,
+        location,
+        currentCompany,
+        ...userFields
+      } = validated;
 
-      const validated = updateUserProfileSchema.parse(req.body);
-      const user = await storage.updateUserProfile(userId, validated);
+      if (userFields.email) {
+        const existingUser = await storage.getUserByEmail(userFields.email);
+        if (existingUser && existingUser.id !== userId) {
+          return res.status(409).json({
+            message: "This email is already in use by another account.",
+          });
+        }
+      }
+
+      const user = await storage.updateUserProfile(userId, userFields);
+
+      const jobProfilePatch: Record<string, unknown> = {};
+      if (userFields.firstName !== undefined) {
+        jobProfilePatch.firstName = userFields.firstName;
+      }
+      if (userFields.lastName !== undefined) {
+        jobProfilePatch.lastName = userFields.lastName;
+      }
+      if (userFields.email !== undefined) {
+        jobProfilePatch.email = userFields.email;
+      }
+      if (userFields.phoneNumber !== undefined) {
+        jobProfilePatch.phone = userFields.phoneNumber;
+      }
+      if (linkedin !== undefined) {
+        jobProfilePatch.linkedin = linkedin || null;
+      }
+      if (website !== undefined) {
+        jobProfilePatch.website = website || null;
+      }
+      if (location !== undefined && location.trim()) {
+        const parts = location.split(",").map((p) => p.trim()).filter(Boolean);
+        if (parts[0]) jobProfilePatch.city = parts[0];
+        if (parts.length > 1) {
+          jobProfilePatch.country = parts.slice(1).join(", ");
+        }
+      }
+
+      const [existingJobProfile] = await db
+        .select()
+        .from(userJobProfiles)
+        .where(eq(userJobProfiles.userId, userId))
+        .limit(1);
+
+      if (currentCompany !== undefined || userFields.jobTitle !== undefined) {
+        const existingExp = Array.isArray(existingJobProfile?.experiences)
+          ? existingJobProfile.experiences[0]
+          : undefined;
+        jobProfilePatch.experiences = [
+          {
+            company: currentCompany ?? existingExp?.company ?? "",
+            title: userFields.jobTitle ?? existingExp?.title ?? "",
+            fromMonth: existingExp?.fromMonth ?? "",
+            fromYear: existingExp?.fromYear ?? "",
+            toMonth: existingExp?.toMonth ?? "",
+            toYear: existingExp?.toYear ?? "",
+            currentlyWorking: existingExp?.currentlyWorking ?? true,
+            description: existingExp?.description ?? "",
+          },
+        ];
+      }
+
+      if (Object.keys(jobProfilePatch).length > 0) {
+        if (existingJobProfile) {
+          await db
+            .update(userJobProfiles)
+            .set(jobProfilePatch)
+            .where(eq(userJobProfiles.userId, userId));
+        } else {
+          await db.insert(userJobProfiles).values({
+            userId,
+            profileCompletion: 0,
+            ...jobProfilePatch,
+          });
+        }
+      }
 
       await recordUserActivity(userId, {
         type: "profile_updated",
@@ -383,9 +464,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sourceId: `account-profile:${userId}:${Date.now()}`,
       });
 
-      console.log("Updated user:", user); // Add logging
       res.json(user);
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.name === "ZodError") {
+        const firstIssue = error.issues?.[0];
+        const fieldMessage =
+          firstIssue?.message && firstIssue?.path?.length
+            ? `${String(firstIssue.path[0])}: ${firstIssue.message}`
+            : "Invalid profile data";
+        return res.status(400).json({ message: fieldMessage });
+      }
+
+      if (error?.code === "23505") {
+        return res.status(409).json({
+          message: "This email is already in use by another account.",
+        });
+      }
+
       console.error("Error updating user profile:", error);
       res.status(400).json({ message: "Invalid profile data" });
     }
@@ -2783,7 +2878,7 @@ You MUST respond with ONLY a single valid JSON object. Do not include any text, 
       // --- MODIFICATION END ---
 
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: DEFAULT_MODEL_STR,
         max_tokens: 2000,
         temperature: 0.1, // Low temperature for factual, deterministic output
         messages: [{ role: "user", content: prompt }],
@@ -2874,7 +2969,7 @@ Now, provide the complete, improved cover letter below.
       const aiResult = await anthropicMessagesCreateWithRetry(
         anthropic,
         {
-          model: "claude-sonnet-4-20250514",
+          model: DEFAULT_MODEL_STR,
           max_tokens: 2048,
           temperature: 0.45,
           messages: [{ role: "user", content: prompt }],
@@ -2966,7 +3061,7 @@ Now, provide the complete, improved cover letter below.
       });
 
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: DEFAULT_MODEL_STR,
         max_tokens: 2000,
         temperature: 0.1, // Low temperature for factual, deterministic output
         messages: [{ role: "user", content: prompt }],
@@ -3264,7 +3359,7 @@ ${rawText}
       const aiResult = await anthropicMessagesCreateWithRetry(
         anthropic,
         {
-          model: "claude-sonnet-4-20250514",
+          model: DEFAULT_MODEL_STR,
           max_tokens: 2000,
           temperature: 0.1,
           messages: [{ role: "user", content: prompt }],
@@ -3909,7 +4004,7 @@ You are helping a real person apply for a job. Write a cover letter that reads a
 
         try {
           const message = await anthropic.messages.create({
-            model: "claude-sonnet-4-20250514",
+            model: DEFAULT_MODEL_STR,
             max_tokens: 2000,
             temperature: 0.72,
             messages: [{ role: "user", content: prompt }],
@@ -4244,7 +4339,7 @@ ${applicantInfo.name}
       `;
 
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: DEFAULT_MODEL_STR,
         max_tokens: 2500,
         temperature: 0.7,
         messages: [{ role: "user", content: prompt }],
@@ -4302,7 +4397,7 @@ ${applicantInfo.name}
   app.get("/api/test-claude", async (req, res) => {
     try {
       const message = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: DEFAULT_MODEL_STR,
         max_tokens: 100,
         messages: [
           {
@@ -4413,7 +4508,7 @@ Rules:
 Return ONLY the JSON object, no additional text or formatting.`;
 
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: DEFAULT_MODEL_STR,
         max_tokens: 2000,
         messages: [{ role: "user", content: aiPrompt }],
       });
@@ -4990,7 +5085,7 @@ app.post("/api/notify-me", isAuthenticatedAny, async (req: any, res) => {
           });
 
           const response = await anthropic.messages.create({
-            model: "claude-sonnet-4-20250514",
+            model: DEFAULT_MODEL_STR,
             max_tokens: 2000,
             messages: [{ role: "user", content: prompt }],
           });
@@ -5122,7 +5217,7 @@ app.post("/api/notify-me", isAuthenticatedAny, async (req: any, res) => {
       Format as structured data that can be easily parsed.`;
 
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: DEFAULT_MODEL_STR,
         max_tokens: 2000,
         messages: [{ role: "user", content: prompt }],
       });
@@ -5259,7 +5354,7 @@ app.post("/api/notify-me", isAuthenticatedAny, async (req: any, res) => {
       Format as detailed, actionable feedback.`;
 
         const response = await anthropic.messages.create({
-          model: "claude-sonnet-4-20250514",
+          model: DEFAULT_MODEL_STR,
           max_tokens: 2000,
           messages: [{ role: "user", content: prompt }],
         });
@@ -5464,7 +5559,7 @@ Requirements:
         if (process.env.ANTHROPIC_API_KEY) {
           const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
           const response = await anthropic.messages.create({
-            model: "claude-sonnet-4-20250514",
+            model: DEFAULT_MODEL_STR,
             max_tokens: 350,
             messages: [{ role: "user", content: prompt }],
           });
@@ -5620,7 +5715,7 @@ Requirements:
       const aiResult = await anthropicMessagesCreateWithRetry(
         anthropic,
         {
-          model: "claude-sonnet-4-20250514",
+          model: DEFAULT_MODEL_STR,
           max_tokens: 2000,
           temperature: 0.1,
           messages: [{ role: "user", content: prompt }],
@@ -5791,7 +5886,7 @@ Requirements:
 
     try {
       const msg = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514", // Using Opus for best results on complex JSON tasks
+        model: DEFAULT_MODEL_STR, // Using Opus for best results on complex JSON tasks
         max_tokens: 4000,
         temperature: 0.2,
         messages: [{ role: "user", content: prompt }],
@@ -5907,7 +6002,7 @@ Example format: {"message": "Subject: Inquiry about opportunities\\n\\nDear John
 `;
 
       const msg = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: DEFAULT_MODEL_STR,
         max_tokens: 1000,
         temperature: 0.6,
         messages: [{ role: "user", content: prompt }],
@@ -6019,7 +6114,7 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
 
       // --- API Call to Claude (No changes needed here) ---
       const msg = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: DEFAULT_MODEL_STR,
         max_tokens: 500,
         temperature: 0.7,
         messages: [{ role: "user", content: prompt }],

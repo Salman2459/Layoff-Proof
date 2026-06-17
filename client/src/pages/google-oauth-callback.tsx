@@ -41,7 +41,7 @@ export default function GoogleOAuthCallback() {
 
       window.history.replaceState(null, "", window.location.pathname);
 
-      setDest(getSafeRedirectPath(redirect) ?? "/");
+      setDest(getSafeRedirectPath(redirect) ?? "/dashboard");
     } catch {
       setError("invalid_payload");
     }

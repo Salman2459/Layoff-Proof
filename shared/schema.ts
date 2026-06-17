@@ -284,7 +284,18 @@ export const updateUserProfileSchema = createInsertSchema(users).pick({
   emailNotifications: true,
   smsNotifications: true,
 }).extend({
-  email: z.string().email(),
+  email: z
+    .string()
+    .email()
+    .transform((value) => value.trim().toLowerCase()),
+});
+
+/** Account profile page — includes optional job-profile fields synced in one request. */
+export const profileSettingsSchema = updateUserProfileSchema.extend({
+  linkedin: z.string().optional(),
+  website: z.string().optional(),
+  location: z.string().optional(),
+  currentCompany: z.string().optional(),
 });
 
 // Types
@@ -338,6 +349,7 @@ export type InsertNotification = z.infer<typeof insertNotificationSchema>;
 export type CompanyActivity = typeof companyActivities.$inferSelect;
 export type InsertCompanyActivity = z.infer<typeof insertCompanyActivitySchema>;
 export type UpdateUserProfile = z.infer<typeof updateUserProfileSchema>;
+export type ProfileSettings = z.infer<typeof profileSettingsSchema>;
 export type UserCompanySubscription = typeof userCompanySubscriptions.$inferSelect;
 export type InsertUserCompanySubscription = typeof userCompanySubscriptions.$inferInsert;
 
