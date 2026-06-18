@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Redirect, useSearchParams } from "wouter";
+import { Redirect, useLocation, useSearchParams } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { getSafeRedirectPath } from "@/components/ProtectedRoute";
 import { AuthLayout, AuthLoadingScreen } from "@/components/auth/AuthLayout";
@@ -18,11 +18,13 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { LoginRequest } from "@shared/schema";
 import { persistAuthLogin } from "@/lib/logoutStorage";
+import { seedAuthCacheAndRefresh } from "@/lib/authNavigation";
 import { getPostAuthRedirectPath } from "@/lib/subscription";
 
 export default function Login() {
   const { toast } = useToast();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
+  const [, setLocation] = useLocation();
   const [searchParams] = useSearchParams();
   const [formData, setFormData] = useState({
     email: "",
@@ -46,7 +48,8 @@ export default function Login() {
         { subscriptionStatus: response.user?.subscriptionStatus },
         searchParams.get("redirect")
       );
-      window.location.href = dest;
+      seedAuthCacheAndRefresh(response.user);
+      setLocation(dest);
     },
     onError: (error: Error) => {
       const errorMessage = error.message || "Failed to sign in";
