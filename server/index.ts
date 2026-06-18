@@ -1,4 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
+import path from "path";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { allCronjobs } from "./cronjobs/index";
@@ -9,6 +10,7 @@ allCronjobs();
 
 const app = express();
 app.use(cors());
+app.use("/uploads", express.static(path.resolve("uploads")));
 // Stripe webhooks require the raw body for signature verification.
 app.post(
   "/api/stripe/webhook",

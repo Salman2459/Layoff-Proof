@@ -24,7 +24,6 @@ import {
   getResumeProfileImageSrc,
   RESUME_PHOTO_TEMPLATE_NAMES,
   templateSupportsProfilePhoto,
-  templateSupportsProjects,
 } from "@shared/resumeTemplates";
 import {
   compressImageFile,
@@ -447,24 +446,32 @@ const ResumeEditorForm = ({
         </Button>
       </div>
     ) : null;
-  // --- NEW: Add constants and derived state for clarity ---
+  // --- Skills: badge input (type + Enter), same pattern as AI Auto Apply ---
   const MAX_SKILLS = 15;
   const skillsList = extractedData.skills || [];
   const skillCount = skillsList.length;
   const isSkillLimitReached = skillCount >= MAX_SKILLS;
-  const [skillsInput, setSkillsInput] = useState(() => skillsList.join(", "));
 
-  useEffect(() => {
-    const parsedFromInput = skillsInput
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (JSON.stringify(parsedFromInput) !== JSON.stringify(skillsList)) {
-      setSkillsInput(skillsList.join(", "));
-    }
-  }, [skillsList, skillsInput]);
-  const showProjectsTab =
-    !!selectedTemplateId && templateSupportsProjects(selectedTemplateId);
+  const addSkill = (skillName: string) => {
+    const trimmed = skillName.trim();
+    if (!trimmed || skillCount >= MAX_SKILLS) return;
+    setExtractedData((prev) => {
+      const list = prev.skills || [];
+      if (list.some((s) => s.toLowerCase() === trimmed.toLowerCase())) return prev;
+      return {
+        ...prev,
+        skills: [...list, trimmed].slice(0, MAX_SKILLS),
+      };
+    });
+  };
+
+  const removeSkill = (skillName: string) => {
+    setExtractedData((prev) => ({
+      ...prev,
+      skills: (prev.skills || []).filter((s) => s !== skillName),
+    }));
+  };
+  const showProjectsTab = true;
   const supportsPhoto =
     !!selectedTemplateId && templateSupportsProfilePhoto(selectedTemplateId);
   const hasProfilePhoto = !!getResumeProfileImageSrc({
@@ -901,31 +908,67 @@ const ResumeEditorForm = ({
           <TabsContent value="skills" className="space-y-2">
             <h3 className="text-xl font-semibold">Skills</h3>
             <p className="text-sm text-gray-600">
-              Enter your top skills (comma-separated), or use the ✨ icon to get
+              Type a skill and press Enter to add it, or use the ✨ icon to get
               AI suggestions. Max {MAX_SKILLS} skills.
             </p>
-            <AIInputWrapper
-              fieldName="skills"
-              currentValue={skillsInput}
-              resumeData={extractedData}
-              onSuggestion={onAISuggestion}
-            >
-              <Textarea
-                value={skillsInput}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  setSkillsInput(raw);
-                  const skillsArray = raw
-                    .split(",")
-                    .map((s) => s.trim())
-                    .filter(Boolean)
-                    .slice(0, MAX_SKILLS);
-                  setExtractedData({ ...extractedData, skills: skillsArray });
-                }}
-                placeholder="React, JavaScript, Node.js, Project Management..."
-                className="pr-10"
-              />
-            </AIInputWrapper>
+            <div className="relative w-full">
+              <div
+                className={cn(
+                  "min-h-[42px] rounded-md border p-2 pr-10",
+                  isLayoffProof ? "border-[#e2e8f0] bg-white" : "border-gray-300",
+                )}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  {skillsList.map((skill) => (
+                    <span
+                      key={skill}
+                      className={cn(
+                        "inline-flex items-center rounded-md px-2 py-1 text-sm",
+                        isLayoffProof
+                          ? "bg-[#6366f1]/15 text-[#6366f1]"
+                          : "bg-primary/15 text-primary",
+                      )}
+                    >
+                      {skill}
+                      <button
+                        type="button"
+                        onClick={() => removeSkill(skill)}
+                        className={cn(
+                          "ml-1 leading-none hover:opacity-80",
+                          isLayoffProof ? "text-[#6366f1]" : "text-primary",
+                        )}
+                        aria-label={`Remove ${skill}`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    type="text"
+                    placeholder={
+                      isSkillLimitReached ? "Maximum skills reached" : "Add skill..."
+                    }
+                    disabled={isSkillLimitReached}
+                    className="min-w-[120px] flex-1 bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && e.currentTarget.value.trim()) {
+                        e.preventDefault();
+                        addSkill(e.currentTarget.value);
+                        e.currentTarget.value = "";
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="absolute top-2 right-2">
+                <AIImproveButton
+                  fieldName="skills"
+                  currentValue={skillsList.join(", ")}
+                  resumeData={extractedData}
+                  onSuggestion={onAISuggestion}
+                />
+              </div>
+            </div>
             {isSkillLimitReached && (
               <p className="text-xs text-red-500">
                 Maximum of {MAX_SKILLS} skills reached. Further skills will not
@@ -1223,8 +1266,8 @@ const ResumeEditorForm = ({
                 <div>
                   <h3 className="text-xl font-semibold">Projects</h3>
                   <p className="text-sm text-muted-foreground">
-                    Shown on Photo Classic and Brand Split. Each line appears on
-                    the resume (link URL, project name, or short description).
+                    Portfolio or side projects. They appear on your downloaded
+                    PDF only when you add at least one entry.
                   </p>
                 </div>
                 <Button
@@ -1234,7 +1277,7 @@ const ResumeEditorForm = ({
                       ...extractedData,
                       projects: [
                         ...(extractedData.projects || []),
-                        { name: "", url: "" },
+                        { name: "", url: "", description: "" },
                       ],
                     })
                   }
@@ -1252,8 +1295,9 @@ const ResumeEditorForm = ({
                 >
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <div>
-                      <Label>Project name</Label>
+                      <Label htmlFor={`project-name-${index}`}>Project name</Label>
                       <Input
+                        id={`project-name-${index}`}
                         value={
                           typeof proj === "string"
                             ? proj
@@ -1266,6 +1310,7 @@ const ResumeEditorForm = ({
                               ? {
                                   name: e.target.value,
                                   url: "",
+                                  description: "",
                                 }
                               : {
                                   ...(list[index] as object),
@@ -1277,12 +1322,13 @@ const ResumeEditorForm = ({
                             projects: list,
                           });
                         }}
-                        placeholder="e.g. Portfolio site"
+                        placeholder="e.g. E-commerce dashboard"
                       />
                     </div>
                     <div>
-                      <Label>Link or description</Label>
+                      <Label htmlFor={`project-url-${index}`}>Project link</Label>
                       <Input
+                        id={`project-url-${index}`}
                         value={
                           typeof proj === "string"
                             ? ""
@@ -1296,6 +1342,7 @@ const ResumeEditorForm = ({
                               ? {
                                   name: cur,
                                   url: e.target.value,
+                                  description: "",
                                 }
                               : {
                                   ...(cur as object),
@@ -1310,6 +1357,39 @@ const ResumeEditorForm = ({
                         placeholder="https://github.com/you/project"
                       />
                     </div>
+                  </div>
+                  <div className="mb-4">
+                    <Label htmlFor={`project-desc-${index}`}>Description</Label>
+                    <Textarea
+                      id={`project-desc-${index}`}
+                      value={
+                        typeof proj === "string"
+                          ? ""
+                          : String(proj?.description ?? "")
+                      }
+                      onChange={(e) => {
+                        const list = [...(extractedData.projects || [])];
+                        const cur = list[index];
+                        const next =
+                          typeof cur === "string"
+                            ? {
+                                name: cur,
+                                url: "",
+                                description: e.target.value,
+                              }
+                            : {
+                                ...(cur as object),
+                                description: e.target.value,
+                              };
+                        list[index] = next;
+                        setExtractedData({
+                          ...extractedData,
+                          projects: list,
+                        });
+                      }}
+                      placeholder="Briefly describe what you built and the impact..."
+                      rows={3}
+                    />
                   </div>
                   <Button
                     type="button"

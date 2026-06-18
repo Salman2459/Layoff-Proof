@@ -27,6 +27,9 @@ export function persistAuthLogin(payload: {
 /** App-scoped keys: drafts, templates, etc. (e.g. `lp:autoJobApply:draft:*`). */
 const APP_STORAGE_KEY_PREFIX = "lp:";
 
+/** Auto-apply wizard drafts are keyed by user id and restored after re-login. */
+export const AUTO_JOB_APPLY_DRAFT_PREFIX = "lp:autoJobApply:draft:";
+
 /**
  * Remove client-only auth and app data after the server ends the session.
  * Safe to call before navigating to GET `/api/logout` or after POST logout succeeds.
@@ -34,14 +37,16 @@ const APP_STORAGE_KEY_PREFIX = "lp:";
 export function clearClientStorageOnLogout(): void {
   if (typeof window === "undefined") return;
   try {
+    window.dispatchEvent(new CustomEvent("lp:auto-job-apply-flush"));
     const { localStorage } = window;
     localStorage.removeItem(LAYOFF_PROOF_USER_STORAGE_KEY);
     const toRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key?.startsWith(APP_STORAGE_KEY_PREFIX)) {
-        toRemove.push(key);
-      }
+      if (!key?.startsWith(APP_STORAGE_KEY_PREFIX)) continue;
+      // Keep per-user auto-apply drafts so re-login can restore in-progress profiles.
+      if (key.startsWith(AUTO_JOB_APPLY_DRAFT_PREFIX)) continue;
+      toRemove.push(key);
     }
     for (const key of toRemove) {
       localStorage.removeItem(key);

@@ -117,19 +117,19 @@ export const layoffProofNavItems: LayoffProofNavItem[] = [
   //   href: "/job-board",
   //   icon: Bookmark,
   // },
-  {
-    id: "documents",
-    label: "Documents",
-    href: "/auto-job-apply",
-    icon: FolderOpen,
-  },
-  {
-    id: "affiliate",
-    label: "Affiliate",
-    href: "/affiliate",
-    icon: Handshake,
-    match: (p) => p === "/affiliate",
-  },
+  // {
+  //   id: "documents",
+  //   label: "Documents",
+  //   href: "/auto-job-apply",
+  //   icon: FolderOpen,
+  // },
+  // {
+  //   id: "affiliate",
+  //   label: "Affiliate",
+  //   href: "/affiliate",
+  //   icon: Handshake,
+  //   match: (p) => p === "/affiliate",
+  // },
   {
     id: "subscription",
     label: "Subscription",

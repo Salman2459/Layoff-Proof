@@ -5,6 +5,7 @@ import { storage } from "./storage";
 import { signAppAccessToken } from "./jwt";
 import { effectiveSubscriptionStatus } from "./subscriptionAccess";
 import { attachReferralFromCookie } from "./affiliateService";
+import { hasActiveSubscription } from "@/lib/subscription";
 
 function getSafeRedirectPath(redirect: unknown): string | null {
   if (!redirect || typeof redirect !== "string") return null;
@@ -18,10 +19,6 @@ function getSafeRedirectPath(redirect: unknown): string | null {
   if (decoded.startsWith("//")) return null;
   if (decoded.includes("://")) return null;
   return decoded;
-}
-
-function hasActiveSubscription(user: any): boolean {
-  return effectiveSubscriptionStatus(user) === "active";
 }
 
 export function setupGoogleAuth(app: Express) {

@@ -223,7 +223,7 @@ export function JobBoardTable() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <SummaryStat
               label="Total Jobs"
               value={data?.summary.total ?? 0}
@@ -248,14 +248,14 @@ export function JobBoardTable() {
               iconColor="text-[#ec4899]"
               loading={isLoading}
             />
-            <SummaryStat
+            {/* <SummaryStat
               label="Interviews"
               value={data?.summary.interviews ?? 0}
               icon={Calendar}
               iconBg="bg-[#ecfdf5]"
               iconColor="text-emerald-600"
               loading={isLoading}
-            />
+            /> */}
           </div>
         </div>
       </div>

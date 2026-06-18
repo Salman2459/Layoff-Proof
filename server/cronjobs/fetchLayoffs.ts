@@ -2,6 +2,7 @@ import moment from "moment";
 import express from "express";
 import { scheduleJob } from "node-schedule";
 import Anthropic from "@anthropic-ai/sdk";
+import { DEFAULT_MODEL_STR } from "../anthropic";
 import { anthropicMessagesCreateWithRetry } from "../anthropicRetry";
 import RssParser from "rss-parser";
 import { db } from "../db";
@@ -346,7 +347,7 @@ async function fetchAndSaveLayoffs() {
 Extract ALL confirmed AND upcoming/planned layoff events from 2024, 2025, and 2026 from the articles below.
 
 CRITICAL RULES FOR UPCOMING LAYOFFS:
-1. If article mentions "plans to lay ANTHROPIC_API_KEY=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", "will cut", "announcing layoffs", "expected to cut" - these are UPCOMING layoffs
+1. If article mentions "plans to lay off", "will cut", "announcing layoffs", "expected to cut" - these are UPCOMING layoffs
 2. For upcoming layoffs where no specific date is mentioned:
    - If article mentions "Q1", "Q2", etc., use the middle of that quarter
    - If article mentions "by end of year", use December 31 of that year
@@ -394,7 +395,7 @@ ${JSON.stringify(
                         const aiResult = await anthropicMessagesCreateWithRetry(
                             anthropic,
                             {
-                                model: "claude-sonnet-4-20250514",
+                                model: DEFAULT_MODEL_STR,
                                 max_tokens: 8000,
                                 temperature: 0,
                                 messages: [{ role: "user", content: prompt }],

@@ -6,6 +6,7 @@ import {
   Briefcase,
   GraduationCap,
   Trophy,
+  FolderKanban,
 } from "lucide-react";
 
 export const layoffproofInputClass =
@@ -19,7 +20,8 @@ export type ResumeEditorSection =
   | "skills"
   | "experience"
   | "education"
-  | "achievements";
+  | "achievements"
+  | "projects";
 
 export const RESUME_EDITOR_SECTIONS: {
   id: ResumeEditorSection;
@@ -33,6 +35,7 @@ export const RESUME_EDITOR_SECTIONS: {
   { id: "experience", label: "Experience", description: "Work history", icon: Briefcase },
   { id: "education", label: "Education", description: "Academic background", icon: GraduationCap },
   { id: "achievements", label: "Achievements", description: "Awards & wins", icon: Trophy },
+  { id: "projects", label: "Projects", description: "Portfolio work", icon: FolderKanban },
 ];
 
 export const SECTION_ORDER: ResumeEditorSection[] = [
@@ -42,6 +45,7 @@ export const SECTION_ORDER: ResumeEditorSection[] = [
   "experience",
   "education",
   "achievements",
+  "projects",
 ];
 
 export function nextSection(current: ResumeEditorSection): ResumeEditorSection | null {

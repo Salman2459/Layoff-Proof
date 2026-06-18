@@ -109,12 +109,9 @@ export function hasActiveSubscription(user?: SubscriptionUser): boolean {
 
 /** Where to send the user immediately after sign-in / sign-up. */
 export function getPostAuthRedirectPath(
-  user: SubscriptionUser | undefined,
+  _user: SubscriptionUser | undefined,
   requestedRedirect?: string | null,
 ): string {
-  if (!hasActiveSubscription(user)) {
-    return "/subscribe";
-  }
   const safe =
     requestedRedirect != null && typeof requestedRedirect === "string"
       ? requestedRedirect.trim()

@@ -164,7 +164,7 @@ export default function Profile() {
 
   const updateProfileMutation = useMutation({
     mutationFn: async (data: ProfileFormData) => {
-      const userPayload = {
+      return apiRequest("PUT", "/api/user/profile", {
         firstName: data.firstName,
         lastName: data.lastName,
         email: data.email,
@@ -172,57 +172,11 @@ export default function Profile() {
         jobTitle: data.jobTitle,
         emailNotifications: data.emailNotifications,
         smsNotifications: data.smsNotifications,
-      };
-      const userRes = await apiRequest("PUT", "/api/user/profile", userPayload);
-
-      if (user?.id) {
-        const { city, country } = parseLocation(data.location);
-        try {
-          await apiRequest("POST", `/api/profile/personal/${user.id}`, {
-            personal: {
-              firstName: data.firstName,
-              lastName: data.lastName,
-              email: data.email,
-              phone: data.phoneNumber,
-              linkedin: data.linkedin,
-              website: data.website,
-            },
-            currentStep: 1,
-          });
-          if (city || country) {
-            await apiRequest("POST", `/api/profile/residency/${user.id}`, {
-              residency: { city, country },
-              currentStep: 2,
-            });
-          }
-          if (data.currentCompany || data.jobTitle) {
-            await apiRequest("POST", `/api/profile/experience/${user.id}`, {
-              experience: {
-                totalExperience: jobProfile?.totalExperience || "",
-                experiences: [
-                  {
-                    company: data.currentCompany,
-                    title: data.jobTitle,
-                    fromMonth: jobProfile?.experiences?.[0]?.fromMonth || "",
-                    fromYear: jobProfile?.experiences?.[0]?.fromYear || "",
-                    toMonth: jobProfile?.experiences?.[0]?.toMonth || "",
-                    toYear: jobProfile?.experiences?.[0]?.toYear || "",
-                    currentlyWorking:
-                      jobProfile?.experiences?.[0]?.currentlyWorking ?? true,
-                    description:
-                      jobProfile?.experiences?.[0]?.description || "",
-                  },
-                ],
-              },
-              currentStep: 3,
-            });
-          }
-        } catch {
-          // Job profile API may require subscription; account fields still saved
-        }
-      }
-
-      return userRes;
+        linkedin: data.linkedin,
+        website: data.website,
+        location: data.location,
+        currentCompany: data.currentCompany,
+      });
     },
     onSuccess: (data) => {
       queryClient.setQueryData(["/api/auth/user"], (old: unknown) => ({

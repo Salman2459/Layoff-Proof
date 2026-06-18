@@ -3,6 +3,7 @@ import { Redirect } from "wouter";
 import { AuthLoadingScreen } from "@/components/auth/AuthLayout";
 import { getSafeRedirectPath } from "@/components/ProtectedRoute";
 import { persistAuthLogin } from "@/lib/logoutStorage";
+import { seedAuthCacheAndRefresh } from "@/lib/authNavigation";
 
 /**
  * Completes Google sign-in: reads JWT + user from the URL hash (set by the server
@@ -41,6 +42,8 @@ export default function GoogleOAuthCallback() {
 
       window.history.replaceState(null, "", window.location.pathname);
 
+
+      seedAuthCacheAndRefresh(user);
       setDest(getSafeRedirectPath(redirect) ?? "/dashboard");
     } catch {
       setError("invalid_payload");
@@ -52,8 +55,7 @@ export default function GoogleOAuthCallback() {
   }
 
   if (dest) {
-    window.location.href = dest;
-    return null;
+    return <Redirect to={dest} />;
   }
 
   return <AuthLoadingScreen />;

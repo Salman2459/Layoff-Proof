@@ -63,7 +63,7 @@ function Header({ user }: { user: any }) {
               <a href="/risk-scanner" className="text-gray-600 hover:text-gray-900">Risk Scanner</a>
               {user ? (
                 <>
-                  <a href="/dashboard" className="text-gray-600 hover:text-gray-900">Dashboard</a>
+                  <Link href="/dashboard" className="text-gray-600 hover:text-gray-900">Dashboard</Link>
                   <a href="/analytics" className="text-gray-600 hover:text-gray-900">Analytics</a>
                 </>
               ) : null}

@@ -38,6 +38,20 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Check, ChevronsUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+    coerceLinkedInProfileUrl,
+    getLinkedInProfileUrlError,
+    isValidLinkedInProfileUrl,
+    normalizeStoredLinkedInProfileUrl,
+} from "@/lib/linkedinProfileUrl";
+import {
+    coerceGitHubUrl,
+    coerceOptionalHttpUrl,
+    coerceTwitterUrl,
+    getGitHubUrlError,
+    getOptionalHttpUrlError,
+    getTwitterUrlError,
+} from "@/lib/profileSocialUrl";
 
 
 // Types for form data
@@ -344,6 +358,81 @@ function deepMerge<T extends Record<string, any>>(base: T, patch: Partial<T>): T
     return out;
 }
 
+function isEmptyDraftValue(v: unknown): boolean {
+    if (v == null) return true;
+    if (typeof v === "string") return v.trim() === "";
+    if (Array.isArray(v)) return v.length === 0;
+    return false;
+}
+
+/** Apply local draft on top of server profile without blank strings wiping saved data. */
+function mergeProfileFromServerAndDraft(
+    server: FormData,
+    draft: Partial<FormData>,
+): FormData {
+    return deepMergePreferFilled(server, draft);
+}
+
+function deepMergePreferFilled<T extends Record<string, unknown>>(
+    base: T,
+    patch: Partial<T>,
+): T {
+    const out: Record<string, unknown> = { ...base };
+    for (const [k, v] of Object.entries(patch || {})) {
+        if (isEmptyDraftValue(v)) continue;
+        if (Array.isArray(v)) {
+            out[k] = v;
+            continue;
+        }
+        if (
+            typeof v === "object" &&
+            v !== null &&
+            typeof out[k] === "object" &&
+            out[k] !== null &&
+            !Array.isArray(out[k])
+        ) {
+            out[k] = deepMergePreferFilled(
+                out[k] as Record<string, unknown>,
+                v as Record<string, unknown>,
+            );
+        } else {
+            out[k] = v;
+        }
+    }
+    return out as T;
+}
+
+function buildAutosavePayload(
+    values: FormData,
+    stepIndex: number,
+): Record<string, unknown> {
+    const payload: Record<string, unknown> = {
+        currentStep: Math.max(1, stepIndex + 1),
+    };
+
+    for (const [apiSection, allowed] of Object.entries(SECTION_ALLOWED_FIELDS)) {
+        const raw = (values as unknown as Record<string, unknown>)[apiSection];
+        if (!raw || typeof raw !== "object") continue;
+        const picked = pickPayloadFields(
+            raw as Record<string, unknown>,
+            allowed,
+        );
+        if (apiSection === "experience" && "experiences" in picked) {
+            picked.experiences = sanitizeExperiences(picked.experiences);
+        }
+        if (apiSection === "general" && picked.startDate instanceof Date) {
+            picked.startDate = Number.isNaN(picked.startDate.getTime())
+                ? undefined
+                : picked.startDate.toISOString();
+        }
+        if (Object.keys(picked).length > 0) {
+            payload[apiSection] = picked;
+        }
+    }
+
+    return payload;
+}
+
 function AutoJobApplyLocalDraftSync({
     userId,
     values,
@@ -372,6 +461,62 @@ function AutoJobApplyLocalDraftSync({
     return null;
 }
 
+function AutoJobApplyServerAutosave({
+    userId,
+    getValues,
+    currentStep,
+    enabled,
+}: {
+    userId: string | undefined;
+    getValues: () => FormData;
+    currentStep: number;
+    enabled: boolean;
+}) {
+    const lastSavedRef = useRef("");
+
+    const flush = useCallback(async () => {
+        if (!enabled || !userId) return;
+        const values = getValues();
+        const payload = buildAutosavePayload(values, currentStep);
+        const serialized = JSON.stringify(payload);
+        if (serialized === lastSavedRef.current) return;
+        try {
+            await apiRequest("POST", `/api/profile/autosave/${userId}`, payload);
+            lastSavedRef.current = serialized;
+        } catch {
+            // Local draft remains the fallback if autosave fails.
+        }
+    }, [enabled, userId, getValues, currentStep]);
+
+    useEffect(() => {
+        if (!enabled || !userId) return;
+        const t = window.setTimeout(() => {
+            void flush();
+        }, 1200);
+        return () => window.clearTimeout(t);
+    }, [enabled, userId, getValues, currentStep, flush]);
+
+    useEffect(() => {
+        if (!enabled || !userId) return;
+        const onFlush = () => {
+            void flush();
+        };
+        const onHide = () => {
+            if (document.visibilityState === "hidden") {
+                void flush();
+            }
+        };
+        window.addEventListener("lp:auto-job-apply-flush", onFlush);
+        document.addEventListener("visibilitychange", onHide);
+        return () => {
+            window.removeEventListener("lp:auto-job-apply-flush", onFlush);
+            document.removeEventListener("visibilitychange", onHide);
+        };
+    }, [enabled, userId, flush]);
+
+    return null;
+}
+
 // Allowed fields per section (must match server SECTION_FIELDS) – only these are sent in payload
 const SECTION_ALLOWED_FIELDS: Record<string, string[]> = {
     personal: ['firstName', 'lastName', 'email', 'phone', 'linkedin', 'twitter', 'website', 'github'],
@@ -394,28 +539,50 @@ function isNonEmptyString(v: unknown): v is string {
     return typeof v === "string" && v.trim().length > 0;
 }
 
-function normalizeLinkedInUrlInput(raw: unknown): string {
-    const v = typeof raw === "string" ? raw.trim() : "";
-    if (!v) return "";
-    const lower = v.toLowerCase();
-    if (lower.includes("linkedin.com")) {
-        return v.startsWith("http://") || v.startsWith("https://") ? v : `https://${v}`;
+type PersonalUrlField = "linkedin" | "twitter" | "website" | "github";
+
+function coercePersonalUrlField(
+    field: PersonalUrlField,
+    raw: string,
+): { value: string; error: string | null } {
+    const trimmed = raw.trim();
+    if (!trimmed) return { value: "", error: null };
+
+    switch (field) {
+        case "linkedin": {
+            const coerced = coerceLinkedInProfileUrl(trimmed);
+            if (coerced) return { value: coerced, error: null };
+            return { value: trimmed, error: getLinkedInProfileUrlError(trimmed) };
+        }
+        case "twitter": {
+            const coerced = coerceTwitterUrl(trimmed);
+            if (coerced !== null) return { value: coerced, error: null };
+            return { value: trimmed, error: getTwitterUrlError(trimmed) };
+        }
+        case "github": {
+            const coerced = coerceGitHubUrl(trimmed);
+            if (coerced !== null) return { value: coerced, error: null };
+            return { value: trimmed, error: getGitHubUrlError(trimmed) };
+        }
+        case "website": {
+            const coerced = coerceOptionalHttpUrl(trimmed);
+            if (coerced !== null) return { value: coerced, error: null };
+            return {
+                value: trimmed,
+                error: getOptionalHttpUrlError(trimmed, "website URL"),
+            };
+        }
     }
-    // If it's a single token (no spaces) treat it as a handle/slug.
-    if (!/\s/.test(v)) {
-        const handle = v.replace(/^@+/, "").replace(/^\/+|\/+$/g, "");
-        if (handle) return `https://www.linkedin.com/in/${handle}`;
-    }
-    return v;
 }
 
-function isValidLinkedInUrl(raw: unknown): boolean {
+function isValidOptionalPersonalUrl(
+    field: PersonalUrlField,
+    raw: unknown,
+): boolean {
     if (raw == null) return true;
     const v = typeof raw === "string" ? raw.trim() : "";
-    if (!v) return true; // optional
-    const normalized = normalizeLinkedInUrlInput(v);
-    if (!/^https?:\/\//i.test(normalized)) return false;
-    return /(^|\/\/)(www\.)?linkedin\.com\//i.test(normalized);
+    if (!v) return true;
+    return coercePersonalUrlField(field, v).error === null;
 }
 
 function sanitizeExperiences(experiences: unknown): ExperienceItem[] {
@@ -466,7 +633,22 @@ function getStepSchema(step: number): Yup.ObjectSchema<Partial<FormData>> {
                     linkedin: Yup.string().test(
                         "linkedin-url",
                         "LinkedIn must be a valid LinkedIn URL (e.g. https://www.linkedin.com/in/username)",
-                        (v) => isValidLinkedInUrl(v),
+                        (v) => isValidLinkedInProfileUrl(typeof v === "string" ? v : ""),
+                    ),
+                    twitter: Yup.string().test(
+                        "twitter-url",
+                        "Enter a valid X/Twitter URL (e.g. x.com/username)",
+                        (v) => isValidOptionalPersonalUrl("twitter", v),
+                    ),
+                    website: Yup.string().test(
+                        "website-url",
+                        "Enter a valid website URL (e.g. https://example.com)",
+                        (v) => isValidOptionalPersonalUrl("website", v),
+                    ),
+                    github: Yup.string().test(
+                        "github-url",
+                        "Enter a valid GitHub URL (e.g. github.com/username)",
+                        (v) => isValidOptionalPersonalUrl("github", v),
                     ),
                 }),
             }) as Yup.ObjectSchema<Partial<FormData>>;
@@ -606,10 +788,18 @@ function buildInitialFromProfile(p: Record<string, unknown>): FormData {
             email: defStr(p.email) || defaultInitialValues.personal.email,
             phone: defStr(p.phone) || defaultInitialValues.personal.phone,
             phoneCode: defStr(p.phoneCode) || defaultInitialValues.personal.phoneCode,
-            linkedin: defStr(p.linkedin) || defaultInitialValues.personal.linkedin,
-            twitter: defStr(p.twitter) || defaultInitialValues.personal.twitter,
-            website: defStr(p.website) || defaultInitialValues.personal.website,
-            github: defStr(p.github) || defaultInitialValues.personal.github,
+            linkedin: defStr(p.linkedin)
+                ? normalizeStoredLinkedInProfileUrl(defStr(p.linkedin))
+                : defaultInitialValues.personal.linkedin,
+            twitter: defStr(p.twitter)
+                ? (coerceTwitterUrl(defStr(p.twitter)) ?? defStr(p.twitter))
+                : defaultInitialValues.personal.twitter,
+            website: defStr(p.website)
+                ? (coerceOptionalHttpUrl(defStr(p.website)) ?? defStr(p.website))
+                : defaultInitialValues.personal.website,
+            github: defStr(p.github)
+                ? (coerceGitHubUrl(defStr(p.github)) ?? defStr(p.github))
+                : defaultInitialValues.personal.github,
         },
         residency: {
             street: defStr(p.street) || defaultInitialValues.residency.street,
@@ -662,7 +852,7 @@ const AutoJobApply: React.FC = () => {
     const [savingSection, setSavingSection] = useState<string | null>(null);
     const [resumeParseLoading, setResumeParseLoading] = useState(false);
     const [uploadingDocument, setUploadingDocument] = useState<'resume' | 'certificate' | 'recommendation' | null>(null);
-    const { user } = useAuth();
+    const { user, isLoading: authLoading } = useAuth();
     const id = user && typeof user === 'object' && 'id' in user ? (user as { id: string }).id : undefined;
     const greetingName =
         (user && typeof user === 'object' && 'firstName' in user && (user as { firstName?: string }).firstName?.trim()) ||
@@ -673,6 +863,13 @@ const AutoJobApply: React.FC = () => {
     // Initialize from profile only once so refetches (e.g. after save) don't overwrite unsaved Education/Skills
     const [initialValues, setInitialValues] = useState<FormData>(defaultInitialValues);
     const [profileLoaded, setProfileLoaded] = useState(false);
+
+    useEffect(() => {
+        setProfileLoaded(false);
+        setInitialValues(defaultInitialValues);
+        setCurrentStep(0);
+        setMaxUnlockedStep(0);
+    }, [id]);
 
     const [countries, setCountries] = useState<CountryOption[]>([]);
     const [states, setStates] = useState<Option[]>([]);
@@ -752,10 +949,20 @@ const AutoJobApply: React.FC = () => {
         }
         if (parsed.email?.trim()) next.personal = { ...next.personal, email: parsed.email.trim() };
         if (parsed.phone?.trim()) next.personal = { ...next.personal, phone: parsed.phone.trim() };
-        const link = (url: string | undefined) => (url && url.trim() ? (url.startsWith('http') ? url : `https://${url}`) : '');
-        if (parsed.linkedin?.trim()) next.personal = { ...next.personal, linkedin: link(parsed.linkedin) || parsed.linkedin.trim() };
-        if (parsed.github?.trim()) next.personal = { ...next.personal, github: link(parsed.github) || parsed.github.trim() };
-        if (parsed.website?.trim()) next.personal = { ...next.personal, website: link(parsed.website) || parsed.website.trim() };
+        if (parsed.linkedin?.trim()) {
+            const coerced = coerceLinkedInProfileUrl(parsed.linkedin.trim());
+            if (coerced) {
+                next.personal = { ...next.personal, linkedin: coerced };
+            }
+        }
+        if (parsed.github?.trim()) {
+            const coerced = coerceGitHubUrl(parsed.github.trim());
+            if (coerced) next.personal = { ...next.personal, github: coerced };
+        }
+        if (parsed.website?.trim()) {
+            const coerced = coerceOptionalHttpUrl(parsed.website.trim());
+            if (coerced) next.personal = { ...next.personal, website: coerced };
+        }
         if (parsed.location?.trim()) {
             const loc = parsed.location.trim();
             const comma = loc.lastIndexOf(',');
@@ -867,27 +1074,36 @@ const AutoJobApply: React.FC = () => {
 
     // Fetch existing profile from DB (same endpoint as dashboard: job profile by userId)
     const queryClient = useQueryClient();
-    const { data: profileData } = useQuery({
+    const { data: profileData, isFetched: profileFetched } = useQuery({
         queryKey: ['userJobProfile', id],
         queryFn: async () => {
             if (!id) return null;
-            const res = await fetch(`/api/profile/jobprofile/${id}`, { credentials: 'include' });
+            const res = await fetch(`/api/profile/jobprofile/${id}`, { credentials: 'include', cache: 'no-store' });
             const json = await res.json();
             if (!res.ok) return null;
             return json.data ?? null;
         },
         enabled: !!id,
+        staleTime: 0,
+        refetchOnMount: 'always',
     });
-
-
-
-console.log("profileData", profileData);
 
 
     // Initialize form and step from profile only once when profile first loads (prevents refetches from wiping Education/Skills)
     useEffect(() => {
-        if (!profileData || profileLoaded) return;
-        const base = buildInitialFromProfile(profileData as Record<string, unknown>);
+        if (authLoading || profileLoaded) return;
+
+        if (!id) {
+            setProfileLoaded(true);
+            return;
+        }
+
+        if (!profileFetched) return;
+
+        const base = profileData
+            ? buildInitialFromProfile(profileData as Record<string, unknown>)
+            : defaultInitialValues;
+
         const key = storageKeyForUser(id);
         let merged = base;
         if (key) {
@@ -895,25 +1111,26 @@ console.log("profileData", profileData);
                 const draftRaw = localStorage.getItem(key);
                 if (draftRaw) {
                     const draft = hydrateFromLocalStorage(JSON.parse(draftRaw));
-                    if (draft) merged = deepMerge(base, draft);
-                } else {
-                    merged = base;
+                    if (draft) merged = mergeProfileFromServerAndDraft(base, draft);
                 }
             } catch {
                 merged = base;
             }
-        } else {
-            merged = base;
         }
+
         setInitialValues(merged);
-        const apiStep = (profileData as Record<string, unknown>).currentStep;
-        const stepNum = typeof apiStep === 'number' && apiStep >= 1 ? apiStep : 1;
+        latestFormValuesRef.current = merged;
+
+        const apiStep = profileData
+            ? (profileData as Record<string, unknown>).currentStep
+            : undefined;
+        const stepNum = typeof apiStep === "number" && apiStep >= 1 ? apiStep : 1;
         const index = Math.max(0, Math.min(stepNum - 1, TOTAL_STEPS - 1));
         setCurrentStep(index);
         setMaxUnlockedStep(index);
         // Flip this in next tick so Formik remount sees merged initialValues.
         window.setTimeout(() => setProfileLoaded(true), 0);
-    }, [profileData, profileLoaded]);
+    }, [authLoading, id, profileData, profileFetched, profileLoaded]);
 
     const resumeFileRef = useRef<HTMLInputElement | null>(null);
     const recommendationFileRef = useRef<HTMLInputElement | null>(null);
@@ -1039,6 +1256,27 @@ console.log("profileData", profileData);
             const next = { ...prev };
             delete next[key];
             return next;
+        });
+    };
+
+    const handlePersonalUrlBlur = (
+        field: PersonalUrlField,
+        raw: string,
+        setValuesWithPrev: (fn: (prev: FormData) => FormData) => void,
+    ) => {
+        const { value, error } = coercePersonalUrlField(field, raw);
+        if (value !== raw) {
+            handleUpdate("personal", field, value, setValuesWithPrev);
+        }
+        const key = `personal.${field}`;
+        setFieldErrors((prev) => {
+            if (!error) {
+                if (!prev[key]) return prev;
+                const next = { ...prev };
+                delete next[key];
+                return next;
+            }
+            return { ...prev, [key]: error };
         });
     };
 
@@ -1217,7 +1455,15 @@ console.log("profileData", profileData);
         }));
     };
 
-
+    if (authLoading || (!!id && !profileLoaded)) {
+        return (
+            <LayoffProofLayout activeNavId="auto-apply">
+                <div className="flex min-h-[50vh] flex-1 items-center justify-center">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+            </LayoffProofLayout>
+        );
+    }
 
     return (
         <Formik
@@ -1318,6 +1564,12 @@ console.log("profileData", profileData);
                 return (
         <>
         <AutoJobApplyLocalDraftSync userId={id} values={values} enabled={profileLoaded} />
+        <AutoJobApplyServerAutosave
+            userId={id}
+            getValues={() => latestFormValuesRef.current}
+            currentStep={currentStep}
+            enabled={profileLoaded}
+        />
         <LayoffProofLayout activeNavId="auto-apply">
         <LayoffProofDashboardHeader greeting={greetingName} />
         <main className="flex-1 px-4 pb-10 pt-6 sm:px-6 lg:px-8">
@@ -1516,27 +1768,87 @@ console.log("profileData", profileData);
                             type="text"
                             value={values.personal.linkedin}
                             onChange={(e) => handleUpdate('personal', 'linkedin', e.target.value, setValuesWithPrev)}
-                            onBlur={(e) => {
-                                const normalized = normalizeLinkedInUrlInput(e.target.value);
-                                if (normalized !== values.personal.linkedin) {
-                                    handleUpdate('personal', 'linkedin', normalized, setValuesWithPrev);
-                                }
-                            }}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary"
-                            placeholder="Enter your LinkedIn URL..."
+                            onBlur={(e) => handlePersonalUrlBlur('linkedin', e.target.value, setValuesWithPrev)}
+                            className={cn(
+                                "w-full px-3 py-2 border rounded-md shadow-sm focus:ring-primary focus:border-primary",
+                                fieldErrors["personal.linkedin"]
+                                    ? "border-red-500"
+                                    : "border-gray-300",
+                            )}
+                            placeholder="linkedin.com/in/your-name"
+                            aria-invalid={!!fieldErrors["personal.linkedin"]}
                         />
+                        {fieldErrors["personal.linkedin"] && (
+                            <p className="mt-1 text-xs font-medium text-red-600">
+                                {fieldErrors["personal.linkedin"]}
+                            </p>
+                        )}
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">X/Twitter URL</label>
-                        <input type="text" value={values.personal.twitter} onChange={(e) => handleUpdate('personal', 'twitter', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Enter your X/Twitter URL..." />
+                        <input
+                            type="text"
+                            value={values.personal.twitter}
+                            onChange={(e) => handleUpdate('personal', 'twitter', e.target.value, setValuesWithPrev)}
+                            onBlur={(e) => handlePersonalUrlBlur('twitter', e.target.value, setValuesWithPrev)}
+                            className={cn(
+                                "w-full px-3 py-2 border rounded-md shadow-sm focus:ring-primary focus:border-primary",
+                                fieldErrors["personal.twitter"]
+                                    ? "border-red-500"
+                                    : "border-gray-300",
+                            )}
+                            placeholder="x.com/username"
+                            aria-invalid={!!fieldErrors["personal.twitter"]}
+                        />
+                        {fieldErrors["personal.twitter"] && (
+                            <p className="mt-1 text-xs font-medium text-red-600">
+                                {fieldErrors["personal.twitter"]}
+                            </p>
+                        )}
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Website URL</label>
-                        <input type="text" value={values.personal.website} onChange={(e) => handleUpdate('personal', 'website', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Enter your Website URL..." />
+                        <input
+                            type="text"
+                            value={values.personal.website}
+                            onChange={(e) => handleUpdate('personal', 'website', e.target.value, setValuesWithPrev)}
+                            onBlur={(e) => handlePersonalUrlBlur('website', e.target.value, setValuesWithPrev)}
+                            className={cn(
+                                "w-full px-3 py-2 border rounded-md shadow-sm focus:ring-primary focus:border-primary",
+                                fieldErrors["personal.website"]
+                                    ? "border-red-500"
+                                    : "border-gray-300",
+                            )}
+                            placeholder="https://example.com"
+                            aria-invalid={!!fieldErrors["personal.website"]}
+                        />
+                        {fieldErrors["personal.website"] && (
+                            <p className="mt-1 text-xs font-medium text-red-600">
+                                {fieldErrors["personal.website"]}
+                            </p>
+                        )}
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">GitHub URL</label>
-                        <input type="text" value={values.personal.github} onChange={(e) => handleUpdate('personal', 'github', e.target.value, setValuesWithPrev)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-primary focus:border-primary" placeholder="Enter your GitHub URL..." />
+                        <input
+                            type="text"
+                            value={values.personal.github}
+                            onChange={(e) => handleUpdate('personal', 'github', e.target.value, setValuesWithPrev)}
+                            onBlur={(e) => handlePersonalUrlBlur('github', e.target.value, setValuesWithPrev)}
+                            className={cn(
+                                "w-full px-3 py-2 border rounded-md shadow-sm focus:ring-primary focus:border-primary",
+                                fieldErrors["personal.github"]
+                                    ? "border-red-500"
+                                    : "border-gray-300",
+                            )}
+                            placeholder="github.com/username"
+                            aria-invalid={!!fieldErrors["personal.github"]}
+                        />
+                        {fieldErrors["personal.github"] && (
+                            <p className="mt-1 text-xs font-medium text-red-600">
+                                {fieldErrors["personal.github"]}
+                            </p>
+                        )}
                     </div>
                 </div>
             </div>

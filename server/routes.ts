@@ -13,11 +13,12 @@ import {
   processAffiliateSubscriptionActivation,
 } from "./affiliateService";
 // import { setupLinkedInAuth } from "./linkedinAuth";
-import { analyzeJobSecurityRisk } from "./anthropic";
+import { analyzeJobSecurityRisk, DEFAULT_MODEL_STR } from "./anthropic";
 import { dataIntegrator } from "./data-integrator";
 import {
   insertCompanySchema,
   updateUserProfileSchema,
+  profileSettingsSchema,
   ParsedResumeData,
   insertJobBoardSchema,
   userJobProfiles,
@@ -75,7 +76,7 @@ import {
   resolveAuthUserId,
 } from "./subscriberAccess";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
-import { cloudinary } from "./cloudinary";
+import { uploadProfileDocument } from "./documentStorage";
 import { AnyAaaaRecord } from "dns";
 
 const rssParser = new Parser();
@@ -369,12 +370,92 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // User profile management
   app.put("/api/user/profile", isAuthenticatedAny, async (req: any, res) => {
     try {
-      const userId = req.user.id; // Make sure this exists
-      console.log("User ID:", userId); // Add logging
-      console.log("Request body:", req.body); // Add logging
+      const userId = req.user.id;
+      const validated = profileSettingsSchema.parse(req.body);
+      const {
+        linkedin,
+        website,
+        location,
+        currentCompany,
+        ...userFields
+      } = validated;
 
-      const validated = updateUserProfileSchema.parse(req.body);
-      const user = await storage.updateUserProfile(userId, validated);
+      if (userFields.email) {
+        const existingUser = await storage.getUserByEmail(userFields.email);
+        if (existingUser && existingUser.id !== userId) {
+          return res.status(409).json({
+            message: "This email is already in use by another account.",
+          });
+        }
+      }
+
+      const user = await storage.updateUserProfile(userId, userFields);
+
+      const jobProfilePatch: Record<string, unknown> = {};
+      if (userFields.firstName !== undefined) {
+        jobProfilePatch.firstName = userFields.firstName;
+      }
+      if (userFields.lastName !== undefined) {
+        jobProfilePatch.lastName = userFields.lastName;
+      }
+      if (userFields.email !== undefined) {
+        jobProfilePatch.email = userFields.email;
+      }
+      if (userFields.phoneNumber !== undefined) {
+        jobProfilePatch.phone = userFields.phoneNumber;
+      }
+      if (linkedin !== undefined) {
+        jobProfilePatch.linkedin = linkedin || null;
+      }
+      if (website !== undefined) {
+        jobProfilePatch.website = website || null;
+      }
+      if (location !== undefined && location.trim()) {
+        const parts = location.split(",").map((p) => p.trim()).filter(Boolean);
+        if (parts[0]) jobProfilePatch.city = parts[0];
+        if (parts.length > 1) {
+          jobProfilePatch.country = parts.slice(1).join(", ");
+        }
+      }
+
+      const [existingJobProfile] = await db
+        .select()
+        .from(userJobProfiles)
+        .where(eq(userJobProfiles.userId, userId))
+        .limit(1);
+
+      if (currentCompany !== undefined || userFields.jobTitle !== undefined) {
+        const existingExp = Array.isArray(existingJobProfile?.experiences)
+          ? existingJobProfile.experiences[0]
+          : undefined;
+        jobProfilePatch.experiences = [
+          {
+            company: currentCompany ?? existingExp?.company ?? "",
+            title: userFields.jobTitle ?? existingExp?.title ?? "",
+            fromMonth: existingExp?.fromMonth ?? "",
+            fromYear: existingExp?.fromYear ?? "",
+            toMonth: existingExp?.toMonth ?? "",
+            toYear: existingExp?.toYear ?? "",
+            currentlyWorking: existingExp?.currentlyWorking ?? true,
+            description: existingExp?.description ?? "",
+          },
+        ];
+      }
+
+      if (Object.keys(jobProfilePatch).length > 0) {
+        if (existingJobProfile) {
+          await db
+            .update(userJobProfiles)
+            .set(jobProfilePatch)
+            .where(eq(userJobProfiles.userId, userId));
+        } else {
+          await db.insert(userJobProfiles).values({
+            userId,
+            profileCompletion: 0,
+            ...jobProfilePatch,
+          });
+        }
+      }
 
       await recordUserActivity(userId, {
         type: "profile_updated",
@@ -382,9 +463,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sourceId: `account-profile:${userId}:${Date.now()}`,
       });
 
-      console.log("Updated user:", user); // Add logging
       res.json(user);
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.name === "ZodError") {
+        const firstIssue = error.issues?.[0];
+        const fieldMessage =
+          firstIssue?.message && firstIssue?.path?.length
+            ? `${String(firstIssue.path[0])}: ${firstIssue.message}`
+            : "Invalid profile data";
+        return res.status(400).json({ message: fieldMessage });
+      }
+
+      if (error?.code === "23505") {
+        return res.status(409).json({
+          message: "This email is already in use by another account.",
+        });
+      }
+
       console.error("Error updating user profile:", error);
       res.status(400).json({ message: "Invalid profile data" });
     }
@@ -2809,7 +2904,7 @@ You MUST respond with ONLY a single valid JSON object. Do not include any text, 
       // --- MODIFICATION END ---
 
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: DEFAULT_MODEL_STR,
         max_tokens: 2000,
         temperature: 0.1, // Low temperature for factual, deterministic output
         messages: [{ role: "user", content: prompt }],
@@ -2900,7 +2995,7 @@ Now, provide the complete, improved cover letter below.
       const aiResult = await anthropicMessagesCreateWithRetry(
         anthropic,
         {
-          model: "claude-sonnet-4-20250514",
+          model: DEFAULT_MODEL_STR,
           max_tokens: 2048,
           temperature: 0.45,
           messages: [{ role: "user", content: prompt }],
@@ -2992,7 +3087,7 @@ Now, provide the complete, improved cover letter below.
       });
 
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: DEFAULT_MODEL_STR,
         max_tokens: 2000,
         temperature: 0.1, // Low temperature for factual, deterministic output
         messages: [{ role: "user", content: prompt }],
@@ -3290,7 +3385,7 @@ ${rawText}
       const aiResult = await anthropicMessagesCreateWithRetry(
         anthropic,
         {
-          model: "claude-sonnet-4-20250514",
+          model: DEFAULT_MODEL_STR,
           max_tokens: 2000,
           temperature: 0.1,
           messages: [{ role: "user", content: prompt }],
@@ -3935,7 +4030,7 @@ You are helping a real person apply for a job. Write a cover letter that reads a
 
         try {
           const message = await anthropic.messages.create({
-            model: "claude-sonnet-4-20250514",
+            model: DEFAULT_MODEL_STR,
             max_tokens: 2000,
             temperature: 0.72,
             messages: [{ role: "user", content: prompt }],
@@ -4270,7 +4365,7 @@ ${applicantInfo.name}
       `;
 
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: DEFAULT_MODEL_STR,
         max_tokens: 2500,
         temperature: 0.7,
         messages: [{ role: "user", content: prompt }],
@@ -4328,7 +4423,7 @@ ${applicantInfo.name}
   app.get("/api/test-claude", async (req, res) => {
     try {
       const message = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: DEFAULT_MODEL_STR,
         max_tokens: 100,
         messages: [
           {
@@ -4439,7 +4534,7 @@ Rules:
 Return ONLY the JSON object, no additional text or formatting.`;
 
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: DEFAULT_MODEL_STR,
         max_tokens: 2000,
         messages: [{ role: "user", content: aiPrompt }],
       });
@@ -5016,7 +5111,7 @@ app.post("/api/notify-me", isAuthenticatedAny, async (req: any, res) => {
           });
 
           const response = await anthropic.messages.create({
-            model: "claude-sonnet-4-20250514",
+            model: DEFAULT_MODEL_STR,
             max_tokens: 2000,
             messages: [{ role: "user", content: prompt }],
           });
@@ -5148,7 +5243,7 @@ app.post("/api/notify-me", isAuthenticatedAny, async (req: any, res) => {
       Format as structured data that can be easily parsed.`;
 
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: DEFAULT_MODEL_STR,
         max_tokens: 2000,
         messages: [{ role: "user", content: prompt }],
       });
@@ -5285,7 +5380,7 @@ app.post("/api/notify-me", isAuthenticatedAny, async (req: any, res) => {
       Format as detailed, actionable feedback.`;
 
         const response = await anthropic.messages.create({
-          model: "claude-sonnet-4-20250514",
+          model: DEFAULT_MODEL_STR,
           max_tokens: 2000,
           messages: [{ role: "user", content: prompt }],
         });
@@ -5490,7 +5585,7 @@ Requirements:
         if (process.env.ANTHROPIC_API_KEY) {
           const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
           const response = await anthropic.messages.create({
-            model: "claude-sonnet-4-20250514",
+            model: DEFAULT_MODEL_STR,
             max_tokens: 350,
             messages: [{ role: "user", content: prompt }],
           });
@@ -5646,7 +5741,7 @@ Requirements:
       const aiResult = await anthropicMessagesCreateWithRetry(
         anthropic,
         {
-          model: "claude-sonnet-4-20250514",
+          model: DEFAULT_MODEL_STR,
           max_tokens: 2000,
           temperature: 0.1,
           messages: [{ role: "user", content: prompt }],
@@ -5817,7 +5912,7 @@ Requirements:
 
     try {
       const msg = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514", // Using Opus for best results on complex JSON tasks
+        model: DEFAULT_MODEL_STR, // Using Opus for best results on complex JSON tasks
         max_tokens: 4000,
         temperature: 0.2,
         messages: [{ role: "user", content: prompt }],
@@ -5933,7 +6028,7 @@ Example format: {"message": "Subject: Inquiry about opportunities\\n\\nDear John
 `;
 
       const msg = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: DEFAULT_MODEL_STR,
         max_tokens: 1000,
         temperature: 0.6,
         messages: [{ role: "user", content: prompt }],
@@ -6045,7 +6140,7 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
 
       // --- API Call to Claude (No changes needed here) ---
       const msg = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: DEFAULT_MODEL_STR,
         max_tokens: 500,
         temperature: 0.7,
         messages: [{ role: "user", content: prompt }],
@@ -6313,6 +6408,144 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
   // ==================================================
   //       =========== Profile Building =======
   //===================================================
+
+  // Must be registered before `/api/profile/:section/:id` so `autosave` is not captured as a section name.
+  app.post("/api/profile/autosave/:id", async (req, resp) => {
+    try {
+      const { id } = req.params;
+      const user = await GetUserScscriptionTrialValidation(
+        typeof id === "string" ? id : "",
+      );
+      if (!user) {
+        return resp.status(400).json({
+          success: false,
+          error: "Subscription has expired, or you have not subscribed.",
+        });
+      }
+
+      const [existingProfile] = await db
+        .select()
+        .from(userJobProfiles)
+        .where(eq(userJobProfiles.userId, id))
+        .limit(1);
+
+      if (!existingProfile) {
+        await db.insert(userJobProfiles).values({
+          userId: id,
+          profileCompletion: 0,
+        });
+      }
+
+      const SECTION_FIELDS: Record<string, string[]> = {
+        personal: [
+          "firstName",
+          "lastName",
+          "email",
+          "phone",
+          "linkedin",
+          "twitter",
+          "website",
+          "github",
+        ],
+        residency: [
+          "street",
+          "buildingNo",
+          "apartmentNo",
+          "country",
+          "city",
+          "zip",
+          "authorizedCountries",
+          "sponsorship",
+          "relocate",
+        ],
+        experience: ["totalExperience", "experiences"],
+        education: ["education"],
+        general: [
+          "expectedSalary",
+          "expectedSalaryCurrency",
+          "currentSalary",
+          "currentSalaryCurrency",
+          "noticePeriod",
+          "startDate",
+          "race",
+          "disability",
+          "veteran",
+        ],
+        skillAndLanguages: ["skills", "languages"],
+        achievements: ["achievements"],
+      };
+
+      const cleanPayload = (payload: any) => {
+        if (!payload) return {};
+        return Object.fromEntries(
+          Object.entries(payload).filter(
+            ([_, value]) =>
+              value !== undefined && value !== null && value !== "",
+          ),
+        );
+      };
+
+      const pickSectionFields = (data: any, allowedFields: string[]) => {
+        if (!data) return {};
+        return Object.fromEntries(
+          Object.entries(data).filter(([key]) => allowedFields.includes(key)),
+        );
+      };
+
+      const updateData: Record<string, unknown> = {};
+      for (const [section, allowedFields] of Object.entries(SECTION_FIELDS)) {
+        const sectionData = req.body[section];
+        if (!sectionData || typeof sectionData !== "object") continue;
+        const cleaned = cleanPayload(sectionData);
+        const picked = pickSectionFields(cleaned, allowedFields);
+        Object.assign(updateData, picked);
+      }
+
+      if (updateData.startDate != null) {
+        const raw = updateData.startDate as string | number | Date;
+        const d =
+          raw instanceof Date ? raw : new Date(raw as string | number);
+        if (Number.isNaN(d.getTime())) {
+          delete updateData.startDate;
+        } else {
+          updateData.startDate = d;
+        }
+      }
+
+      const stepIndex = req.body.currentStep;
+      if (typeof stepIndex === "number" && stepIndex >= 0) {
+        updateData.currentStep = stepIndex;
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        return resp.status(200).json({
+          success: true,
+          message: "Nothing to save",
+        });
+      }
+
+      updateData.updatedAt = new Date();
+
+      const [updated] = await db
+        .update(userJobProfiles)
+        .set(updateData)
+        .where(eq(userJobProfiles.userId, id))
+        .returning();
+
+      return resp.status(200).json({
+        success: true,
+        data: updated,
+        message: "Profile draft saved",
+      });
+    } catch (error) {
+      console.error("Error autosaving job profile:", error);
+      return resp.status(500).json({
+        success: false,
+        error: "Failed to autosave profile",
+        message: "Internal server error",
+      });
+    }
+  });
 
   app.post(
     "/api/profile/:section/:id",
@@ -6650,28 +6883,11 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
               docType = "recommendation_letter";
             }
 
-            console.log(`Uploading ${req.file.mimetype} to Cloudinary...`);
+            console.log(`Uploading ${req.file.mimetype}...`);
 
-            // For PDFs/DOCs/etc: upload as "raw" so the generated URL serves the file reliably.
-            // Images can still be "image"/"auto".
-            const resourceType =
-              req.file.mimetype && req.file.mimetype.startsWith("image/")
-                ? "image"
-                : "raw";
-
-            const baseName = path.parse(req.file.originalname || "document").name;
-            const slug = baseName
-              .toLowerCase()
-              .trim()
-              .replace(/[^a-z0-9]+/g, "-")
-              .replace(/^-+|-+$/g, "");
-            const publicId = `${docType}-${slug || "document"}-${Date.now()}`;
-
-            const result = await cloudinary.uploader.upload(req.file.path, {
-              resource_type: resourceType,
-              folder: "job-profiles/documents",
-              public_id: slug,
-              access_mode: "public",
+            const { fileUrl } = await uploadProfileDocument(req.file, {
+              userId: id,
+              docType,
             });
 
             // Get profile ID first without updating
@@ -6689,7 +6905,7 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
                 profileId: userProfile?.id,
                 documentType: docType,
                 fileName: req.file.originalname,
-                fileUrl: result.secure_url,
+                fileUrl,
                 fileSize: req.file.size,
                 mimeType: req.file.mimetype,
               })
@@ -6718,20 +6934,20 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
             if (docType === "resume") {
               await db
                 .update(userJobProfiles)
-                .set({ resume: result.secure_url, updatedAt: new Date() })
+                .set({ resume: fileUrl, updatedAt: new Date() })
                 .where(eq(userJobProfiles.userId, id));
             } else if (docType === "recommendation_letter") {
               await db
                 .update(userJobProfiles)
                 .set({
-                  recommendationLetter: result.secure_url,
+                  recommendationLetter: fileUrl,
                   updatedAt: new Date(),
                 })
                 .where(eq(userJobProfiles.userId, id));
             } else if (docType === "certificate") {
               await db
                 .update(userJobProfiles)
-                .set({ certificates: result.secure_url, updatedAt: new Date() })
+                .set({ certificates: fileUrl, updatedAt: new Date() })
                 .where(eq(userJobProfiles.userId, id));
             }
 
@@ -6750,10 +6966,10 @@ IMPORTANT: Respond ONLY with the improved text for the requested field. Do not i
               success: true,
               data: userProfile,
               message: message,
-              url: result.secure_url,
+              url: fileUrl,
             });
           } catch (error) {
-            console.error("Cloudinary upload/DB update error:", error);
+            console.error("Document upload/DB update error:", error);
             return resp.status(500).json({
               success: false,
               message: "Internal Server Error",
@@ -6938,6 +7154,108 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
     ? resumeData.achievements.filter(isPresent).map(String)
     : [];
 
+  type ResumeProjectItem = {
+    name: string;
+    url: string;
+    description: string;
+  };
+
+  const projectItems: ResumeProjectItem[] = Array.isArray(resumeData.projects)
+    ? resumeData.projects
+        .map((p: unknown): ResumeProjectItem | null => {
+          if (typeof p === "string") {
+            const t = p.trim();
+            return t ? { name: t, url: "", description: "" } : null;
+          }
+          if (p && typeof p === "object") {
+            const row = p as Record<string, unknown>;
+            const name = String(row.name ?? "").trim();
+            const url = String(row.url ?? "").trim();
+            const description = String(row.description ?? "").trim();
+            if (!name && !url && !description) return null;
+            return { name, url, description };
+          }
+          return null;
+        })
+        .filter((p): p is ResumeProjectItem => p !== null)
+    : [];
+
+  const formatProjectHref = (url: string) =>
+    /^https?:\/\//i.test(url) ? url : `https://${url}`;
+
+  const renderProjectListItems = (
+    items: ResumeProjectItem[],
+    esc: (s: unknown) => string,
+  ): string =>
+    items
+      .map((p) => {
+        const bits: string[] = [];
+        if (p.name) {
+          bits.push(
+            `<div style="font-weight:700;margin-bottom:6px;">${esc(p.name)}</div>`,
+          );
+        }
+        if (p.url) {
+          const href = formatProjectHref(p.url);
+          bits.push(
+            `<div style="margin-bottom:${p.description ? "6px" : "0"};"><a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(p.url)}</a></div>`,
+          );
+        }
+        if (p.description) {
+          bits.push(
+            `<div style="margin-top:${p.name || p.url ? "4px" : "0"};line-height:1.45;color:#64748b;">${esc(p.description)}</div>`,
+          );
+        }
+        if (!bits.length) return "";
+        return `<li style="margin-bottom:12px;">${bits.join("")}</li>`;
+      })
+      .filter(Boolean)
+      .join("");
+
+  const projectsSectionHtml = (
+    items: ResumeProjectItem[],
+    esc: (s: unknown) => string,
+    options?: { heading?: string; headingTag?: string; wrapperClass?: string },
+  ): string => {
+    if (!items.length) return "";
+    const heading = options?.heading ?? "Projects";
+    const headingTag = options?.headingTag ?? "h2";
+    const wrapperClass = options?.wrapperClass ?? "section";
+    const list = renderProjectListItems(items, esc);
+    if (!list) return "";
+    return `<div class="${wrapperClass}"><${headingTag}>${heading}</${headingTag}><ul style="margin-left:20px;">${list}</ul></div>`;
+  };
+
+  const projectsLinksHtml = (
+    items: ResumeProjectItem[],
+    esc: (s: unknown) => string,
+  ): string =>
+    items
+      .map((p) => {
+        if (!isPresent(p.name) && !isPresent(p.url) && !isPresent(p.description)) {
+          return "";
+        }
+
+        const titleHtml = p.url
+          ? `<a href="${esc(formatProjectHref(p.url))}" target="_blank" rel="noopener noreferrer" style="font-weight:700;">${esc(p.name || p.url)}</a>`
+          : p.name
+            ? `<div style="font-weight:700;">${esc(p.name)}</div>`
+            : "";
+
+        const descHtml = p.description
+          ? `<div class="muted project-desc">${esc(p.description)}</div>`
+          : "";
+
+        if (!titleHtml && !descHtml) return "";
+        if (!titleHtml) {
+          return `<div class="link project-item">${descHtml}</div>`;
+        }
+
+        return `<div class="link project-item">${titleHtml}${descHtml}</div>`;
+      })
+      .filter(Boolean)
+      .join("");
+
   // Helper to generate experience sections dynamically
   const generateExperienceHTML = (
     experience: any[],
@@ -7060,6 +7378,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
                     .join("")}</ul></div>`
                 : ""
             }
+            ${projectsSectionHtml(projectItems, (s) => String(s ?? ""))}
             <!-- --- END MODIFICATION --- -->
             
         </div></body></html>`;
@@ -7208,6 +7527,14 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
                         .join("")}</ul></div>`
                     : ""
                 }
+                ${
+                  projectItems.length > 0
+                    ? `<div class="section card"><div class="bar"></div><div class="h">Projects</div><ul class="list">${renderProjectListItems(
+                        projectItems.slice(0, 6),
+                        esc,
+                      )}</ul></div>`
+                    : ""
+                }
               </main>
             </div>
           </div>
@@ -7232,16 +7559,8 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
           .map((x) => `<li>${x}</li>`)
           .join("");
 
-      const projects = Array.isArray(resumeData.projects)
-        ? resumeData.projects
-        : [];
-      const projectLinks = projects
-        .slice(0, 7)
-        .map((p: any) => {
-          const url = typeof p === "string" ? p : p?.url || p?.name || "";
-          return isPresent(url) ? `<div class="link">${esc(url)}</div>` : "";
-        })
-        .join("");
+      const projects = projectItems;
+      const projectLinks = projectsLinksHtml(projects, esc);
 
       return `
         <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
@@ -7268,8 +7587,10 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
           li { margin: 4px 0; }
           .chips { display: flex; flex-wrap: wrap; gap: 6px; font-family: Arial, sans-serif; }
           .chip { border: 1px solid #d1d5db; background: #f9fafb; border-radius: 6px; padding: 4px 8px; font-size: 11px; line-height: 1.25; white-space: normal; word-break: break-word; max-width: 100%; }
-          .links { display: grid; gap: 6px; font-family: Arial, sans-serif; font-size: 11px; }
+          .links { display: grid; gap: 12px; font-family: Arial, sans-serif; font-size: 11px; }
           .link { word-break: break-word; }
+          .project-item { margin-bottom: 4px; }
+          .project-desc { margin-top: 8px; line-height: 1.45; color: #6b7280; }
           .muted { font-family: Arial, sans-serif; font-size: 11px; color: #6b7280; }
           .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
           .edu-item { margin-bottom: 10px; }
@@ -7334,10 +7655,14 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
                     .join("")}</div>
                 </div>
 
-                <div class="section">
+                ${
+                  projectLinks
+                    ? `<div class="section">
                   <h2>PROJECTS</h2>
-                  <div class="links">${projectLinks || `<div class="muted">—</div>`}</div>
-                </div>
+                  <div class="links">${projectLinks}</div>
+                </div>`
+                    : ""
+                }
 
                 ${
                   achievementItems.length > 0
@@ -7393,15 +7718,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
           .map((x) => `<li>${x}</li>`)
           .join("");
 
-      const projectBlocks = Array.isArray(resumeData.projects)
-        ? resumeData.projects
-            .slice(0, 8)
-            .map((p: any) => {
-              const url = typeof p === "string" ? p : p?.url || p?.name || "";
-              return isPresent(url) ? `<div class="link">${esc(url)}</div>` : "";
-            })
-            .join("")
-        : "";
+      const projectBlocks = projectsLinksHtml(projectItems, esc);
 
       return `
         <!DOCTYPE html><html><head><meta charset="UTF-8"><style>
@@ -7430,8 +7747,10 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
           .job li { margin: 4px 0; }
           .skills { display: flex; flex-wrap: wrap; gap: 8px; }
           .skill { border: 1px solid #d1d5db; background: #f8fafc; border-radius: 10px; padding: 7px 10px; font-size: 11px; line-height: 1.25; white-space: normal; word-break: break-word; max-width: 100%; }
-          .links { display: grid; gap: 6px; font-size: 11px; color: #0f172a; }
+          .links { display: grid; gap: 12px; font-size: 11px; color: #0f172a; }
           .link { word-break: break-word; }
+          .project-item { margin-bottom: 4px; }
+          .project-desc { margin-top: 8px; line-height: 1.45; }
           .muted { color: #64748b; font-size: 11px; }
         </style></head><body>
           <div class="page">
@@ -7487,10 +7806,14 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
                   `).join("") || `<div class="muted">—</div>`}
                 </div>
 
-                <div class="section card">
+                ${
+                  projectBlocks
+                    ? `<div class="section card">
                   <div class="h"><span>Projects</span></div>
-                  <div class="links">${projectBlocks || `<div class="muted">—</div>`}</div>
-                </div>
+                  <div class="links">${projectBlocks}</div>
+                </div>`
+                    : ""
+                }
 
                 ${
                   achievementItems.length > 0
@@ -7585,6 +7908,9 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
                     .join("")}</ul></div>`
                 : ""
             }
+            ${projectsSectionHtml(projectItems, (s) => String(s ?? ""), {
+              wrapperClass: "section projects-section",
+            })}
              <!-- --- END MODIFICATION --- -->
         </div></body></html>`;
     }
@@ -7630,6 +7956,14 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
             </div>`).join("")}` : ""}
           ${techSkills.length ? `<h2>SKILLS</h2><div class="skills">${techSkills.map((s) => `<span class="skill">${s}</span>`).join("")}</div>` : ""}
           ${resumeData.education?.length ? `<h2>EDUCATION</h2>${generateEducationHTML(resumeData.education)}` : ""}
+          ${
+            projectItems.length > 0
+              ? `<h2>PROJECTS</h2><ul style="margin-left:20px;">${renderProjectListItems(
+                  projectItems,
+                  (s) => String(s ?? ""),
+                )}</ul>`
+              : ""
+          }
         </div></body></html>`;
     }
 
@@ -7703,6 +8037,20 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
                       .join("")}</div>`
                   : ""
               }
+              ${
+                projectItems.length > 0
+                  ? `<div class="section"><h3>Projects</h3>${projectItems
+                      .map((p) => {
+                        const label = [p.name, p.url, p.description]
+                          .filter(isPresent)
+                          .join(" — ");
+                        return label
+                          ? `<div class="skill-item">• ${label}</div>`
+                          : "";
+                      })
+                      .join("")}</div>`
+                  : ""
+              }
               <!-- --- MODIFICATION: Skills moved from sidebar to main content --- -->
             </div>
 
@@ -7719,6 +8067,7 @@ function generateResumeHTML(templateId: string, resumeData: any): string {
                   : ""
               }
               ${resumeData.experience && resumeData.experience.length > 0 ? `<div class="section"><h2>Work Experience</h2>${generateExperienceHTML(resumeData.experience, "creative")}</div>` : ""}
+              ${projectsSectionHtml(projectItems, (s) => String(s ?? ""))}
             </div>
         </div></body></html>`;
 
