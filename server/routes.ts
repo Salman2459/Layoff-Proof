@@ -1728,7 +1728,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .json({ message: "No active subscription found" });
         }
 
-        const sub = await cancelSubscriptionAtPeriodEnd(
+        const sub :any= await cancelSubscriptionAtPeriodEnd(
           user.stripeSubscriptionId,
         );
 
@@ -2847,14 +2847,17 @@ Requirements:
       }
 
       // Helper to make the interviewer's role more readable for the AI prompt
+      const interviewerRoleLabels: Record<string, string> = {
+        hiring_manager: "Hiring Manager",
+        hr_recruiter: "HR / Recruiter",
+        technical_lead: "Technical Lead / Senior Engineer",
+        team_member: "Peer / Team Member",
+        executive: "Executive / C-Level",
+      };
       const friendlyInterviewerRole =
-        {
-          hiring_manager: "Hiring Manager",
-          hr_recruiter: "HR / Recruiter",
-          technical_lead: "Technical Lead / Senior Engineer",
-          team_member: "Peer / Team Member",
-          executive: "Executive / C-Level",
-        }[interviewerRole] || "Hiring Manager"; // Default for safety
+        (typeof interviewerRole === "string" &&
+          interviewerRoleLabels[interviewerRole]) ||
+        "Hiring Manager";
 
       // --- MODIFICATION START: Updated prompt to include 'goodImpression' for questions to ask interviewer ---
       const prompt = `
@@ -2906,16 +2909,29 @@ You MUST respond with ONLY a single valid JSON object. Do not include any text, 
       const response = await anthropic.messages.create({
         model: DEFAULT_MODEL_STR,
         max_tokens: 2000,
-        temperature: 0.1, // Low temperature for factual, deterministic output
+        temperature: 0.6, // Low temperature for factual, deterministic output
         messages: [{ role: "user", content: prompt }],
       });
 
       // Extract and parse the JSON response from the AI
-      const rawJson = response.content[0].text;
-      const jobAnalysis = JSON.parse(rawJson);
+      const responseText = response.content[0].text.trim();
+      let jsonString = responseText;
+
+      if (responseText.includes("```json")) {
+        const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/);
+        jsonString = jsonMatch ? jsonMatch[1].trim() : responseText;
+      } else if (responseText.includes("```")) {
+        const jsonMatch = responseText.match(/```\s*([\s\S]*?)\s*```/);
+        jsonString = jsonMatch ? jsonMatch[1].trim() : responseText;
+      } else {
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        jsonString = jsonMatch ? jsonMatch[0] : responseText;
+      }
+
+      const jobAnalysis = JSON.parse(jsonString);
 
       // Post-process the questions to add unique IDs for the frontend state management
-      jobAnalysis.questions = jobAnalysis.questions.map((q) => ({
+      jobAnalysis.questions = jobAnalysis.questions.map((q:any) => ({
         ...q,
         id: "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) =>
           (c === "x"
