@@ -8,7 +8,10 @@ import cors from "cors";
 
 allCronjobs();
 
+const isProduction = process.env.NODE_ENV === "production";
+
 const app = express();
+app.set("env", isProduction ? "production" : "development");
 app.use(cors());
 app.use("/uploads", express.static(path.resolve("uploads")));
 // Stripe webhooks require the raw body for signature verification.
@@ -20,7 +23,6 @@ app.post(
   },
 );
 
-// Resume PDF/preview payloads may include base64 profile photos
 app.use(express.json({ limit: "12mb" }));
 app.use(express.urlencoded({ extended: false }));
 
@@ -65,13 +67,13 @@ app.use((req, res, next) => {
     throw err;
   });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (app.get("env") === "development") {
-    await setupVite(app, server);
-  } else {
+  // Production serves built assets from dist/public; dev uses Vite middleware.
+  if (isProduction) {
     serveStatic(app);
+    log("production mode: serving static assets from dist/public");
+  } else {
+    await setupVite(app, server);
+    log("development mode: Vite dev server enabled");
   }
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
@@ -80,8 +82,7 @@ app.use((req, res, next) => {
   // It is the only port that is not firewalled.
   const portEnv = process.env.PORT;
   const basePort = parseInt(portEnv || "5000", 10);
-  const devPortFallback =
-    app.get("env") === "development" && portEnv === undefined;
+  const devPortFallback = !isProduction && portEnv === undefined;
 
   let listenPort = basePort;
   const maxDevPort = basePort + 50;

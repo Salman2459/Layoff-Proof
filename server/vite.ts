@@ -68,13 +68,15 @@ export async function setupVite(app: Express, server: Server) {
 }
 
 export function serveStatic(app: Express) {
-  const distPath = path.resolve(import.meta.dirname, "public");
+  const distPath = resolveClientBuildPath();
 
   if (!fs.existsSync(distPath)) {
     throw new Error(
-      `Could not find the build directory: ${distPath}, make sure to build the client first`,
+      `Could not find the build directory: ${distPath}, make sure to run "npm run build" before starting production`,
     );
   }
+
+  log(`serving static assets from ${distPath}`);
 
   app.use(express.static(distPath));
 
@@ -82,4 +84,23 @@ export function serveStatic(app: Express) {
   app.use("*", (_req, res) => {
     res.sendFile(path.resolve(distPath, "index.html"));
   });
+}
+
+function resolveClientBuildPath(): string {
+  const candidates = [
+    // Bundled server entry: dist/index.js -> dist/public
+    path.resolve(import.meta.dirname, "public"),
+    // PM2 or manual start from project root
+    path.resolve(process.cwd(), "dist/public"),
+    // tsx / unreleased server source during local prod smoke tests
+    path.resolve(import.meta.dirname, "..", "dist", "public"),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return candidates[0];
 }

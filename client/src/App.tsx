@@ -44,7 +44,6 @@ function Router() {
     };
   }, []);
 
-  // Persistent shell: sidebar stays mounted; only main content swaps.
   if (isLayoffProofShellPath(location)) {
     return <LayoffProofAppShell />;
   }

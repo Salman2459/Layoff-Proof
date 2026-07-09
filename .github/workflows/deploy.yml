@@ -12,39 +12,55 @@ jobs:
     steps:
       - name: Deploy to VPS
         uses: appleboy/ssh-action@v1.2.0
-
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.PORT }}
-
           script: |
-            # Load NVM
+            set -euo pipefail
+
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-
-            # Use Node.js 22
             nvm use 22
-
-            # Verify installation
-            echo "Node Version: $(node -v)"
-            echo "NPM Version: $(npm -v)"
-            echo "PM2 Version: $(pm2 -v)"
 
             cd /home/layoffproof/htdocs/layoffproof.ai
 
-            echo "Pulling latest code..."
-            git fetch origin
+            echo "Current directory:"
+            pwd
+
+            echo "Syncing to latest main (discards local server-only changes)..."
+            git fetch origin main
             git reset --hard origin/main
 
-            echo "Installing dependencies..."
-            npm ci
+            echo "Installing dependencies (including devDependencies for build tools)..."
+            npm install --force --include=dev
 
-            echo "Building project..."
-            npm run build
+            echo "Building frontend and server..."
+            NODE_ENV=production npm run build
 
-            echo "Restarting PM2..."
-            pm2 restart layoffproof
+            if [ ! -f dist/public/index.html ]; then
+              echo "ERROR: Frontend build missing at dist/public/index.html"
+              exit 1
+            fi
 
-            echo "Deployment completed successfully!"
+            if [ ! -f dist/index.js ]; then
+              echo "ERROR: Server build missing at dist/index.js"
+              exit 1
+            fi
+
+            echo "Build OK:"
+            ls -la dist dist/public | head -20
+
+            echo "Restarting PM2 (layoffproof-app) with NODE_ENV=production..."
+            export NODE_ENV=production
+            if [ -f ecosystem.config.cjs ]; then
+              pm2 startOrRestart ecosystem.config.cjs --update-env
+            else
+              pm2 delete layoffproof-app 2>/dev/null || true
+              pm2 start dist/index.js --name layoffproof-app --update-env
+            fi
+            pm2 save
+
+            echo "PM2 status:"
+            pm2 status layoffproof-app
