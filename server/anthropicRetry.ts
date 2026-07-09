@@ -20,6 +20,11 @@ const DEFAULT_JITTER_MS = 750;
 const DEFAULT_PER_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_QUEUE_CONCURRENCY = 2;
 
+/** Dedicated queue for API routes — not blocked by background cron jobs. */
+export const USER_QUEUE_NAME = "user";
+/** Background jobs (layoff fetch, etc.). */
+export const BACKGROUND_QUEUE_NAME = "background";
+
 type MessageCreateParams = Parameters<Anthropic["messages"]["create"]>[0];
 
 export type AnthropicMessagesCreateSuccess = {
@@ -50,6 +55,20 @@ export type AnthropicRetryOptions = {
   signal?: AbortSignal;
   /** Max concurrent Anthropic calls through this helper (default 2). */
   queueConcurrency?: number;
+  /** Separate limiter pools so user routes are not queued behind cron jobs. */
+  queueName?: string;
+};
+
+export const USER_FACING_ANTHROPIC_OPTIONS: AnthropicRetryOptions = {
+  queueName: USER_QUEUE_NAME,
+  queueConcurrency: 3,
+  perRequestTimeoutMs: 90_000,
+};
+
+export const BACKGROUND_ANTHROPIC_OPTIONS: AnthropicRetryOptions = {
+  queueName: BACKGROUND_QUEUE_NAME,
+  queueConcurrency: 1,
+  perRequestTimeoutMs: 120_000,
 };
 
 function normalizeHeaderValue(
@@ -65,6 +84,32 @@ function normalizeHeaderValue(
     }
   }
   return undefined;
+}
+
+function getNetworkCauseCode(err: unknown): string | undefined {
+  if (!err || typeof err !== "object") return undefined;
+  const cause = (err as { cause?: { code?: string } }).cause;
+  if (cause?.code) return cause.code;
+  const name = (err as { name?: string }).name;
+  if (name === "APIConnectionTimeoutError") return "timeout";
+  if (name === "APIConnectionError") return "connection";
+  if (name === "APIUserAbortError") return "aborted";
+  return undefined;
+}
+
+/** Short diagnostic string for retry / exhaustion logs. */
+export function formatRetryErrorDetail(err: unknown): string {
+  const meta = getErrorMeta(err);
+  const parts: string[] = [];
+  const cause = getNetworkCauseCode(err);
+  if (cause) parts.push(`cause=${cause}`);
+  if (meta.errorType) parts.push(`type=${meta.errorType}`);
+  const msg = meta.message?.trim();
+  if (msg) parts.push(`msg=${msg.slice(0, 120)}`);
+  if (err instanceof Error && err.name && !parts.length) {
+    parts.push(`name=${err.name}`);
+  }
+  return parts.length > 0 ? parts.join(" ") : "unknown";
 }
 
 function getErrorMeta(err: unknown): {
@@ -212,16 +257,17 @@ function createConcurrencyLimiter(maxConcurrent: number) {
   };
 }
 
-const limitersByConcurrency = new Map<
-  number,
+const limitersByKey = new Map<
+  string,
   ReturnType<typeof createConcurrencyLimiter>
 >();
 
-function getConcurrencyLimiter(concurrency: number) {
-  let limiter = limitersByConcurrency.get(concurrency);
+function getConcurrencyLimiter(queueName: string, concurrency: number) {
+  const key = `${queueName}:${concurrency}`;
+  let limiter = limitersByKey.get(key);
   if (!limiter) {
     limiter = createConcurrencyLimiter(concurrency);
-    limitersByConcurrency.set(concurrency, limiter);
+    limitersByKey.set(key, limiter);
   }
   return limiter;
 }
@@ -244,13 +290,14 @@ export async function anthropicMessagesCreateWithRetry(
     options?.perRequestTimeoutMs ?? DEFAULT_PER_REQUEST_TIMEOUT_MS;
   const label = options?.label ?? "anthropic";
   const userSignal = options?.signal;
+  const queueName = options?.queueName ?? "default";
   const concurrency =
     options?.queueConcurrency ?? DEFAULT_QUEUE_CONCURRENCY;
 
   const limiter =
     concurrency <= 0
       ? <T>(fn: () => Promise<T>) => fn()
-      : getConcurrencyLimiter(concurrency);
+      : getConcurrencyLimiter(queueName, concurrency);
 
   return limiter(async () => {
     let lastErr: unknown;
@@ -319,7 +366,7 @@ export async function anthropicMessagesCreateWithRetry(
             return failureFromError(err);
           }
           console.warn(
-            `[${label}] Anthropic retries exhausted after ${attempt + 1} attempt(s).`,
+            `[${label}] Anthropic retries exhausted after ${attempt + 1} attempt(s). ${formatRetryErrorDetail(err)}`,
             getErrorMeta(err),
           );
           return failureFromError(err);
@@ -333,7 +380,7 @@ export async function anthropicMessagesCreateWithRetry(
         );
         const meta = getErrorMeta(err);
         console.warn(
-          `[${label}] Retry ${attempt + 1}/${maxRetries} in ${delayMs}ms (status=${meta.status ?? "n/a"} request_id=${meta.requestId ?? "n/a"} x-should-retry=${normalizeHeaderValue(meta.headers, "x-should-retry") ?? "n/a"})`,
+          `[${label}] Retry ${attempt + 1}/${maxRetries} in ${delayMs}ms (status=${meta.status ?? "n/a"} request_id=${meta.requestId ?? "n/a"} x-should-retry=${normalizeHeaderValue(meta.headers, "x-should-retry") ?? "n/a"} ${formatRetryErrorDetail(err)})`,
         );
 
         await sleep(delayMs);

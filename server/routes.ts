@@ -13,7 +13,12 @@ import {
   processAffiliateSubscriptionActivation,
 } from "./affiliateService";
 // import { setupLinkedInAuth } from "./linkedinAuth";
-import { analyzeJobSecurityRisk, DEFAULT_MODEL_STR } from "./anthropic";
+import {
+  analyzeJobSecurityRisk,
+  DEFAULT_MODEL_STR,
+  getAnthropicResponseText,
+  parseAnthropicJsonResponse,
+} from "./anthropic";
 import { dataIntegrator } from "./data-integrator";
 import {
   insertCompanySchema,
@@ -36,7 +41,7 @@ import pdf from "pdf-parse/lib/pdf-parse.js";
 import mammoth from "mammoth";
 import docxParser from "docx-parser";
 import Anthropic from "@anthropic-ai/sdk";
-import { anthropicMessagesCreateWithRetry } from "./anthropicRetry";
+import { anthropicMessagesCreateWithRetry, USER_FACING_ANTHROPIC_OPTIONS } from "./anthropicRetry";
 import { db } from "./db";
 import Parser from "rss-parser";
 import { eq, and, gte, lte, desc, sql } from "drizzle-orm";
@@ -2880,6 +2885,11 @@ You are an expert career coach and interview preparation AI. Your task is to ana
     a. The question itself ("question").
     b. A brief explanation of why asking this question makes a good impression on the interviewer ("goodImpression"). This explanation should be concise and focused on the value the question demonstrates (e.g., strategic thinking, long-term commitment, team-oriented mindset).
 
+**Length constraints:**
+- Keep each "modelAnswer" to 2-3 sentences.
+- Keep each "interviewerIntent" and "goodImpression" to 1-2 sentences.
+- Do not add extra fields or commentary outside the JSON object.
+
 **Output Format:**
 You MUST respond with ONLY a single valid JSON object. Do not include any text, backticks, or explanations before or after the JSON block. The JSON object must strictly follow this structure:
 
@@ -2906,29 +2916,32 @@ You MUST respond with ONLY a single valid JSON object. Do not include any text, 
 `;
       // --- MODIFICATION END ---
 
-      const response = await anthropic.messages.create({
-        model: DEFAULT_MODEL_STR,
-        max_tokens: 2000,
-        temperature: 0.6, // Low temperature for factual, deterministic output
-        messages: [{ role: "user", content: prompt }],
-      });
+      const aiResult = await anthropicMessagesCreateWithRetry(
+        anthropic,
+        {
+          model: DEFAULT_MODEL_STR,
+          max_tokens: 3000,
+          temperature: 0.6,
+          messages: [{ role: "user", content: prompt }],
+        },
+        { label: "generate-interview-questions", ...USER_FACING_ANTHROPIC_OPTIONS },
+      );
 
-      // Extract and parse the JSON response from the AI
-      const responseText = response.content[0].text.trim();
-      let jsonString = responseText;
-
-      if (responseText.includes("```json")) {
-        const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/);
-        jsonString = jsonMatch ? jsonMatch[1].trim() : responseText;
-      } else if (responseText.includes("```")) {
-        const jsonMatch = responseText.match(/```\s*([\s\S]*?)\s*```/);
-        jsonString = jsonMatch ? jsonMatch[1].trim() : responseText;
-      } else {
-        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-        jsonString = jsonMatch ? jsonMatch[0] : responseText;
+      if (!aiResult.ok) {
+        const httpStatus =
+          aiResult.status === 529 || aiResult.status === 503 ? 503 : 502;
+        return res.status(httpStatus).json({ error: aiResult.error });
       }
 
-      const jobAnalysis = JSON.parse(jsonString);
+      if (aiResult.message.stop_reason === "max_tokens") {
+        console.warn(
+          "Interview questions response hit max_tokens and may be truncated",
+        );
+      }
+
+      const jobAnalysis = parseAnthropicJsonResponse<any>(
+        getAnthropicResponseText(aiResult.message.content),
+      );
 
       // Post-process the questions to add unique IDs for the frontend state management
       jobAnalysis.questions = jobAnalysis.questions.map((q:any) => ({
@@ -3016,7 +3029,7 @@ Now, provide the complete, improved cover letter below.
           temperature: 0.45,
           messages: [{ role: "user", content: prompt }],
         },
-        { label: "improve-cover-letter" },
+        { label: "improve-cover-letter", ...USER_FACING_ANTHROPIC_OPTIONS },
       );
 
       if (!aiResult.ok) {
@@ -3102,19 +3115,31 @@ Now, provide the complete, improved cover letter below.
         apiKey: process.env.ANTHROPIC_API_KEY,
       });
 
-      const response = await anthropic.messages.create({
-        model: DEFAULT_MODEL_STR,
-        max_tokens: 2000,
-        temperature: 0.1, // Low temperature for factual, deterministic output
-        messages: [{ role: "user", content: prompt }],
-      });
+      const aiResult = await anthropicMessagesCreateWithRetry(
+        anthropic,
+        {
+          model: DEFAULT_MODEL_STR,
+          max_tokens: 2000,
+          temperature: 0.1,
+          messages: [{ role: "user", content: prompt }],
+        },
+        { label: "score-interview-answers", ...USER_FACING_ANTHROPIC_OPTIONS },
+      );
 
-      // 5. Parse the JSON response from the AI
-      const rawJson = response.content[0].text;
-      const scoredResults = JSON.parse(rawJson);
+      if (!aiResult.ok) {
+        const httpStatus =
+          aiResult.status === 529 || aiResult.status === 503 ? 503 : 502;
+        return res.status(httpStatus).json({ error: aiResult.error });
+      }
+
+      const scoredResults = parseAnthropicJsonResponse<
+        Array<{ id: string; score: number; feedback: string }>
+      >(getAnthropicResponseText(aiResult.message.content));
 
       // 6. Create a map for efficient lookup of scores and feedback by question ID
-      const resultsMap = scoredResults.reduce((acc, result) => {
+      const resultsMap = scoredResults.reduce<
+        Record<string, { score: number; feedback: string }>
+      >((acc, result) => {
         acc[result.id] = { score: result.score, feedback: result.feedback };
         return acc;
       }, {});
@@ -3406,7 +3431,12 @@ ${rawText}
           temperature: 0.1,
           messages: [{ role: "user", content: prompt }],
         },
-        { maxRetries: 6, baseDelayMs: 2000, label: "import-linkedin-resume-pdf" },
+        {
+          maxRetries: 6,
+          baseDelayMs: 2000,
+          label: "import-linkedin-resume-pdf",
+          ...USER_FACING_ANTHROPIC_OPTIONS,
+        },
       );
 
       if (!aiResult.ok) {
@@ -3416,10 +3446,10 @@ ${rawText}
         });
       }
 
-      const responseText = aiResult.message.content[0].text;
+      const responseText = getAnthropicResponseText(aiResult.message.content);
       let parsedData: any;
       try {
-        parsedData = JSON.parse(responseText);
+        parsedData = parseAnthropicJsonResponse<any>(responseText);
       } catch (parseError) {
         console.error(
           "Failed to parse JSON from AI response (linkedin pdf):",
@@ -4398,8 +4428,9 @@ ${applicantInfo.name}
         );
       }
 
-      const rawJson = response.content[0].text;
-      const optimizationResult = JSON.parse(rawJson);
+      const optimizationResult = parseAnthropicJsonResponse<any>(
+        getAnthropicResponseText(response.content),
+      );
 
       // Final check on the parsed JSON structure
       if (
@@ -4559,27 +4590,10 @@ Return ONLY the JSON object, no additional text or formatting.`;
 
       let parsedData;
       try {
-        const responseText = response.content[0].text.trim();
+        const responseText = getAnthropicResponseText(response.content);
         console.log("AI response text:", responseText);
 
-        // Extract JSON from response - handle markdown code blocks and extra text
-        let jsonString = responseText;
-
-        // Remove markdown code blocks if present
-        if (responseText.includes("```json")) {
-          const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/);
-          jsonString = jsonMatch ? jsonMatch[1].trim() : responseText;
-        } else if (responseText.includes("```")) {
-          const jsonMatch = responseText.match(/```\s*([\s\S]*?)\s*```/);
-          jsonString = jsonMatch ? jsonMatch[1].trim() : responseText;
-        } else {
-          // Extract JSON object if no code blocks
-          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-          jsonString = jsonMatch ? jsonMatch[0] : responseText;
-        }
-
-        console.log("Extracted JSON string:", jsonString);
-        parsedData = JSON.parse(jsonString);
+        parsedData = parseAnthropicJsonResponse<any>(responseText);
         console.log("Parsed AI resume data:", parsedData);
 
         // Validate that parsedData contains expected fields
@@ -5762,7 +5776,7 @@ Requirements:
           temperature: 0.1,
           messages: [{ role: "user", content: prompt }],
         },
-        { maxRetries: 6, baseDelayMs: 2000, label: "upload-resume" },
+        { maxRetries: 6, baseDelayMs: 2000, label: "upload-resume", ...USER_FACING_ANTHROPIC_OPTIONS },
       );
 
       if (!aiResult.ok) {
@@ -5772,11 +5786,11 @@ Requirements:
         });
       }
 
-      const responseText = aiResult.message.content[0].text;
+      const responseText = getAnthropicResponseText(aiResult.message.content);
       let parsedData;
 
       try {
-        parsedData = JSON.parse(responseText);
+        parsedData = parseAnthropicJsonResponse<any>(responseText);
         await DetuctCredits(user);
       } catch (parseError) {
         console.error("Failed to parse JSON from AI response:", responseText);
@@ -5934,14 +5948,9 @@ Requirements:
         messages: [{ role: "user", content: prompt }],
       });
 
-      const responseText = msg.content[0].text;
-
-      // Find the start and end of the JSON object
-      const jsonStart = responseText.indexOf("{");
-      const jsonEnd = responseText.lastIndexOf("}") + 1;
-      const jsonString = responseText.substring(jsonStart, jsonEnd);
-
-      const analysisReport = JSON.parse(jsonString);
+      const analysisReport = parseAnthropicJsonResponse<any>(
+        getAnthropicResponseText(msg.content),
+      );
 
       console.log("✅ Successfully generated AI analysis report.");
       await logLayoffProofTool(req, "linkedin", {
@@ -6050,8 +6059,9 @@ Example format: {"message": "Subject: Inquiry about opportunities\\n\\nDear John
         messages: [{ role: "user", content: prompt }],
       });
 
-      const responseText = msg.content[0].text;
-      const parsedResponse = JSON.parse(responseText);
+      const parsedResponse = parseAnthropicJsonResponse<{ message: string }>(
+        getAnthropicResponseText(msg.content),
+      );
 
       console.log(`✅ Successfully generated ${messageTypeName} with Claude.`);
       await DetuctCredits(user);

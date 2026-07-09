@@ -16,6 +16,57 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
+export function getAnthropicResponseText(
+  content: Anthropic.Messages.ContentBlock[],
+): string {
+  const block = content[0];
+  if (!block || block.type !== "text") {
+    throw new Error("Unexpected response format from Anthropic");
+  }
+  return block.text.trim();
+}
+
+export function extractJsonFromAnthropicText(responseText: string): string {
+  const trimmed = responseText.trim();
+  let jsonString = trimmed;
+
+  if (trimmed.includes("```json")) {
+    const jsonMatch = trimmed.match(/```json\s*([\s\S]*?)\s*```/);
+    jsonString = jsonMatch ? jsonMatch[1].trim() : trimmed;
+  } else if (trimmed.includes("```")) {
+    const jsonMatch = trimmed.match(/```\s*([\s\S]*?)\s*```/);
+    jsonString = jsonMatch ? jsonMatch[1].trim() : trimmed;
+  } else {
+    const arrayIndex = trimmed.indexOf("[");
+    const objectIndex = trimmed.indexOf("{");
+    const hasArray = arrayIndex !== -1;
+    const hasObject = objectIndex !== -1;
+
+    if (hasArray && (!hasObject || arrayIndex < objectIndex)) {
+      const jsonMatch = trimmed.match(/\[[\s\S]*\]/);
+      jsonString = jsonMatch ? jsonMatch[0] : trimmed;
+    } else if (hasObject) {
+      const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
+      jsonString = jsonMatch ? jsonMatch[0] : trimmed;
+    }
+  }
+
+  return jsonString;
+}
+
+export function parseAnthropicJsonResponse<T = unknown>(
+  responseText: string,
+): T {
+  const jsonString = extractJsonFromAnthropicText(responseText);
+  try {
+    return JSON.parse(jsonString) as T;
+  } catch (error) {
+    throw new Error(
+      `Failed to parse JSON from Anthropic response: ${(error as Error).message}`,
+    );
+  }
+}
+
 interface JobRiskAnalysisInput {
   jobTitle: string;
   companyName: string;
@@ -103,19 +154,9 @@ export async function analyzeJobSecurityRisk(input: JobRiskAnalysisInput): Promi
       ],
     });
 
-    const content = response.content[0];
-    if (content.type === 'text') {
-      const analysisText = content.text;
-      // Extract JSON from the response
-      const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error('Could not parse analysis response');
-      }
-    } else {
-      throw new Error('Unexpected response format from Anthropic');
-    }
+    return parseAnthropicJsonResponse<RiskAnalysis>(
+      getAnthropicResponseText(response.content),
+    );
   } catch (error) {
     console.error('Error analyzing job security risk:', error);
     throw new Error('Failed to analyze job security risk: ' + (error as Error).message);
