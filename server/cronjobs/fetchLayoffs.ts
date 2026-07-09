@@ -2,7 +2,7 @@ import moment from "moment";
 import express from "express";
 import { scheduleJob } from "node-schedule";
 import Anthropic from "@anthropic-ai/sdk";
-import { DEFAULT_MODEL_STR } from "../anthropic";
+import { DEFAULT_MODEL_STR, parseAnthropicJsonResponse } from "../anthropic";
 import { anthropicMessagesCreateWithRetry } from "../anthropicRetry";
 import RssParser from "rss-parser";
 import { db } from "../db";
@@ -426,19 +426,19 @@ ${JSON.stringify(
                             continue;
                         }
 
-                        let data = contentText
-                            .trim()
-                            .replace(/```json\n?/g, "")
-                            .replace(/```\n?/g, "")
-                            .trim();
-
-                        const jsonMatch = data.match(/\[[\s\S]*\]/);
-                        if (jsonMatch) {
-                            const extractedLayoffs = JSON.parse(jsonMatch[0]);
+                        try {
+                            const extractedLayoffs = parseAnthropicJsonResponse<
+                                LayoffData[]
+                            >(contentText);
                             if (Array.isArray(extractedLayoffs)) {
-                                allLayoffs.push(...(extractedLayoffs as LayoffData[]));
+                                allLayoffs.push(...extractedLayoffs);
                                 console.log(`✓ Extracted ${extractedLayoffs.length} layoffs from ${category}`);
                             }
+                        } catch (parseError) {
+                            console.error(
+                                `Failed to parse layoff JSON (${category}):`,
+                                parseError,
+                            );
                         }
                     } catch (err) {
                         console.error(`Claude error (${category}):`, err);

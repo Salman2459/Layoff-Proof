@@ -13,7 +13,12 @@ import {
   processAffiliateSubscriptionActivation,
 } from "./affiliateService";
 // import { setupLinkedInAuth } from "./linkedinAuth";
-import { analyzeJobSecurityRisk, DEFAULT_MODEL_STR } from "./anthropic";
+import {
+  analyzeJobSecurityRisk,
+  DEFAULT_MODEL_STR,
+  getAnthropicResponseText,
+  parseAnthropicJsonResponse,
+} from "./anthropic";
 import { dataIntegrator } from "./data-integrator";
 import {
   insertCompanySchema,
@@ -2913,22 +2918,9 @@ You MUST respond with ONLY a single valid JSON object. Do not include any text, 
         messages: [{ role: "user", content: prompt }],
       });
 
-      // Extract and parse the JSON response from the AI
-      const responseText = response.content[0].text.trim();
-      let jsonString = responseText;
-
-      if (responseText.includes("```json")) {
-        const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/);
-        jsonString = jsonMatch ? jsonMatch[1].trim() : responseText;
-      } else if (responseText.includes("```")) {
-        const jsonMatch = responseText.match(/```\s*([\s\S]*?)\s*```/);
-        jsonString = jsonMatch ? jsonMatch[1].trim() : responseText;
-      } else {
-        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-        jsonString = jsonMatch ? jsonMatch[0] : responseText;
-      }
-
-      const jobAnalysis = JSON.parse(jsonString);
+      const jobAnalysis = parseAnthropicJsonResponse<any>(
+        getAnthropicResponseText(response.content),
+      );
 
       // Post-process the questions to add unique IDs for the frontend state management
       jobAnalysis.questions = jobAnalysis.questions.map((q:any) => ({
@@ -3109,12 +3101,14 @@ Now, provide the complete, improved cover letter below.
         messages: [{ role: "user", content: prompt }],
       });
 
-      // 5. Parse the JSON response from the AI
-      const rawJson = response.content[0].text;
-      const scoredResults = JSON.parse(rawJson);
+      const scoredResults = parseAnthropicJsonResponse<
+        Array<{ id: string; score: number; feedback: string }>
+      >(getAnthropicResponseText(response.content));
 
       // 6. Create a map for efficient lookup of scores and feedback by question ID
-      const resultsMap = scoredResults.reduce((acc, result) => {
+      const resultsMap = scoredResults.reduce<
+        Record<string, { score: number; feedback: string }>
+      >((acc, result) => {
         acc[result.id] = { score: result.score, feedback: result.feedback };
         return acc;
       }, {});
@@ -3416,10 +3410,10 @@ ${rawText}
         });
       }
 
-      const responseText = aiResult.message.content[0].text;
+      const responseText = getAnthropicResponseText(aiResult.message.content);
       let parsedData: any;
       try {
-        parsedData = JSON.parse(responseText);
+        parsedData = parseAnthropicJsonResponse<any>(responseText);
       } catch (parseError) {
         console.error(
           "Failed to parse JSON from AI response (linkedin pdf):",
@@ -4398,8 +4392,9 @@ ${applicantInfo.name}
         );
       }
 
-      const rawJson = response.content[0].text;
-      const optimizationResult = JSON.parse(rawJson);
+      const optimizationResult = parseAnthropicJsonResponse<any>(
+        getAnthropicResponseText(response.content),
+      );
 
       // Final check on the parsed JSON structure
       if (
@@ -4559,27 +4554,10 @@ Return ONLY the JSON object, no additional text or formatting.`;
 
       let parsedData;
       try {
-        const responseText = response.content[0].text.trim();
+        const responseText = getAnthropicResponseText(response.content);
         console.log("AI response text:", responseText);
 
-        // Extract JSON from response - handle markdown code blocks and extra text
-        let jsonString = responseText;
-
-        // Remove markdown code blocks if present
-        if (responseText.includes("```json")) {
-          const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/);
-          jsonString = jsonMatch ? jsonMatch[1].trim() : responseText;
-        } else if (responseText.includes("```")) {
-          const jsonMatch = responseText.match(/```\s*([\s\S]*?)\s*```/);
-          jsonString = jsonMatch ? jsonMatch[1].trim() : responseText;
-        } else {
-          // Extract JSON object if no code blocks
-          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-          jsonString = jsonMatch ? jsonMatch[0] : responseText;
-        }
-
-        console.log("Extracted JSON string:", jsonString);
-        parsedData = JSON.parse(jsonString);
+        parsedData = parseAnthropicJsonResponse<any>(responseText);
         console.log("Parsed AI resume data:", parsedData);
 
         // Validate that parsedData contains expected fields
@@ -5772,11 +5750,11 @@ Requirements:
         });
       }
 
-      const responseText = aiResult.message.content[0].text;
+      const responseText = getAnthropicResponseText(aiResult.message.content);
       let parsedData;
 
       try {
-        parsedData = JSON.parse(responseText);
+        parsedData = parseAnthropicJsonResponse<any>(responseText);
         await DetuctCredits(user);
       } catch (parseError) {
         console.error("Failed to parse JSON from AI response:", responseText);
@@ -5934,14 +5912,9 @@ Requirements:
         messages: [{ role: "user", content: prompt }],
       });
 
-      const responseText = msg.content[0].text;
-
-      // Find the start and end of the JSON object
-      const jsonStart = responseText.indexOf("{");
-      const jsonEnd = responseText.lastIndexOf("}") + 1;
-      const jsonString = responseText.substring(jsonStart, jsonEnd);
-
-      const analysisReport = JSON.parse(jsonString);
+      const analysisReport = parseAnthropicJsonResponse<any>(
+        getAnthropicResponseText(msg.content),
+      );
 
       console.log("✅ Successfully generated AI analysis report.");
       await logLayoffProofTool(req, "linkedin", {
@@ -6050,8 +6023,9 @@ Example format: {"message": "Subject: Inquiry about opportunities\\n\\nDear John
         messages: [{ role: "user", content: prompt }],
       });
 
-      const responseText = msg.content[0].text;
-      const parsedResponse = JSON.parse(responseText);
+      const parsedResponse = parseAnthropicJsonResponse<{ message: string }>(
+        getAnthropicResponseText(msg.content),
+      );
 
       console.log(`✅ Successfully generated ${messageTypeName} with Claude.`);
       await DetuctCredits(user);
