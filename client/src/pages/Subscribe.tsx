@@ -800,10 +800,14 @@ const PlanSelection = ({
     return plans.find((p) => p.id === currentCatalogPlanId);
   }, [currentCatalogPlanId, plans]);
 
+
+const LaypffProPlan = ["Layoff Proof AI - Radar","Layoff Proof AI - Pro","Layoff Proof AI - Autopilot"]
+
+
   const displayPlans = useMemo(
     () =>
       plans
-        .filter((p) => p.name !== "TradePilot AI (Careers & Community)")
+        .filter((p) => LaypffProPlan.includes(p.name))
         .slice()
         .reverse(),
     [plans],
@@ -885,7 +889,7 @@ useEffect(() => {
     </>
   ) : (
   <>
-  {displayPlans.map((plan: StripeCatalogProduct, planIdx: number) => {
+  {displayPlans?.map((plan: StripeCatalogProduct, planIdx: number) => {
     const isCurrent = showAsCurrentPlanInUi(plan.id);
 
     const showMarkedFeatures =["Auto-Apply","Tailored Resume","Tailored Cover","Recruiter DM","Resume Engine","Layoff Radar"]
@@ -952,11 +956,11 @@ useEffect(() => {
               /{plan?.default_price?.recurring?.interval ?? "month"}
             </span>
           </p>
-          {tagline ? (
+          {/* {tagline ? (
             <p className="mx-auto mt-3 max-w-[260px] text-[13px] leading-relaxed text-[#64748b]">
               {tagline}
             </p>
-          ) : null}
+          ) : null} */}
         </div>
 
         <div className="mt-6 flex-1">
