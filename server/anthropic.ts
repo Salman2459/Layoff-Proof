@@ -26,32 +26,56 @@ export function getAnthropicResponseText(
   return block.text.trim();
 }
 
+function sliceJsonPayload(text: string): string {
+  const trimmed = text.trim();
+  const arrayIndex = trimmed.indexOf("[");
+  const objectIndex = trimmed.indexOf("{");
+  const hasArray = arrayIndex !== -1;
+  const hasObject = objectIndex !== -1;
+
+  if (hasArray && (!hasObject || arrayIndex < objectIndex)) {
+    const end = trimmed.lastIndexOf("]");
+    return end > arrayIndex
+      ? trimmed.slice(arrayIndex, end + 1)
+      : trimmed.slice(arrayIndex);
+  }
+  if (hasObject) {
+    const end = trimmed.lastIndexOf("}");
+    return end > objectIndex
+      ? trimmed.slice(objectIndex, end + 1)
+      : trimmed.slice(objectIndex);
+  }
+  return trimmed;
+}
+
 export function extractJsonFromAnthropicText(responseText: string): string {
   const trimmed = responseText.trim();
-  let jsonString = trimmed;
 
-  if (trimmed.includes("```json")) {
-    const jsonMatch = trimmed.match(/```json\s*([\s\S]*?)\s*```/);
-    jsonString = jsonMatch ? jsonMatch[1].trim() : trimmed;
-  } else if (trimmed.includes("```")) {
-    const jsonMatch = trimmed.match(/```\s*([\s\S]*?)\s*```/);
-    jsonString = jsonMatch ? jsonMatch[1].trim() : trimmed;
-  } else {
-    const arrayIndex = trimmed.indexOf("[");
-    const objectIndex = trimmed.indexOf("{");
-    const hasArray = arrayIndex !== -1;
-    const hasObject = objectIndex !== -1;
-
-    if (hasArray && (!hasObject || arrayIndex < objectIndex)) {
-      const jsonMatch = trimmed.match(/\[[\s\S]*\]/);
-      jsonString = jsonMatch ? jsonMatch[0] : trimmed;
-    } else if (hasObject) {
-      const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
-      jsonString = jsonMatch ? jsonMatch[0] : trimmed;
-    }
+  // Handle fenced responses, including truncated ones with no closing ```
+  const fencedMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)(?:\s*```\s*)?$/i);
+  if (fencedMatch) {
+    return sliceJsonPayload(fencedMatch[1]);
   }
 
-  return jsonString;
+  if (trimmed.includes("```json")) {
+    const start = trimmed.indexOf("```json") + "```json".length;
+    const end = trimmed.indexOf("```", start);
+    const inner = end === -1 ? trimmed.slice(start) : trimmed.slice(start, end);
+    return sliceJsonPayload(inner);
+  }
+
+  if (trimmed.includes("```")) {
+    const startFence = trimmed.indexOf("```");
+    const afterFence = trimmed.slice(startFence + 3);
+    const newline = afterFence.indexOf("\n");
+    const contentStart = newline === -1 ? 0 : newline + 1;
+    const content = afterFence.slice(contentStart);
+    const end = content.indexOf("```");
+    const inner = end === -1 ? content : content.slice(0, end);
+    return sliceJsonPayload(inner);
+  }
+
+  return sliceJsonPayload(trimmed);
 }
 
 export function parseAnthropicJsonResponse<T = unknown>(

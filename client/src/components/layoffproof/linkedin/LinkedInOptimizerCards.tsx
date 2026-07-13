@@ -497,7 +497,7 @@ export function LinkedInSetupCard({
             <p className="mt-1 truncate text-[11px] text-[#64748b]">{profilePdf.name}</p>
           )}
         </div>
-        <div>
+        {/* <div>
           <label className="mb-1.5 block text-xs font-medium text-[#475569]">Or profile URL</label>
           <input
             type="url"
@@ -507,7 +507,7 @@ export function LinkedInSetupCard({
             placeholder="https://linkedin.com/in/..."
             className="w-full rounded-xl border border-[#e2e8f0] bg-white px-3 py-2.5 text-sm outline-none ring-[#6366f1] focus:ring-2 disabled:opacity-60"
           />
-        </div>
+        </div> */}
       </div>
       <button
         type="button"
@@ -528,14 +528,18 @@ export function LinkedInSetupCard({
 
 export function LinkedInPageActions({
   onRefresh,
-  onExport,
+  onDownloadProfile,
+  onExportChecklist,
   isAnalyzing,
   hasReport,
+  hasProfile,
 }: {
   onRefresh: () => void;
-  onExport: () => void;
+  onDownloadProfile: () => void;
+  onExportChecklist: () => void;
   isAnalyzing: boolean;
   hasReport: boolean;
+  hasProfile: boolean;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -550,12 +554,21 @@ export function LinkedInPageActions({
       </button>
       <button
         type="button"
-        onClick={onExport}
+        onClick={onExportChecklist}
         disabled={!hasReport}
+        className="flex items-center gap-2 rounded-xl border border-[#e2e8f0] bg-white px-4 py-2 text-sm font-medium text-[#334155] shadow-sm transition hover:bg-[#f8fafc] disabled:opacity-50"
+      >
+        <FileText className="h-4 w-4" />
+        Export Checklist
+      </button>
+      <button
+        type="button"
+        onClick={onDownloadProfile}
+        disabled={!hasProfile}
         className="flex items-center gap-2 rounded-xl bg-[#6366f1] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#4f46e5] disabled:opacity-50"
       >
         <Download className="h-4 w-4" />
-        Export Profile Checklist
+        Download Updated Profile
       </button>
     </div>
   );

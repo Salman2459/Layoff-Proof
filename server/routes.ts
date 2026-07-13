@@ -4412,8 +4412,11 @@ ${applicantInfo.name}
 
       const response = await anthropic.messages.create({
         model: DEFAULT_MODEL_STR,
-        max_tokens: 2500,
+        // Large nested schema; 2500 often truncates mid-JSON / mid-fence.
+        max_tokens: 6000,
         temperature: 0.7,
+        system:
+          "Return ONLY valid JSON. Do not wrap the response in markdown code fences. Do not add commentary before or after the JSON object.",
         messages: [{ role: "user", content: prompt }],
       });
 
@@ -4425,6 +4428,12 @@ ${applicantInfo.name}
         );
         throw new Error(
           "The AI failed to generate a response. This can happen due to safety filters or an internal API issue.",
+        );
+      }
+
+      if (response.stop_reason === "max_tokens") {
+        console.warn(
+          "LinkedIn optimize response hit max_tokens; JSON may be incomplete.",
         );
       }
 

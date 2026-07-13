@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { LayoffProofLayout } from "@/components/layoffproof/LayoffProofLayout";
 import { LayoffProofPageHeader } from "@/components/layoffproof/LayoffProofPageHeader";
@@ -21,19 +21,36 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { extractApiErrorMessage, parseFetchJsonBody } from "@/lib/queryClient";
 import {
+  applyImprovedContent,
   buildChecklist,
   computeStats,
   countSuggestionsByImpact,
+  downloadTextFile,
   exportChecklistText,
+  exportOptimizedProfileText,
   flattenSuggestions,
   normalizeAnalysisReport,
   toApiProfilePayload,
   toOptimizerProfileData,
   type AnalysisReportPayload,
+  type ImprovedLinkedInContent,
   type LinkedInSuggestion,
 } from "@/lib/linkedinOptimizer";
+import {
+  loadLinkedInOptimizerDraft,
+  saveLinkedInOptimizerDraft,
+} from "@/lib/linkedinOptimizerDraft";
 
 type SuggestionTab = "all" | "high" | "improve" | "good" | "completed";
+
+function slugifyFilename(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return slug || "linkedin-profile";
+}
 
 export default function LinkedInOptimizer() {
   const [profilePdf, setProfilePdf] = useState<File | null>(null);
@@ -47,12 +64,52 @@ export default function LinkedInOptimizer() {
   const [showAllSuggestions, setShowAllSuggestions] = useState(false);
   const [showAllChecklist, setShowAllChecklist] = useState(false);
   const [highlightField, setHighlightField] = useState<string | null>(null);
+  const [draftRestored, setDraftRestored] = useState(false);
   const editorRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const { user } = useAuth();
 
   const isAnalyzing = analysisStep !== "";
   const hasReport = !!profileData && !!analysisReport;
+  const hasProfile = !!profileData;
+
+  // Restore persisted profile for this user
+  useEffect(() => {
+    if (!user?.id || draftRestored) return;
+    const draft = loadLinkedInOptimizerDraft(user.id);
+    setDraftRestored(true);
+    if (!draft) return;
+
+    setProfileData(draft.profileData);
+    setAnalysisReport(draft.analysisReport);
+    setTargetJobTitle(draft.targetJobTitle || "");
+    setLinkedinUrl(draft.linkedinUrl || "");
+    toast({
+      title: "Profile restored",
+      description: "Your saved LinkedIn optimizer profile was loaded.",
+    });
+  }, [user?.id, draftRestored, toast]);
+
+  // Persist profile + analysis whenever the user adds or edits it
+  useEffect(() => {
+    if (!user?.id || !draftRestored || !profileData) return;
+    const timer = window.setTimeout(() => {
+      saveLinkedInOptimizerDraft(user.id, {
+        profileData,
+        analysisReport,
+        targetJobTitle,
+        linkedinUrl,
+      });
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [
+    user?.id,
+    draftRestored,
+    profileData,
+    analysisReport,
+    targetJobTitle,
+    linkedinUrl,
+  ]);
 
   const suggestions = useMemo(
     () => (analysisReport ? flattenSuggestions(analysisReport) : []),
@@ -202,6 +259,14 @@ export default function LinkedInOptimizer() {
         setAnalysisStep("Importing profile...");
         fetched = await importProfile();
         setProfileData(fetched);
+        if (user?.id) {
+          saveLinkedInOptimizerDraft(user.id, {
+            profileData: fetched,
+            analysisReport: null,
+            targetJobTitle: targetJobTitle.trim(),
+            linkedinUrl,
+          });
+        }
       }
 
       setAnalysisStep("Analyzing with AI...");
@@ -221,21 +286,24 @@ export default function LinkedInOptimizer() {
       const optimizeData = await parseFetchJsonBody(optimizeRes);
 
       if (optimizeRes.ok && optimizeData.analysisReport) {
-        setAnalysisReport(normalizeAnalysisReport(optimizeData));
-        if (optimizeData.improvedContent?.headline && fetched) {
-          setProfileData((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  profession: optimizeData.improvedContent.headline || prev.profession,
-                  summary: optimizeData.improvedContent.summary || prev.summary,
-                }
-              : prev
-          );
+        const report = normalizeAnalysisReport(optimizeData);
+        setAnalysisReport(report);
+        const improved = optimizeData.improvedContent as
+          | ImprovedLinkedInContent
+          | undefined;
+        const merged = applyImprovedContent(fetched, improved);
+        setProfileData(merged);
+        if (user?.id) {
+          saveLinkedInOptimizerDraft(user.id, {
+            profileData: merged,
+            analysisReport: report,
+            targetJobTitle: targetJobTitle.trim(),
+            linkedinUrl,
+          });
         }
         toast({
           title: "Analysis complete",
-          description: `LinkedIn insights for ${fetched.name} are ready.`,
+          description: `LinkedIn insights for ${merged.name} are ready. You can download your updated profile.`,
         });
         return;
       }
@@ -258,7 +326,16 @@ export default function LinkedInOptimizer() {
           ),
         );
       }
-      setAnalysisReport(normalizeAnalysisReport(analyzeData));
+      const report = normalizeAnalysisReport(analyzeData);
+      setAnalysisReport(report);
+      if (user?.id) {
+        saveLinkedInOptimizerDraft(user.id, {
+          profileData: fetched,
+          analysisReport: report,
+          targetJobTitle: targetJobTitle.trim(),
+          linkedinUrl,
+        });
+      }
       toast({
         title: "Analysis complete",
         description: `Feedback for ${fetched.name} is ready.`,
@@ -272,21 +349,31 @@ export default function LinkedInOptimizer() {
     }
   };
 
-  const handleExport = () => {
+  const handleExportChecklist = () => {
     if (!profileData || !analysisReport) return;
     const text = exportChecklistText(
       checklist,
       stats,
       profileData.name || "Profile"
     );
-    const blob = new Blob([text], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "linkedin-profile-checklist.txt";
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadTextFile("linkedin-profile-checklist.txt", text);
     toast({ title: "Exported", description: "Checklist downloaded." });
+  };
+
+  const handleDownloadProfile = () => {
+    if (!profileData) return;
+    const text = exportOptimizedProfileText(profileData, {
+      targetJobTitle: targetJobTitle.trim() || undefined,
+      score: analysisReport?.score,
+    });
+    downloadTextFile(
+      `${slugifyFilename(profileData.name)}-linkedin-optimized.txt`,
+      text,
+    );
+    toast({
+      title: "Downloaded",
+      description: "Your updated LinkedIn profile was downloaded.",
+    });
   };
 
   const scrollToEditor = (field?: string) => {
@@ -321,9 +408,11 @@ export default function LinkedInOptimizer() {
         <div className="mt-2 mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-end">
           <LinkedInPageActions
             onRefresh={() => runAnalysis(true)}
-            onExport={handleExport}
+            onDownloadProfile={handleDownloadProfile}
+            onExportChecklist={handleExportChecklist}
             isAnalyzing={isAnalyzing}
             hasReport={hasReport}
+            hasProfile={hasProfile}
           />
         </div>
 

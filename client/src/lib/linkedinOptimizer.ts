@@ -297,3 +297,196 @@ export function exportChecklistText(
   ];
   return lines.join("\n");
 }
+
+type ImprovedExperience = {
+  title?: string;
+  company?: string;
+  duration?: string;
+  improvedPoints?: string[];
+};
+
+export type ImprovedLinkedInContent = {
+  headline?: string;
+  summary?: string;
+  experienceImprovements?: ImprovedExperience[];
+  suggestedSkills?: string[];
+  quickWins?: string[];
+};
+
+type ProfileLike = {
+  name: string;
+  profession: string;
+  summary: string;
+  location: string;
+  experience: Array<{
+    title: string;
+    company: string;
+    duration: string;
+    description: string;
+  }>;
+  education: Array<{ degree: string; school: string; duration: string }>;
+  skills: string[];
+  profileImageUrl?: string;
+  linkedin?: string;
+};
+
+function matchExperienceImprovement(
+  exp: ProfileLike["experience"][number],
+  index: number,
+  improvements: ImprovedExperience[],
+): ImprovedExperience | undefined {
+  const byCompanyAndTitle = improvements.find(
+    (imp) =>
+      !!imp.company &&
+      !!imp.title &&
+      imp.company.toLowerCase() === exp.company.toLowerCase() &&
+      imp.title.toLowerCase() === exp.title.toLowerCase(),
+  );
+  if (byCompanyAndTitle) return byCompanyAndTitle;
+
+  const byCompany = improvements.find(
+    (imp) =>
+      !!imp.company &&
+      imp.company.toLowerCase() === exp.company.toLowerCase(),
+  );
+  if (byCompany) return byCompany;
+
+  return improvements[index];
+}
+
+/** Merge AI improvedContent into the editable profile shape. */
+export function applyImprovedContent<T extends ProfileLike>(
+  profile: T,
+  improved: ImprovedLinkedInContent | null | undefined,
+): T {
+  if (!improved) return profile;
+
+  const next: T = {
+    ...profile,
+    experience: profile.experience.map((exp) => ({ ...exp })),
+    education: profile.education.map((edu) => ({ ...edu })),
+    skills: [...profile.skills],
+  };
+
+  if (improved.headline?.trim()) {
+    next.profession = improved.headline.trim();
+  }
+  if (improved.summary?.trim()) {
+    next.summary = improved.summary.trim();
+  }
+
+  if (improved.experienceImprovements?.length) {
+    next.experience = next.experience.map((exp, index) => {
+      const match = matchExperienceImprovement(
+        exp,
+        index,
+        improved.experienceImprovements!,
+      );
+      if (!match?.improvedPoints?.length) return exp;
+      return {
+        ...exp,
+        description: match.improvedPoints
+          .map((point) => point.replace(/^[•\-\*]\s*/, "").trim())
+          .filter(Boolean)
+          .map((point) => `• ${point}`)
+          .join("\n"),
+      };
+    });
+  }
+
+  if (improved.suggestedSkills?.length) {
+    const existing = new Set(
+      next.skills.map((skill) => skill.trim().toLowerCase()).filter(Boolean),
+    );
+    for (const skill of improved.suggestedSkills) {
+      const trimmed = skill.trim();
+      if (!trimmed) continue;
+      const key = trimmed.toLowerCase();
+      if (existing.has(key)) continue;
+      existing.add(key);
+      next.skills.push(trimmed);
+    }
+  }
+
+  return next;
+}
+
+/** Readable download of the current (edited) LinkedIn profile. */
+export function exportOptimizedProfileText(
+  profile: ProfileLike,
+  options?: { targetJobTitle?: string; score?: number },
+): string {
+  const lines: string[] = [
+    "LinkedIn Optimized Profile",
+    "==========================",
+  ];
+
+  if (options?.targetJobTitle) {
+    lines.push(`Target role: ${options.targetJobTitle}`);
+  }
+  if (typeof options?.score === "number") {
+    lines.push(`Strength score: ${options.score}/100`);
+  }
+  lines.push("");
+
+  lines.push(`Name: ${profile.name || ""}`);
+  lines.push(`Headline: ${profile.profession || ""}`);
+  if (profile.location) lines.push(`Location: ${profile.location}`);
+  if (profile.linkedin) lines.push(`Profile URL: ${profile.linkedin}`);
+  lines.push("");
+
+  lines.push("ABOUT");
+  lines.push("-----");
+  lines.push(profile.summary?.trim() || "(empty)");
+  lines.push("");
+
+  lines.push("EXPERIENCE");
+  lines.push("----------");
+  if (!profile.experience.length) {
+    lines.push("(none)");
+  } else {
+    for (const exp of profile.experience) {
+      lines.push(`${exp.title || "Role"} @ ${exp.company || "Company"}`);
+      if (exp.duration) lines.push(exp.duration);
+      if (exp.description?.trim()) {
+        lines.push(exp.description.trim());
+      }
+      lines.push("");
+    }
+  }
+
+  lines.push("EDUCATION");
+  lines.push("---------");
+  if (!profile.education.length) {
+    lines.push("(none)");
+  } else {
+    for (const edu of profile.education) {
+      lines.push(
+        `${edu.degree || "Degree"} — ${edu.school || "School"}${
+          edu.duration ? ` (${edu.duration})` : ""
+        }`,
+      );
+    }
+  }
+  lines.push("");
+
+  lines.push("SKILLS");
+  lines.push("------");
+  lines.push(profile.skills.length ? profile.skills.join(", ") : "(none)");
+  lines.push("");
+  lines.push(
+    "Tip: Copy each section into LinkedIn (Headline, About, Experience, Skills).",
+  );
+
+  return lines.join("\n");
+}
+
+export function downloadTextFile(filename: string, text: string): void {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
