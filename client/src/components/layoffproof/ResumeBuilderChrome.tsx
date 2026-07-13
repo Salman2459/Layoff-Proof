@@ -72,7 +72,7 @@ export function ResumeBuilderChrome({
               onClick={onImportResume}
               className="h-10 rounded-lg border-[#e2e8f0] bg-white text-sm font-semibold text-[#334155] shadow-sm hover:bg-[#f8fafc]"
             >
-              Import Resume
+              Update Resume
             </Button>
           ) : null}
 

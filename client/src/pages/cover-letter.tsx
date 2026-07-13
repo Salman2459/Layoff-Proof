@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Copy,
   Download,
@@ -14,6 +14,10 @@ import { CoverLetterHeroIllustration } from "@/components/layoffproof/cover-lett
 import { CoverLetterPreviewEmpty } from "@/components/layoffproof/cover-letter/CoverLetterPreviewEmpty";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import {
+  loadCoverLetterDraft,
+  saveCoverLetterDraft,
+} from "@/lib/coverLetterDraft";
 import { cn } from "@/lib/utils";
 import { extractApiErrorMessage, parseFetchJsonBody } from "@/lib/queryClient";
 
@@ -84,8 +88,74 @@ export default function CoverLetter() {
   const [isImproving, setIsImproving] = useState(false);
   const [improvementInstructions, setImprovementInstructions] = useState("");
   const [isImprovingLoading, setIsImprovingLoading] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
 
   const name = greeting(user?.firstName, user?.lastName);
+
+  // Restore the last cover letter for this user
+  useEffect(() => {
+    if (!user?.id || draftRestored) return;
+    const draft = loadCoverLetterDraft(user.id);
+    setDraftRestored(true);
+    if (!draft) return;
+
+    if (draft.generatedLetter) setGeneratedLetter(draft.generatedLetter);
+    if (draft.jobDetails) {
+      setJobDetails({
+        position: draft.jobDetails.position || "",
+        company: draft.jobDetails.company || "",
+        reason: draft.jobDetails.reason || "",
+      });
+    }
+    if (draft.personalData && typeof draft.personalData === "object") {
+      setPersonalData((prev) => ({
+        ...prev,
+        ...draft.personalData,
+      }));
+    }
+    if (draft.parsedResumeData) setParsedResumeData(draft.parsedResumeData);
+    if (draft.activeTab === "upload" || draft.activeTab === "manual") {
+      setActiveTab(draft.activeTab);
+    }
+    if (typeof draft.improvementInstructions === "string") {
+      setImprovementInstructions(draft.improvementInstructions);
+    }
+  }, [user?.id, draftRestored]);
+
+  // Persist cover letter + form inputs whenever they change
+  useEffect(() => {
+    if (!user?.id || !draftRestored) return;
+
+    const hasContent =
+      !!generatedLetter.trim() ||
+      !!jobDetails.position.trim() ||
+      !!jobDetails.company.trim() ||
+      !!personalData.name.trim() ||
+      !!parsedResumeData;
+
+    if (!hasContent) return;
+
+    const timer = window.setTimeout(() => {
+      saveCoverLetterDraft(user.id, {
+        generatedLetter,
+        jobDetails,
+        personalData: { ...personalData },
+        parsedResumeData,
+        activeTab,
+        improvementInstructions,
+      });
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [
+    user?.id,
+    draftRestored,
+    generatedLetter,
+    jobDetails,
+    personalData,
+    parsedResumeData,
+    activeTab,
+    improvementInstructions,
+  ]);
 
   const processFile = async (file: File) => {
     setUploadedResume(file);

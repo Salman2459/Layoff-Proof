@@ -29,7 +29,8 @@ import {
   compressImageFile,
   compressProfileImageDataUrl,
 } from "@/lib/compressProfileImage";
-import { loadResumeDraft, saveResumeDraft } from "@/lib/resumeDraft";
+import { loadResumeDraft, resumeDraftHasContent, saveResumeDraft } from "@/lib/resumeDraft";
+import type { ResumeBuilderStep } from "@/lib/resumeDraft";
 import type { User } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import {
@@ -1482,6 +1483,29 @@ export default function ResumeBuilder() {
   const [showProTip, setShowProTip] = useState(true);
   const [previewViewMode, setPreviewViewMode] = useState<"desktop" | "mobile">("desktop");
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
+
+  const persistResumeDraft = (
+    data: ParsedResumeData,
+    overrides?: {
+      selectedTemplate?: string;
+      selectedCatalogId?: string;
+      currentStep?: ResumeBuilderStep;
+      buildMethod?: "upload" | "linkedin" | "manual" | null;
+      linkedinUrl?: string;
+      editorSection?: string;
+    },
+  ) => {
+    if (!user?.id) return;
+    saveResumeDraft(user.id, data as unknown as Record<string, unknown>, {
+      selectedTemplate: overrides?.selectedTemplate ?? selectedTemplate,
+      selectedCatalogId: overrides?.selectedCatalogId ?? selectedCatalogId,
+      currentStep: overrides?.currentStep ?? currentStep,
+      buildMethod: overrides?.buildMethod ?? buildMethod,
+      linkedinUrl: overrides?.linkedinUrl ?? linkedinUrl,
+      editorSection: overrides?.editorSection ?? editorSection,
+    });
+  };
 
   const handleAISuggestion = (fieldName: string, suggestion: string) => {
     setExtractedData((prevData) => {
@@ -1538,9 +1562,12 @@ export default function ResumeBuilder() {
   }, [currentStep, extractedData]);
 
   useEffect(() => {
-    if (!user?.id) return;
+    if (!user?.id || draftRestored) return;
+
     const draft = loadResumeDraft(user.id);
-    if (!draft) return;
+    setDraftRestored(true);
+
+    if (!draft || !resumeDraftHasContent(draft.data)) return;
 
     const restored = {
       ...initialResumeData,
@@ -1550,8 +1577,32 @@ export default function ResumeBuilder() {
 
     const applyDraft = (data: ParsedResumeData) => {
       setExtractedData(data);
+      setDebouncedExtractedData(data);
       if (draft.selectedTemplate) setSelectedTemplate(draft.selectedTemplate);
       if (draft.selectedCatalogId) setSelectedCatalogId(draft.selectedCatalogId);
+      if (draft.linkedinUrl) setLinkedinUrl(draft.linkedinUrl);
+      if (draft.buildMethod) setBuildMethod(draft.buildMethod);
+      if (draft.editorSection) {
+        setEditorSection(draft.editorSection as ResumeEditorSection);
+      }
+
+      const step = draft.currentStep;
+      const validSteps: ResumeBuilderStep[] = [
+        "select",
+        "upload",
+        "linkedin-url",
+        "manual-edit",
+        "templates",
+        "editor-preview",
+      ];
+      // Prefer editor so the user can keep updating their saved resume
+      if (step && validSteps.includes(step) && step !== "select") {
+        setCurrentStep(step === "manual-edit" || step === "upload" || step === "linkedin-url"
+          ? "editor-preview"
+          : step);
+      } else {
+        setCurrentStep("editor-preview");
+      }
     };
 
     if (photo.startsWith("data:image/") && photo.length > 380_000) {
@@ -1564,10 +1615,10 @@ export default function ResumeBuilder() {
     }
 
     applyDraft(restored);
-  }, [user?.id]);
+  }, [user?.id, draftRestored]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !draftRestored) return;
     setExtractedData((prev) => {
       const name =
         [user.firstName, user.lastName].filter(Boolean).join(" ").trim() ||
@@ -1593,18 +1644,34 @@ export default function ResumeBuilder() {
         profileImageDataUrl: nextPhoto,
       };
     });
-  }, [user]);
+  }, [user, draftRestored]);
 
   useEffect(() => {
-    if (!user?.id) return;
+    if (!user?.id || !draftRestored) return;
     const timer = window.setTimeout(() => {
-      saveResumeDraft(user.id, extractedData as Record<string, unknown>, {
-        selectedTemplate,
-        selectedCatalogId,
-      });
+      // Avoid wiping a saved resume with an empty shell before the user starts
+      if (
+        !resumeDraftHasContent(extractedData as unknown as Record<string, unknown>) &&
+        currentStep === "select"
+      ) {
+        return;
+      }
+      persistResumeDraft(extractedData);
     }, 800);
     return () => window.clearTimeout(timer);
-  }, [extractedData, selectedTemplate, selectedCatalogId, user?.id]);
+    // persistResumeDraft closes over latest template/step values
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    extractedData,
+    selectedTemplate,
+    selectedCatalogId,
+    currentStep,
+    buildMethod,
+    linkedinUrl,
+    editorSection,
+    user?.id,
+    draftRestored,
+  ]);
 
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
@@ -1630,9 +1697,18 @@ export default function ResumeBuilder() {
           String(parsed.linkedin),
         );
       }
-      setExtractedData({ ...initialResumeData, ...parsed });
+      const nextData = { ...initialResumeData, ...parsed };
+      setExtractedData(nextData);
       setCurrentStep("templates");
-      toast({ title: "Resume Extracted Successfully" });
+      setBuildMethod("upload");
+      persistResumeDraft(nextData, {
+        currentStep: "templates",
+        buildMethod: "upload",
+      });
+      toast({
+        title: "Resume Extracted Successfully",
+        description: "Your resume is saved. You can keep editing anytime.",
+      });
     },
     onError: (error: any) =>
       toast({
@@ -1665,9 +1741,18 @@ export default function ResumeBuilder() {
             String(resumeData.linkedin),
           );
         }
-        setExtractedData({ ...initialResumeData, ...resumeData });
+        const nextData = { ...initialResumeData, ...resumeData };
+        setExtractedData(nextData);
         setCurrentStep("templates");
-        toast({ title: "LinkedIn Profile Imported" });
+        setBuildMethod("linkedin");
+        persistResumeDraft(nextData, {
+          currentStep: "templates",
+          buildMethod: "linkedin",
+        });
+        toast({
+          title: "LinkedIn Profile Imported",
+          description: "Your resume is saved. You can keep editing anytime.",
+        });
       } else {
         toast({
           title: "Import Failed",
@@ -1825,8 +1910,15 @@ export default function ResumeBuilder() {
       }}
       onScratch={() => {
         setBuildMethod("manual");
-        setExtractedData(initialResumeData);
-        setCurrentStep("manual-edit");
+        // Keep the saved resume when updating; only start blank if empty
+        if (
+          !resumeDraftHasContent(
+            extractedData as unknown as Record<string, unknown>,
+          )
+        ) {
+          setExtractedData(initialResumeData);
+        }
+        setCurrentStep("editor-preview");
       }}
     />
   );
