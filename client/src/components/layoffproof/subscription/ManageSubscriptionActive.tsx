@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { planTagline } from "./subscribe-plan-ui";
 import { cn } from "@/lib/utils";
+import { useMemo } from "react";
 
 type Plan = {
   id: string;
@@ -81,10 +82,23 @@ export function ManageSubscriptionActive({
       (b.default_price?.unit_amount ?? 0) - (a.default_price?.unit_amount ?? 0)
   );
 
+
+const LaypffProPlan = ["Layoff Proof AI - Radar","Layoff Proof AI - Pro","Layoff Proof AI - Autopilot"]
+const displayPlans = useMemo(
+    () =>
+      sortedPlans
+        .filter((p) => LaypffProPlan.includes(p.name))
+        .slice()
+        .reverse(),
+    [sortedPlans],
+  );
+  
+  
   const isCurrentPlan = (planId: string) =>
     planId === currentPlan?.id ||
     planId === currentProductId ||
     planId === purchasedPlanId;
+    
 
   return (
     <div className="relative mx-auto max-w-3xl space-y-6">
@@ -185,10 +199,10 @@ export function ManageSubscriptionActive({
         <h3 className="text-base font-bold text-[#0f172a]">All available plans</h3>
 
         <div className="mt-4 space-y-3">
-          {sortedPlans.length === 0 ? (
+          {displayPlans?.length === 0 ? (
             <p className="text-sm text-[#64748b]">No plans loaded.</p>
           ) : (
-            sortedPlans.map((plan) => {
+            displayPlans?.map((plan:any) => {
               const isCurrent = isCurrentPlan(plan.id);
               const { Icon, tile } = planVisual(plan.name);
               return (

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { loadStripe } from "@stripe/stripe-js";
 import {
   Elements,
@@ -359,9 +359,11 @@ const CheckoutForm = ({
   const [isCouponApplied, setIsCouponApplied] = useState(false);
   const [couponError, setCouponError] = useState<string | null>(null);
   const [couponSuccessHint, setCouponSuccessHint] = useState<string | null>(null);
+  const [cardNumberComplete, setCardNumberComplete] = useState(false);
+  const [cardExpiryComplete, setCardExpiryComplete] = useState(false);
+  const [cardCvcComplete, setCardCvcComplete] = useState(false);
   /** Stale-async guard so rapid typing doesn't leave loaders stuck */
   const couponBreakdownSeq = useRef(0);
-  const [couponApplyTick, setCouponApplyTick] = useState(0);
 
   useEffect(() => {
     const d = defaultBreakdownFromPlanCents(defaultPriceCents);
@@ -381,7 +383,7 @@ const CheckoutForm = ({
     const seq = ++couponBreakdownSeq.current;
     const stillCurrent = () => seq === couponBreakdownSeq.current;
     const trimmed = coupon.trim();
-    const debounceMs = trimmed ? 500 : 0;
+    const debounceMs = trimmed ? 600 : 0;
 
     const timer = window.setTimeout(() => {
       void (async () => {
@@ -421,6 +423,7 @@ const CheckoutForm = ({
           return;
         }
 
+        // Only after debounce: show loader and hit verify API
         setIsCheckingCoupon(true);
         setCouponError(null);
         setCouponSuccessHint(null);
@@ -518,16 +521,52 @@ const CheckoutForm = ({
     e.preventDefault();
     if (!stripe || !elements) return;
 
+    const cardNumberElement = elements.getElement(CardNumberElement);
+    if (!cardNumberElement) {
+      toast({
+        title: "Error",
+        description: "Card element not found.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!cardNumberComplete || !cardExpiryComplete || !cardCvcComplete) {
+      toast({
+        title: "Card required",
+        description: "Please fill in your card details to continue.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsProcessing(true);
     let clientSecretForPayment = currentClientSecret;
     let paymentRequired = true;
 
     try {
+      // Always collect card first (required even for 100% coupons).
+      const { error: pmError, paymentMethod } = await stripe.createPaymentMethod({
+        type: "card",
+        card: cardNumberElement,
+      });
+      if (pmError || !paymentMethod) {
+        toast({
+          title: "Card error",
+          description: pmError?.message || "Could not save card details.",
+          variant: "destructive",
+        });
+        setIsProcessing(false);
+        return;
+      }
 
       if (checkoutMode === "subscription" && coupon.trim() && !isCouponApplied) {
-        const response = await apiRequest("POST", "/api/stripe/apply-coupon", { coupon, planId });
-        const data =  response;
-
+        const response = await apiRequest("POST", "/api/stripe/apply-coupon", {
+          coupon,
+          planId,
+          paymentMethodId: paymentMethod.id,
+        });
+        const data = response;
 
         setIsCouponApplied(true);
 
@@ -553,33 +592,13 @@ const CheckoutForm = ({
         }
       }
 
-
-
-      // If we reach here and final amount is 0, skip payment
-      if (priceBreakdown && priceBreakdown.finalAmount === 0) {
-        console.log("✅ Final amount is $0, redirecting...");
-        await goToDashboard();
-        return;
-      }
-
-      // Process payment
-      const cardNumberElement = elements.getElement(CardNumberElement);
-      if (!cardNumberElement) {
-        toast({
-          title: "Error",
-          description: "Card element not found.",
-          variant: "destructive"
-        });
-        setIsProcessing(false);
-        return;
-      }
-
+      // Coupon path with remaining balance (or no coupon): charge the card.
       console.log(`[PAYMENT] Confirming payment...`);
       const { error, paymentIntent } = await stripe.confirmCardPayment(
         clientSecretForPayment,
         {
-          payment_method: { card: cardNumberElement },
-        }
+          payment_method: paymentMethod.id,
+        },
       );
 
       if (error) {
@@ -648,6 +667,11 @@ const CheckoutForm = ({
         ? `Pay for ${planName}`
         : `Subscribe to ${planName}`;
 
+  const isCardComplete =
+    cardNumberComplete && cardExpiryComplete && cardCvcComplete;
+  /** Coupon alone is not enough — card fields must be filled to subscribe. */
+  const canSubmit = isCardComplete;
+
   return (
     <form onSubmit={handleSubmit}>
       {checkoutMode === "subscription" && (
@@ -671,6 +695,7 @@ const CheckoutForm = ({
                     showIcon: true,
                     placeholder: "1234 1234 1234 1234",
                   }}
+                  onChange={(e) => setCardNumberComplete(e.complete)}
                 />
               </div>
             </div>
@@ -680,6 +705,7 @@ const CheckoutForm = ({
                 <div className={stripeFieldWrap}>
                   <CardExpiryElement
                     options={{ ...stripeElementOptions, placeholder: "MM / YY" }}
+                    onChange={(e) => setCardExpiryComplete(e.complete)}
                   />
                 </div>
               </div>
@@ -688,6 +714,7 @@ const CheckoutForm = ({
                 <div className={stripeFieldWrap}>
                   <CardCvcElement
                     options={{ ...stripeElementOptions, placeholder: "CVC" }}
+                    onChange={(e) => setCardCvcComplete(e.complete)}
                   />
                 </div>
               </div>
@@ -696,7 +723,6 @@ const CheckoutForm = ({
               <CouponField
                 value={coupon}
                 onChange={setCoupon}
-                onApply={() => setCouponApplyTick((t) => t + 1)}
                 isChecking={isCheckingCoupon}
                 isApplied={isCouponApplied}
                 isProcessing={isProcessing}
@@ -714,7 +740,7 @@ const CheckoutForm = ({
           submitButton={
             <button
               type="submit"
-              disabled={!stripe || isProcessing}
+              disabled={!stripe || isProcessing || isCheckingCoupon || !canSubmit}
               className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#8b5cf6] text-[15px] font-semibold text-white shadow-sm transition hover:bg-[#7c3aed] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isProcessing ? (
@@ -802,7 +828,7 @@ const PlanSelection = ({
 
 
 const LaypffProPlan = ["Layoff Proof AI - Radar","Layoff Proof AI - Pro","Layoff Proof AI - Autopilot"]
-
+console.log("plans",plans)
 
   const displayPlans = useMemo(
     () =>

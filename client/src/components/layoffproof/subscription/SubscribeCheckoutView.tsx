@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { CheckCircle2, ClipboardList, CreditCard, Lock, Target, Tag } from "lucide-react";
+import { CheckCircle2, ClipboardList, CreditCard, Loader2, Lock, Target, Tag } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { planTagline } from "./subscribe-plan-ui";
 
@@ -163,7 +163,6 @@ export const checkoutLabel = "mb-1.5 block text-sm font-medium text-[#334155]";
 export function CouponField({
   value,
   onChange,
-  onApply,
   isChecking,
   isApplied,
   isProcessing,
@@ -172,7 +171,6 @@ export function CouponField({
 }: {
   value: string;
   onChange: (v: string) => void;
-  onApply: () => void;
   isChecking: boolean;
   isApplied: boolean;
   isProcessing: boolean;
@@ -184,39 +182,39 @@ export function CouponField({
       <label htmlFor="coupon" className={checkoutLabel}>
         Coupon code <span className="font-normal text-[#94a3b8]">(optional)</span>
       </label>
-      <div className="flex gap-2">
-        <div className="relative min-w-0 flex-1">
-          <Tag className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#94a3b8]" />
-          <input
-            id="coupon"
-            type="text"
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder="Enter coupon code if you have one"
-            disabled={isApplied || isProcessing}
-            className={cn(
-              "w-full rounded-xl border py-3 pl-10 pr-3 text-sm outline-none transition placeholder:text-[#94a3b8] focus:border-[#a5b4fc] focus:ring-2 focus:ring-[#c7d2fe]/60 disabled:opacity-60",
-              error
-                ? "border-red-400"
-                : successHint
-                  ? "border-emerald-400"
-                  : "border-[#e2e8f0]"
-            )}
-          />
-        </div>
-        <button
-          type="button"
-          onClick={onApply}
-          disabled={!value.trim() || isChecking || isApplied || isProcessing}
-          className="shrink-0 rounded-xl bg-[#ede9fe] px-4 py-2 text-sm font-semibold text-[#7c3aed] transition hover:bg-[#ddd6fe] disabled:opacity-50"
-        >
-          Apply
-        </button>
+      <div className="relative">
+        <Tag className="pointer-events-none absolute left-3 top-0 bottom-0 my-auto h-4 w-4 text-[#94a3b8]" />
+        <input
+          id="coupon"
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Enter coupon code if you have one"
+          disabled={isApplied || isProcessing}
+          className={cn(
+            "w-full rounded-xl border py-3 pl-10 pr-10 text-sm outline-none transition placeholder:text-[#94a3b8] focus:border-[#a5b4fc] focus:ring-2 focus:ring-[#c7d2fe]/60 disabled:opacity-60",
+            error
+              ? "border-red-400"
+              : successHint
+                ? "border-emerald-400"
+                : "border-[#e2e8f0]"
+          )}
+        />
+        {isChecking && (
+          <span
+            className="pointer-events-none absolute right-3 top-0 bottom-0 flex items-center"
+            aria-label="Checking coupon"
+          >
+            <Loader2 className="h-4 w-4 animate-spin text-[#8b5cf6]" />
+          </span>
+        )}
       </div>
-      {error && <p className="mt-1.5 text-xs text-red-500">{error}</p>}
-      {successHint && !error && (
-        <p className="mt-1.5 text-xs text-emerald-600">{successHint}</p>
-      )}
+      <div className="mt-1.5 min-h-[1.125rem]">
+        {error && <p className="text-xs text-red-500">{error}</p>}
+        {successHint && !error && (
+          <p className="text-xs text-emerald-600">{successHint}</p>
+        )}
+      </div>
     </div>
   );
 }

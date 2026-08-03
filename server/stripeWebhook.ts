@@ -23,6 +23,7 @@ import {
   processAffiliateRefund,
   processAffiliateSubscriptionActivation,
 } from "./affiliateService";
+import { isCouponAccessPeriodExpired } from "./subscriptionAccess";
 
 function customerIdOnly(
   c: string | Stripe.Customer | Stripe.DeletedCustomer | null | undefined,
@@ -72,6 +73,32 @@ async function resolveUserId(opts: {
   }
 }
 
+/**
+ * Ignore Stripe events for an old subscription after checkout recreates a new one
+ * (e.g. apply-coupon cancels the incomplete draft). Otherwise `customer.subscription.deleted`
+ * on the draft wipes the newly activated promo subscription.
+ */
+async function isCurrentUserSubscription(
+  userId: string,
+  subscriptionId: string,
+): Promise<boolean> {
+  const user = await storage.getUser(userId);
+  if (!user) return false;
+  const current = user.stripeSubscriptionId;
+  // No current id yet — allow first write (checkout / create).
+  if (!current) return true;
+  return current === subscriptionId;
+}
+
+function invoiceSubscriptionId(invoice: Stripe.Invoice): string | null {
+  const inv = invoice as Stripe.Invoice & {
+    subscription?: string | Stripe.Subscription | null;
+  };
+  const subRef = inv.subscription;
+  if (!subRef) return null;
+  return typeof subRef === "string" ? subRef : subRef.id ?? null;
+}
+
 async function applySubscriptionStripeFields(
   userId: string,
   subscription: Stripe.Subscription,
@@ -112,11 +139,22 @@ async function applySubscriptionStripeFields(
           : undefined;
   }
 
+  const mappedStatus = mapStripeSubscriptionStatus(sub.status, sub);
+  const existing = await storage.getUser(userId);
+  // Don't let a transient Stripe `incomplete` wipe an in-period promo activation.
+  const keepPromoActive =
+    mappedStatus === "inactive" &&
+    existing?.subscriptionViaCoupon === true &&
+    existing.subscriptionStatus === "active" &&
+    existing.stripeSubscriptionId === sub.id &&
+    !isCouponAccessPeriodExpired(existing);
+
   await storage.updateUser(userId, {
     stripeCustomerId,
     stripeSubscriptionId: sub.id,
-    subscriptionStatus: mapStripeSubscriptionStatus(sub.status, sub),
-    subscriptionEndDate: new Date(endMs),
+    subscriptionStatus: keepPromoActive ? "active" : mappedStatus,
+    subscriptionEndDate:
+      endMs > 0 ? new Date(endMs) : existing?.subscriptionEndDate ?? undefined,
     ...(productId ? { subscriptionPlan: productId } : {}),
   });
 }
@@ -130,13 +168,16 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
     return;
   }
 
+  const subId = invoiceSubscriptionId(invoice);
+  if (subId && !(await isCurrentUserSubscription(userId, subId))) {
+    console.log(
+      `invoice paid: ignoring stale subscription ${subId} for user ${userId}`,
+    );
+    return;
+  }
+
   await storage.updateUser(userId, { stripeCustomerId: cid ?? undefined });
 
-  const invExtended = invoice as Stripe.Invoice & {
-    subscription?: string | Stripe.Subscription | null;
-  };
-  const subRef = invExtended.subscription;
-  const subId = typeof subRef === "string" ? subRef : subRef?.id ?? null;
   if (subId) {
     const sub = await stripe.subscriptions.retrieve(subId);
     await applySubscriptionStripeFields(userId, sub, cid!);
@@ -204,7 +245,7 @@ export const handleStripeWebhook = async (
   }
 
   try {
-    console.log("event.type", event.type);
+    console.log("event", event);
     switch (event.type) {
 
       case "checkout.session.completed": {
@@ -288,6 +329,14 @@ export const handleStripeWebhook = async (
         const userId = await resolveUserId({ stripeCustomerId: cid });
         if (!userId) break;
 
+        const failedSubId = invoiceSubscriptionId(invoice);
+        if (failedSubId && !(await isCurrentUserSubscription(userId, failedSubId))) {
+          console.log(
+            `invoice.payment_failed: ignoring stale subscription ${failedSubId} for user ${userId}`,
+          );
+          break;
+        }
+
         await storage.updateUser(userId, {
           subscriptionStatus: "inactive",
           stripeCustomerId: cid ?? undefined,
@@ -304,6 +353,12 @@ export const handleStripeWebhook = async (
           console.warn(`${event.type}: could not resolve user`, sub.id);
           break;
         }
+        if (!(await isCurrentUserSubscription(userId, sub.id))) {
+          console.log(
+            `${event.type}: ignoring stale subscription ${sub.id} for user ${userId}`,
+          );
+          break;
+        }
         await applySubscriptionStripeFields(userId, sub, cid!);
         break;
       }
@@ -313,6 +368,15 @@ export const handleStripeWebhook = async (
         const cid = customerIdOnly(sub.customer);
         const userId = await resolveUserId({ stripeCustomerId: cid });
         if (!userId) break;
+
+        // Only deactivate when THIS subscription is the one currently on the user.
+        // Coupon apply cancels the prior incomplete draft; that delete must not wipe the new sub.
+        if (!(await isCurrentUserSubscription(userId, sub.id))) {
+          console.log(
+            `customer.subscription.deleted: ignoring stale subscription ${sub.id} for user ${userId}`,
+          );
+          break;
+        }
 
         await storage.updateUser(userId, {
           subscriptionStatus: "inactive",

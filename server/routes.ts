@@ -1504,11 +1504,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Apply coupon
   app.post("/api/stripe/apply-coupon", isAuthenticatedAny, async (req, res) => {
     try {
-      const { coupon, planId } = req.body;
+      const { coupon, planId, paymentMethodId } = req.body;
       const user :any= req.user;
 
       if (!coupon || !coupon.trim()) {
         return res.status(400).json({ message: "Coupon code is required." });
+      }
+
+      if (
+        typeof paymentMethodId !== "string" ||
+        !paymentMethodId.trim().startsWith("pm_")
+      ) {
+        return res.status(400).json({
+          message: "Card details are required. Please fill in your card to continue.",
+        });
       }
 
       // 1. Resolve price from Stripe id (prod_... or price_...)
@@ -1545,27 +1554,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
         `🎟️ Re-creating subscription for user ${user.id} with coupon "${coupon}"`,
       );
 
-      // 3. Cancel the existing incomplete subscription if it exists
-      if (user.stripeSubscriptionId) {
-        try {
-          await stripe.subscriptions.cancel(user.stripeSubscriptionId);
-        } catch (err:any) {
-          console.log(
-            "Old subscription could not be cancelled (might not exist):",
-            err.message,
+      const previousSubscriptionId =
+        typeof user.stripeSubscriptionId === "string"
+          ? user.stripeSubscriptionId
+          : null;
+
+      const pmId = paymentMethodId.trim();
+
+      // Card must be on the customer before creating the subscription.
+      try {
+        await stripe.paymentMethods.attach(pmId, {
+          customer: user.stripeCustomerId,
+        });
+      } catch (attachErr: any) {
+        if (attachErr?.code !== "resource_already_exists") {
+          console.warn(
+            "Could not attach payment method:",
+            attachErr?.message ?? attachErr,
           );
+          return res.status(400).json({
+            message:
+              attachErr?.message ||
+              "Could not save card. Please check your card details and try again.",
+          });
         }
       }
+      await stripe.customers.update(user.stripeCustomerId, {
+        invoice_settings: { default_payment_method: pmId },
+      });
 
-      // 5. Create a NEW subscription with the coupon applied immediately
+      // Create the coupon subscription, then cancel the old draft.
       const subscription = await stripe.subscriptions.create({
         customer: user.stripeCustomerId,
         items: [{ price: priceId }],
         ...(promotionCodeId
           ? { promotion_code: promotionCodeId }
-          : { coupon: coupon.trim() }), // ✅ Applied at creation = Applies to first invoice
+          : { coupon: coupon.trim() }),
+        default_payment_method: pmId,
         payment_behavior: "default_incomplete",
         payment_settings: { save_default_payment_method: "on_subscription" },
+        metadata: {
+          userId: String(user.id),
+          planId: String(planId),
+          viaCoupon: "true",
+          couponCode: String(coupon).trim().slice(0, 40),
+        },
         expand: [
           "latest_invoice.payment_intent",
           "latest_invoice.total_discount_amounts",
@@ -1573,11 +1606,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ],
       });
 
-      const invoice :any= subscription.latest_invoice;
+      // Point the user at the new subscription immediately (before canceling the old one).
+      await storage.updateUser(user.id, {
+        subscriptionPlan: planId,
+        stripeSubscriptionId: subscription.id,
+        updatedAt: new Date(),
+      });
+
+      if (
+        previousSubscriptionId &&
+        previousSubscriptionId !== subscription.id
+      ) {
+        try {
+          await stripe.subscriptions.cancel(previousSubscriptionId);
+        } catch (err: any) {
+          console.log(
+            "Old subscription could not be cancelled (might not exist):",
+            err.message,
+          );
+        }
+      }
+
+      const invoice: any = subscription.latest_invoice;
       const finalAmount = invoice.total;
       const originalAmount = unitAmount ?? invoice.subtotal ?? 0;
-      const discountAmount = invoice.total_discount_amounts.reduce(
-        (sum:any, d:any) => sum + d.amount,
+      const discountAmount = (invoice.total_discount_amounts ?? []).reduce(
+        (sum: any, d: any) => sum + d.amount,
         0,
       );
 
@@ -1592,6 +1646,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // 7. Handle 100% Discount (Free) — Stripe coupon `duration: once`; no renewal charge.
       if (finalAmount === 0) {
+        // Finalize / pay $0 invoice so Stripe moves the sub out of `incomplete`.
+        if (invoice?.id && invoice.status !== "paid") {
+          try {
+            if (invoice.status === "draft") {
+              await stripe.invoices.finalizeInvoice(invoice.id);
+            }
+            await stripe.invoices.pay(invoice.id);
+          } catch (payErr: any) {
+            console.warn(
+              "Could not auto-pay $0 promo invoice (may already be paid):",
+              payErr?.message ?? payErr,
+            );
+          }
+        }
+
         const subNoRenew = await cancelSubscriptionAtPeriodEnd(subscription.id);
         const periodEndMs = subNoRenew.current_period_end * 1000;
         const subscriptionEndDate = new Date(periodEndMs);
@@ -1769,11 +1838,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const user:any = req.user;
 
         if (!user.stripeSubscriptionId) {
+          const dbAccessActive = effectiveSubscriptionStatus(user) === "active";
           return res.json({
             hasSubscription: false,
+            hasAccess: dbAccessActive,
             status: user.subscriptionStatus,
             plan: user.subscriptionPlan,
-            currentProductId: null,
+            currentProductId:
+              typeof user.subscriptionPlan === "string" &&
+              user.subscriptionPlan.startsWith("prod_")
+                ? user.subscriptionPlan
+                : null,
             subscriptionEndDate: user.subscriptionEndDate,
             subscriptionViaCoupon: Boolean(user.subscriptionViaCoupon),
             hasDefaultPaymentMethod: false,
