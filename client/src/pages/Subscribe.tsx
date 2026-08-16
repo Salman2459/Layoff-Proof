@@ -796,6 +796,7 @@ const PlanSelection = ({
 
   const [isLoading, setIsLoading] = useState<"loading" | string | null>(null);
   const [plans, setPlans] = useState<StripeCatalogProduct[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [resumeEngineModalOpen, setResumeEngineModalOpen] = useState(false);
   const [resumeEngineCheckout, setResumeEngineCheckout] = useState<{
     clientSecret: string;
@@ -828,16 +829,18 @@ const PlanSelection = ({
 
 
 const LaypffProPlan = ["Layoff Proof AI - Radar","Layoff Proof AI - Pro","Layoff Proof AI - Autopilot"]
-console.log("plans",plans)
 
-  const displayPlans = useMemo(
-    () =>
-      plans
-        .filter((p) => LaypffProPlan.includes(p.name))
-        .slice()
-        .reverse(),
-    [plans],
-  );
+  const displayPlans = useMemo(() => {
+    // The Stripe account also holds unrelated products, so only the named
+    // Layoff Proof plans may ever be shown here — never a broader fallback.
+    const normalize = (value?: string) => (value ?? "").trim().toLowerCase();
+    const whitelist = LaypffProPlan.map(normalize);
+
+    return plans
+      .filter((p) => whitelist.includes(normalize(p.name)))
+      .slice()
+      .reverse();
+  }, [plans]);
 
   const handleSelect = async (plan: StripeCatalogProduct) => {
     setIsLoading(plan.id);
@@ -850,12 +853,16 @@ useEffect(() => {
   setIsLoading("loading");
     const fetchPlan = async () => {
       try {
+        setLoadError(null);
         const response = await apiRequest("GET", "/api/stripe/catalog");
         const isResumeEngine = response.map((p: StripeCatalogProduct) => ({...p, isResumeEngine:false}) );
         setPlans(isResumeEngine);
         
       } catch (error) {
         console.error("Error fetching plans:", error);
+        setLoadError(
+          getApiErrorMessage(error, "We couldn't load the plans right now."),
+        );
       }finally{
         setIsLoading(null);
       }
@@ -913,6 +920,15 @@ useEffect(() => {
         <Skeleton key={idx} className="h-[520px] w-full rounded-2xl animate-pulse" />
       ))}
     </>
+  ) : displayPlans.length === 0 ? (
+    <div className="col-span-full flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-[#e2e8f0] bg-[#fafbff] px-6 py-16 text-center">
+      <p className="text-[16px] font-semibold text-[#0f172a]">
+        {loadError ? "Plans couldn't be loaded" : "No plans available right now"}
+      </p>
+      <p className="max-w-md text-[14px] leading-relaxed text-[#64748b]">
+        {loadError ?? "Please check back shortly — we're getting the plans ready."}
+      </p>
+    </div>
   ) : (
   <>
   {displayPlans?.map((plan: StripeCatalogProduct, planIdx: number) => {

@@ -27,6 +27,13 @@ const SHOW_MARKED_FEATURES = [
 
 const EXCLUDE_FEATURES = ["Layoff Radar"] as const;
 
+/** The Stripe account also holds unrelated products, so only these may be listed. */
+const LAYOFF_PROOF_PLAN_NAMES = [
+  "Layoff Proof AI - Radar",
+  "Layoff Proof AI - Pro",
+  "Layoff Proof AI - Autopilot",
+].map((name) => name.toLowerCase());
+
 function PlanFeatures({
   plan,
   planIdx,
@@ -94,7 +101,11 @@ export function LandingPricingSection() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const displayPlans = [...plans].reverse();
+  const displayPlans = plans
+    .filter((p) =>
+      LAYOFF_PROOF_PLAN_NAMES.includes((p.name ?? "").trim().toLowerCase()),
+    )
+    .reverse();
 
   return (
     <section id="pricing" className="scroll-mt-24 bg-[#fafbff] py-20 lg:py-28">

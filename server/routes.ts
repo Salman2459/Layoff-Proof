@@ -1274,12 +1274,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   );
 
   app.get("/api/stripe/catalog", async (req, res) => {
-    const products = await stripe.products.list({
+    // Stripe defaults to 10 results; this account holds unrelated products too,
+    // so page through everything or the Layoff Proof plans get cut off.
+    const products = [];
+    for await (const product of stripe.products.list({
       active: true,
+      limit: 100,
       expand: ["data.default_price"], // 👈 expands default price only
-    });
-  
-    res.json(products.data);
+    })) {
+      products.push(product);
+    }
+
+    res.json(products);
   });
 
   // Get price breakdown (for preview)
