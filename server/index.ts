@@ -6,7 +6,7 @@ import { allCronjobs } from "./cronjobs/index";
 import { handleStripeWebhook } from "./stripeWebhook";
 import cors from "cors";
 
-allCronjobs();
+// allCronjobs();
 
 const isProduction = process.env.NODE_ENV === "production";
 
